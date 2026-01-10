@@ -22,9 +22,10 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap"
 
-    # API Keys (Phase 4-5)
-    GOOGLE_API_KEY: str = ""
-    MISTRAL_API_KEY: str = ""
+    # API Keys (Stage 2-3)
+    CLAIMBUSTER_API_KEY: str = ""  # https://idir.uta.edu/claimbuster/
+    GOOGLE_API_KEY: str = ""  # Google Fact Check Tools API
+    MISTRAL_API_KEY: str = ""  # Mistral AI for Stage 3
 
     class Config:
         env_file = ".env"
