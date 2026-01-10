@@ -15,4 +15,9 @@ dependencies = [
     # FastAPI
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+    # Database
+    "sqlalchemy>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pgvector>=0.3.0",
 ]

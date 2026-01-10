@@ -1,0 +1,30 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: livemap-db
+    environment:
+      POSTGRES_USER: livemap
+      POSTGRES_PASSWORD: livemap123
+      POSTGRES_DB: livemap
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livemap"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching (Phase 6+)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: livemap-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+
+volumes:
+  postgres_data:
+  # redis_data:

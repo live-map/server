@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     TELEGRAM_API_HASH: str = ""
     TELEGRAM_PHONE: str = ""
 
-    # Database (Phase 2)
-    DATABASE_URL: str = "postgresql+asyncpg://user:pass@localhost:5432/livemap"
+    # Database
+    DATABASE_URL: str = "postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap"
 
     # API Keys (Phase 4-5)
     GOOGLE_API_KEY: str = ""
