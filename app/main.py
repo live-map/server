@@ -28,7 +28,24 @@ async def lifespan(app: FastAPI):
     load_all_models()
     logger.info("Stage 1 models loaded successfully")
 
+    # Start scheduler if enabled
+    if settings.ENABLE_SCHEDULER:
+        from app.services.scheduler import start_scheduler
+
+        channels = None
+        if settings.TELEGRAM_CHANNELS:
+            channels = [c.strip() for c in settings.TELEGRAM_CHANNELS.split(",") if c.strip()]
+
+        start_scheduler(channels=channels)
+        logger.info("Background scheduler started")
+
     yield
+
+    # Stop scheduler on shutdown
+    if settings.ENABLE_SCHEDULER:
+        from app.services.scheduler import stop_scheduler
+
+        stop_scheduler()
 
     logger.info("Shutting down...")
 
