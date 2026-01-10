@@ -5,11 +5,33 @@ Run with: uvicorn app.main:app --reload --port 8000
 API docs: http://localhost:8000/docs
 """
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load ML models on startup, cleanup on shutdown."""
+    logger.info("Loading Stage 1 NLP models...")
+
+    # Lazy import to avoid loading models at import time
+    from app.services.verification.stage1.pipeline import load_all_models
+
+    load_all_models()
+    logger.info("Stage 1 models loaded successfully")
+
+    yield
+
+    logger.info("Shutting down...")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -17,6 +39,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS middleware for Next.js frontend
