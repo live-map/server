@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""  # Google Fact Check Tools API
     MISTRAL_API_KEY: str = ""  # Mistral AI for Stage 3
 
+    # Scheduler
+    ENABLE_SCHEDULER: bool = False  # Enable background collection
+    TELEGRAM_CHANNELS: str = ""  # Comma-separated channel usernames
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
