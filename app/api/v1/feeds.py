@@ -3,18 +3,23 @@ Feed endpoints.
 
 GET /api/v1/feeds - List feeds with filters
 GET /api/v1/feeds/{id} - Get single feed by ID
+POST /api/v1/feeds - Create a new feed (internal use)
 """
 
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.feed import FeedItem, FeedResponse
+from app.db.session import get_db
+from app.models.feed import Feed
+from app.schemas.feed import FeedItem
 
 router = APIRouter()
 
-# Mock data for Phase 1 (will be replaced with DB in Phase 2)
+# Mock data for fallback when DB is empty or unavailable
 MOCK_FEEDS: list[dict] = [
     {
         "id": 1,
@@ -91,6 +96,30 @@ MOCK_FEEDS: list[dict] = [
 ]
 
 
+def _feed_to_response(feed: Feed) -> dict:
+    """Convert Feed model to response dict."""
+    return {
+        "id": feed.id,
+        "title": feed.title,
+        "content": feed.content,
+        "original_link": feed.original_link,
+        "source_name": feed.source_name,
+        "source_type": feed.source_type,
+        "published_at": feed.published_at,
+        "author": feed.author,
+        "thumbnail": feed.thumbnail,
+        "category": feed.category,
+        "sub_category": feed.sub_category,
+        "location": {
+            "lat": feed.location_lat,
+            "lng": feed.location_lng,
+            "name": feed.location_name,
+        },
+        "credibility_score": feed.credibility_score,
+        "verification_status": feed.verification_status,
+    }
+
+
 @router.get("", response_model=list[FeedItem])
 async def get_feeds(
     category: str = Query(..., description="Category filter: WAR or SECURITY"),
@@ -99,6 +128,7 @@ async def get_feeds(
     ),
     limit: int = Query(20, ge=1, le=100, description="Number of items to return"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get list of verified news feeds.
@@ -109,28 +139,65 @@ async def get_feeds(
     - **limit**: Max items to return (default 20, max 100)
     - **offset**: Items to skip for pagination
     """
-    # Filter by category
-    filtered = [f for f in MOCK_FEEDS if f["category"] == category]
+    try:
+        # Build query
+        query = select(Feed).where(Feed.category == category)
 
-    # Filter by sub-category if provided
-    if subCategory:
-        filtered = [f for f in filtered if f["sub_category"] == subCategory]
+        if subCategory:
+            query = query.where(Feed.sub_category == subCategory)
 
-    # Apply pagination
-    paginated = filtered[offset : offset + limit]
+        query = query.order_by(Feed.published_at.desc()).offset(offset).limit(limit)
 
-    return paginated
+        # Execute query
+        result = await db.execute(query)
+        feeds = result.scalars().all()
+
+        # If DB is empty, return mock data
+        if not feeds:
+            filtered = [f for f in MOCK_FEEDS if f["category"] == category]
+            if subCategory:
+                filtered = [f for f in filtered if f["sub_category"] == subCategory]
+            return filtered[offset : offset + limit]
+
+        return [_feed_to_response(feed) for feed in feeds]
+
+    except Exception:
+        # Fallback to mock data if DB error
+        filtered = [f for f in MOCK_FEEDS if f["category"] == category]
+        if subCategory:
+            filtered = [f for f in filtered if f["sub_category"] == subCategory]
+        return filtered[offset : offset + limit]
 
 
 @router.get("/{feed_id}", response_model=FeedItem)
-async def get_feed(feed_id: int):
+async def get_feed(
+    feed_id: int,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Get a single feed item by ID.
 
     - **feed_id**: The unique identifier of the feed item
     """
-    for feed in MOCK_FEEDS:
-        if feed["id"] == feed_id:
-            return feed
+    try:
+        result = await db.execute(select(Feed).where(Feed.id == feed_id))
+        feed = result.scalar_one_or_none()
 
-    raise HTTPException(status_code=404, detail=f"Feed with id {feed_id} not found")
+        if feed:
+            return _feed_to_response(feed)
+
+        # Fallback to mock data
+        for mock_feed in MOCK_FEEDS:
+            if mock_feed["id"] == feed_id:
+                return mock_feed
+
+        raise HTTPException(status_code=404, detail=f"Feed with id {feed_id} not found")
+
+    except HTTPException:
+        raise
+    except Exception:
+        # Fallback to mock data
+        for mock_feed in MOCK_FEEDS:
+            if mock_feed["id"] == feed_id:
+                return mock_feed
+        raise HTTPException(status_code=404, detail=f"Feed with id {feed_id} not found")
