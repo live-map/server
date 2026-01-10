@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment
+.env
+
+# Telegram session
+*.session
+telegram_session*
+
+# IDE
+.idea/
+.vscode/
+
+# Misc
+.DS_Store
+*.log
