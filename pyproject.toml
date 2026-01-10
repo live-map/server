@@ -1,14 +1,18 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Livemap backend - Real-time verified news feed API"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # Existing
     "httpx>=0.28.1",
     "mcp>=1.25.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
     "telethon>=1.42.0",
+    # FastAPI
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
 ]
