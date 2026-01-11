@@ -13,9 +13,9 @@ from pydantic import BaseModel, Field
 class LocationSchema(BaseModel):
     """Geographic location of the event."""
 
-    lat: float = Field(..., description="Latitude")
-    lng: float = Field(..., description="Longitude")
-    name: str = Field(..., description="Location name")
+    lat: Optional[float] = Field(None, description="Latitude")
+    lng: Optional[float] = Field(None, description="Longitude")
+    name: Optional[str] = Field(None, description="Location name")
 
 
 class FeedItem(BaseModel):
@@ -35,7 +35,7 @@ class FeedItem(BaseModel):
     id: int
     title: str = Field(..., max_length=500)
     content: str
-    originalLink: str = Field(..., alias="original_link")
+    originalLink: Optional[str] = Field(None, alias="original_link")
     sourceName: str = Field(..., alias="source_name")
     sourceType: str = Field(..., alias="source_type")  # RSS, TELEGRAM, etc.
     publishedAt: datetime = Field(..., alias="published_at")
