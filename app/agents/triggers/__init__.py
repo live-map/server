@@ -6,20 +6,35 @@
 2. X/Twitter - 실시간 (Twikit, 개인계정)
 3. Telegram - 실시간 (Telethon, 가입채널)
 
+감지 레이어:
+1. Anomaly Detection - 볼륨/속도 이상 감지 (키워드 무관)
+2. Semantic Clustering - 새로운 주제 클러스터 감지
+
 각 트리거는 독립적으로 작동하며, TriggerManager가 통합 관리
 """
 
-from .base import BaseTrigger, TriggerEvent
+from .base import BaseTrigger, TriggerEvent, TriggerSource
 from .gdelt import GDELTTrigger
 from .twitter import TwitterTrigger
 from .telegram import TelegramTrigger
 from .manager import TriggerManager
+from .anomaly import AnomalyDetector, AnomalySignal
+from .clustering import SemanticClusterer, SemanticCluster, ClusteringSignal
 
 __all__ = [
+    # Base
     "BaseTrigger",
     "TriggerEvent",
+    "TriggerSource",
+    # Triggers
     "GDELTTrigger",
     "TwitterTrigger",
     "TelegramTrigger",
     "TriggerManager",
+    # Detection Layers
+    "AnomalyDetector",
+    "AnomalySignal",
+    "SemanticClusterer",
+    "SemanticCluster",
+    "ClusteringSignal",
 ]

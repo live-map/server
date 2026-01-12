@@ -6,12 +6,17 @@
 - X/Twitter (실시간)
 - Telegram (실시간)
 
+감지 레이어:
+- Anomaly Detection: 볼륨/속도 이상 감지 (키워드 무관)
+- Semantic Clustering: 새로운 주제 클러스터 감지
+
 모든 소스에서 병렬로 이벤트 수집 후 중복 제거 및 통합
 """
 
 import asyncio
 import hashlib
 import logging
+from collections import Counter
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -22,6 +27,8 @@ from .base import BaseTrigger, TriggerEvent, TriggerSource
 from .gdelt import GDELTTrigger
 from .telegram import TelegramTrigger
 from .twitter import TwitterTrigger
+from .anomaly import AnomalyDetector, AnomalySignal
+from .clustering import SemanticClusterer, ClusteringSignal
 
 logger = logging.getLogger(__name__)
 
@@ -35,21 +42,35 @@ class TriggerManager:
     - 중복 이벤트 제거 (동일 사건 다른 소스)
     - LLM으로 이벤트 분류 및 그룹화
     - 콜백으로 이벤트 전달
+
+    감지 레이어:
+    - Anomaly Detection: 볼륨/속도 이상 감지
+    - Semantic Clustering: 새로운 주제 클러스터 감지
     """
 
     def __init__(
         self,
         on_event: Callable[[TriggerEvent, str], None] | None = None,
+        on_anomaly: Callable[[AnomalySignal], None] | None = None,
+        on_new_cluster: Callable[[ClusteringSignal], None] | None = None,
         openai_api_key: str | None = None,
         llm_model: str = "gpt-4o-mini",
+        enable_anomaly_detection: bool = True,
+        enable_clustering: bool = True,
     ):
         """
         Args:
             on_event: 이벤트 감지 시 콜백 (event, category)
+            on_anomaly: 이상 감지 시 콜백 (anomaly_signal)
+            on_new_cluster: 새 클러스터 감지 시 콜백 (clustering_signal)
             openai_api_key: OpenAI API 키 (이벤트 분류용)
             llm_model: 사용할 LLM 모델
+            enable_anomaly_detection: 이상 감지 활성화
+            enable_clustering: 클러스터링 활성화
         """
         self.on_event = on_event
+        self.on_anomaly = on_anomaly
+        self.on_new_cluster = on_new_cluster
         self.triggers: list[BaseTrigger] = []
         self.last_scan: datetime | None = None
         self.event_hashes: set[str] = set()  # 중복 방지
@@ -63,6 +84,24 @@ class TriggerManager:
             )
         else:
             self.llm = None
+
+        # 감지 레이어
+        self.enable_anomaly_detection = enable_anomaly_detection
+        self.enable_clustering = enable_clustering
+
+        self.anomaly_detector = AnomalyDetector(
+            short_window=10,
+            long_window=50,
+            z_threshold=2.5,  # 2.5 시그마 (약간 민감하게)
+        ) if enable_anomaly_detection else None
+
+        self.semantic_clusterer = SemanticClusterer(
+            similarity_threshold=0.7,
+            new_cluster_threshold=0.4,
+            min_cluster_size=2,
+        ) if enable_clustering else None
+
+        self._clustering_initialized = False
 
     def add_trigger(self, trigger: BaseTrigger):
         """트리거 소스 추가"""
@@ -118,8 +157,10 @@ class TriggerManager:
         return self
 
     async def initialize_all(self) -> dict[str, bool]:
-        """모든 트리거 초기화"""
+        """모든 트리거 및 감지 레이어 초기화"""
         results = {}
+
+        # 트리거 초기화
         for trigger in self.triggers:
             try:
                 success = await trigger.initialize()
@@ -127,11 +168,28 @@ class TriggerManager:
             except Exception as e:
                 logger.error(f"Failed to initialize {trigger.source_name}: {e}")
                 results[trigger.source_name] = False
+
+        # Semantic Clusterer 초기화 (임베딩 모델 로딩)
+        if self.semantic_clusterer and not self._clustering_initialized:
+            try:
+                success = await self.semantic_clusterer.initialize()
+                results["semantic_clusterer"] = success
+                self._clustering_initialized = success
+                if success:
+                    logger.info("Semantic clusterer initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize semantic clusterer: {e}")
+                results["semantic_clusterer"] = False
+
+        # Anomaly Detector는 상태 없으므로 항상 성공
+        if self.anomaly_detector:
+            results["anomaly_detector"] = True
+
         return results
 
     async def scan_all(self) -> list[TriggerEvent]:
         """
-        모든 트리거에서 병렬 스캔
+        모든 트리거에서 병렬 스캔 + 감지 레이어 실행
 
         Returns:
             중복 제거된 이벤트 목록
@@ -161,6 +219,18 @@ class TriggerManager:
         unique_events = self._deduplicate_events(all_events)
         logger.info(f"Total events: {len(all_events)}, unique: {len(unique_events)}")
 
+        # ============================================
+        # 감지 레이어 1: Anomaly Detection
+        # ============================================
+        if self.anomaly_detector:
+            await self._run_anomaly_detection(unique_events)
+
+        # ============================================
+        # 감지 레이어 2: Semantic Clustering
+        # ============================================
+        if self.semantic_clusterer and self._clustering_initialized:
+            await self._run_semantic_clustering(unique_events)
+
         # LLM으로 분류 (선택적)
         if unique_events and self.llm:
             classified = await self._classify_events(unique_events)
@@ -173,6 +243,69 @@ class TriggerManager:
             return [e for e, _ in classified]
 
         return unique_events
+
+    async def _run_anomaly_detection(self, events: list[TriggerEvent]):
+        """이상 감지 레이어 실행"""
+        # 소스별 카운트
+        source_counts = Counter(e.source.value for e in events)
+
+        # 키워드별 카운트
+        keyword_counts: dict[str, int] = {}
+        for event in events:
+            for kw in event.keywords_matched:
+                keyword_counts[kw] = keyword_counts.get(kw, 0) + 1
+
+        # 이상 감지
+        anomalies = self.anomaly_detector.record_scan(
+            event_count=len(events),
+            source_counts=dict(source_counts),
+            keyword_counts=keyword_counts,
+        )
+
+        # 콜백 호출
+        for anomaly in anomalies:
+            if self.on_anomaly:
+                try:
+                    if asyncio.iscoroutinefunction(self.on_anomaly):
+                        await self.on_anomaly(anomaly)
+                    else:
+                        self.on_anomaly(anomaly)
+                except Exception as e:
+                    logger.error(f"Anomaly callback error: {e}")
+
+    async def _run_semantic_clustering(self, events: list[TriggerEvent]):
+        """의미적 클러스터링 레이어 실행"""
+        if not events:
+            return
+
+        # 이벤트를 문서 형태로 변환
+        documents = [
+            {
+                "title": e.title,
+                "content": e.content,
+                "url": e.url,
+                "source": e.source.value,
+            }
+            for e in events
+        ]
+
+        # 클러스터링 실행
+        try:
+            signals = await self.semantic_clusterer.process_documents(documents)
+
+            # 콜백 호출
+            for signal in signals:
+                if self.on_new_cluster:
+                    try:
+                        if asyncio.iscoroutinefunction(self.on_new_cluster):
+                            await self.on_new_cluster(signal)
+                        else:
+                            self.on_new_cluster(signal)
+                    except Exception as e:
+                        logger.error(f"Clustering callback error: {e}")
+
+        except Exception as e:
+            logger.error(f"Semantic clustering error: {e}")
 
     async def _scan_trigger(self, trigger: BaseTrigger) -> list[TriggerEvent]:
         """단일 트리거 스캔 (에러 핸들링)"""
@@ -315,8 +448,8 @@ Only include SIGNIFICANT events (major breaking news)."""
                 logger.error(f"Error closing {trigger.source_name}: {e}")
 
     def get_status(self) -> dict:
-        """트리거 상태 반환"""
-        return {
+        """트리거 및 감지 레이어 상태 반환"""
+        status = {
             "last_scan": self.last_scan.isoformat() if self.last_scan else None,
             "triggers": [
                 {
@@ -328,7 +461,21 @@ Only include SIGNIFICANT events (major breaking news)."""
                 for t in self.triggers
             ],
             "event_count": len(self.event_hashes),
+            "detection_layers": {},
         }
+
+        # Anomaly Detector 상태
+        if self.anomaly_detector:
+            status["detection_layers"]["anomaly_detector"] = self.anomaly_detector.get_status()
+
+        # Semantic Clusterer 상태
+        if self.semantic_clusterer:
+            status["detection_layers"]["semantic_clusterer"] = {
+                "initialized": self._clustering_initialized,
+                **self.semantic_clusterer.get_status(),
+            }
+
+        return status
 
 
 async def test_trigger_manager():
