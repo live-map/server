@@ -337,31 +337,50 @@ PRESET_CHANNELS = {
 
 ---
 
-## 5. 최종 권장 아키텍처
+## 5. 최종 권장 아키텍처 (구현 완료)
+
+### 다중 소스 병렬 트리거 시스템
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    자율 트리거 시스템                            │
+│                    다중 소스 트리거 시스템                        │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│   ┌─────────────────┐                                           │
-│   │  GDELT (무료)   │ ─── 키워드 검색 ──→ 뉴스 이벤트 감지     │
-│   │  15분마다       │     "war protest violence"                │
-│   └─────────────────┘                                           │
-│            │                                                    │
-│            ▼                                                    │
-│   ┌─────────────────────────────────────────────┐               │
-│   │  이벤트 감지: "이란에서 대규모 시위 발생"   │               │
-│   └─────────────────────────────────────────────┘               │
-│            │                                                    │
-│            ▼                                                    │
+│   ┌───────────────────────────────────────────────────────┐     │
+│   │                 TriggerManager                         │     │
+│   │                 (병렬 스캔 + 중복 제거)                │     │
+│   └───────────────────────────────────────────────────────┘     │
+│                            │                                    │
+│        ┌───────────────────┼───────────────────┐                │
+│        │                   │                   │                │
+│        ▼                   ▼                   ▼                │
+│   ┌─────────┐        ┌─────────┐        ┌─────────┐            │
+│   │ GDELT   │        │ Twitter │        │Telegram │            │
+│   │  뉴스   │        │   X     │        │  채널   │            │
+│   │ (무료)  │        │ (무료)  │        │ (무료)  │            │
+│   └────┬────┘        └────┬────┘        └────┬────┘            │
+│        │                  │                  │                  │
+│        │  100K+ 소스      │  실시간 검색     │  OSINT 채널     │
+│        │  15분 딜레이     │  Twikit         │  Telethon       │
+│        │                  │  (개인계정)      │  (가입채널)     │
+│        │                  │                  │                  │
+│        └──────────────────┴──────────────────┘                  │
+│                            │                                    │
+│                   키워드 매칭 필터                               │
+│                   (war, protest, violence...)                   │
+│                            │                                    │
+│                            ▼                                    │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │              LLM 분류 (GPT-4o-mini)                      │   │
+│   │                                                          │   │
+│   │  - 이벤트 카테고리 분류 (war/protest/terrorism/...)     │   │
+│   │  - 중요도 평가 (significant/not significant)            │   │
+│   │  - 중복 이벤트 그룹화                                   │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                            │                                    │
+│                            ▼                                    │
 │   ┌─────────────────────────────────────────────────────────┐   │
 │   │  자율 조사 에이전트                                      │   │
-│   │                                                          │   │
-│   │  LLM: "이란 시위니까..."                                 │   │
-│   │       "Tavily로 Iran International 검색"                │   │
-│   │       "텔레그램 iran 채널 검색"                          │   │
-│   │       "YouTube에서 Tehran protest 검색"                  │   │
 │   │                                                          │   │
 │   │  도구들:                                                 │   │
 │   │  - search_web (Tavily) ──────── $20/월                  │   │
@@ -372,6 +391,60 @@ PRESET_CHANNELS = {
 │                                                                 │
 │   총 비용: ~$20/월                                              │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+### 구현된 트리거 소스
+
+| 트리거 | 라이브러리 | 비용 | 특징 |
+|--------|-----------|------|------|
+| **GDELT** | gdeltdoc | $0 | 100K+ 뉴스 소스, 15분 딜레이 |
+| **X/Twitter** | Twikit | $0 | 개인계정 사용, 실시간, ToS 위험 |
+| **Telegram** | Telethon | $0 | 가입 채널만, 실시간 |
+
+### Twikit (X/Twitter 트리거)
+
+공식 API ($5,000/월) 대신 **Twikit** 라이브러리 사용:
+
+```python
+# 특징
+- 개인 계정 쿠키로 인증 (API 키 불필요)
+- 완전 무료
+- 실시간 검색 가능
+- ToS 위반 가능성 → 부계정 권장
+
+# 사용법
+from twikit import Client
+
+client = Client('en-US')
+client.load_cookies('twitter_cookies.json')  # 또는 로그인
+
+tweets = await client.search_tweet(
+    query="war OR protest OR violence",
+    product='Latest',
+    count=30
+)
+```
+
+### 환경 변수 설정
+
+```bash
+# .env
+
+# GDELT (기본 활성화)
+AGENT_GDELT_ENABLED=true
+AGENT_GDELT_TIMESPAN=1h
+
+# X/Twitter (Twikit)
+AGENT_TWITTER_ENABLED=false
+AGENT_TWITTER_USERNAME=your_username
+AGENT_TWITTER_EMAIL=your_email
+AGENT_TWITTER_PASSWORD=your_password
+
+# Telegram
+AGENT_TELEGRAM_ENABLED=false
+AGENT_TELEGRAM_API_ID=your_api_id
+AGENT_TELEGRAM_API_HASH=your_api_hash
+AGENT_TELEGRAM_CHANNELS=ukrainenowenglish,IranIntl
 ```
 
 ---
@@ -456,18 +529,33 @@ async def search_channel(channel, query):
 
 ## 7. 결론
 
-| 요구사항 | 가능 여부 | 방법 |
-|----------|-----------|------|
-| 뉴스 글로벌 검색 | ✅ 완전 가능 | GDELT (무료) |
-| 텔레그램 공개 채널 | ✅ 가능 | Telethon (가입 필요) |
-| 텔레그램 비공개 채널 | ❌ 불가능 | - |
-| X/트위터 | ⚠️ 위험 감수 시 | Apify (~$1/월) |
-| YouTube | ✅ 가능 | 공식 API (무료) |
-| 개인 채널 전체 | ❌ 기술적 불가능 | - |
+| 요구사항 | 가능 여부 | 방법 | 구현 상태 |
+|----------|-----------|------|-----------|
+| 뉴스 글로벌 검색 | ✅ 완전 가능 | GDELT (무료) | ✅ 구현됨 |
+| X/트위터 실시간 | ✅ 가능 | Twikit (무료, 개인계정) | ✅ 구현됨 |
+| 텔레그램 공개 채널 | ✅ 가능 | Telethon (가입 필요) | ✅ 구현됨 |
+| 텔레그램 비공개 채널 | ❌ 불가능 | - | - |
+| YouTube | ✅ 가능 | 공식 API (무료) | 🔜 예정 |
+| 개인 채널 전체 | ❌ 기술적 불가능 | - | - |
 
-**권장 비용:** **$20/월** (Tavily) + **$0** (나머지)
+### 구현된 파일 구조
+
+```
+app/agents/triggers/
+├── __init__.py      # 모듈 내보내기
+├── base.py          # BaseTrigger, TriggerEvent 정의
+├── gdelt.py         # GDELTTrigger (뉴스)
+├── twitter.py       # TwitterTrigger (Twikit)
+├── telegram.py      # TelegramTrigger (Telethon)
+└── manager.py       # TriggerManager (통합 관리)
+```
+
+**트리거 비용:** **$0** (GDELT + Twikit + Telethon 모두 무료)
+**조사 비용:** **$20/월** (Tavily 검색)
+**총 비용:** **~$20/월**
 
 ---
 
 *작성일: 2026-01-12*
+*업데이트: 다중 소스 트리거 시스템 구현 완료*
 *하루 100건 (월 3,000건) 기준*
