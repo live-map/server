@@ -3,7 +3,7 @@ Deep Verification Investigation Agent (Perplexity Style)
 
 Based on Perplexity Deep Research architecture:
 1. Query Decomposition - Split topic into subtopics
-2. Multi-pass Retrieval - Search each subtopic independently
+2. Multi-pass Retrieval - Search each subtopic independently (ReAct pattern)
 3. Structured Notes - Intermediate synthesis per topic
 4. Conflict Detection - Find and flag contradictions
 5. Confidence Scoring - Per source and per claim
@@ -14,6 +14,7 @@ Key improvements over v1:
 - Source-level confidence scoring
 - Structured intermediate notes before final report
 - Better citation tracking throughout pipeline
+- ReAct pattern for autonomous tool selection per subtopic
 """
 
 import asyncio
@@ -22,7 +23,7 @@ import logging
 from datetime import datetime
 from typing import Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -30,9 +31,12 @@ from pydantic import BaseModel
 
 from .config import agent_settings
 from .graph import InvestigationReport, InvestigationState
-from .tools import search_news_gdelt, search_web_free, search_web
+from .tools import ALL_TOOLS
 
 logger = logging.getLogger(__name__)
+
+# Create a tool map for execution
+TOOL_MAP = {tool.name: tool for tool in ALL_TOOLS}
 
 
 # =============================================================================
@@ -75,7 +79,7 @@ class DeepVerificationState(InvestigationState):
     structured_notes: list[dict] = []
     source_items: list[dict] = []
     conflicts_detected: list[dict] = []
-    retrieval_attempts: int = 0
+    current_subtopic_sources: list[dict] = []  # Sources for current subtopic
 
 
 # =============================================================================
@@ -85,32 +89,45 @@ class DeepVerificationState(InvestigationState):
 
 class DeepVerificationAgent:
     """
-    Perplexity-style Deep Verification Agent
+    Perplexity-style Deep Verification Agent with Autonomous Tool Selection
 
     Pipeline:
     1. DECOMPOSER: Split query into subtopics
-    2. RESEARCHER: Search each subtopic directly (no complex message management)
+    2. RESEARCHER: ReAct pattern - LLM autonomously selects tools per subtopic
     3. NOTER: Create structured notes per subtopic
     4. VERIFIER: Cross-verify and detect conflicts
     5. SYNTHESIZER: Generate final report with citations
+
+    Key Feature: ReAct pattern allows LLM to autonomously decide which tools
+    to use for each subtopic, with max iterations to prevent infinite loops.
     """
 
+    MAX_REACT_ITERATIONS = 3  # Max tool calls per subtopic
+
     def __init__(self):
+        # LLM with tools bound for autonomous selection
         self.llm = ChatOpenAI(
             model=agent_settings.llm_model,
-            temperature=0.1,  # Lower for more factual
+            temperature=0.1,
+            api_key=agent_settings.openai_api_key,
+        ).bind_tools(ALL_TOOLS)
+
+        # LLM without tools for synthesis/verification
+        self.llm_no_tools = ChatOpenAI(
+            model=agent_settings.llm_model,
+            temperature=0.1,
             api_key=agent_settings.openai_api_key,
         )
 
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
-        """Build the simplified deep verification graph"""
+        """Build the deep verification graph"""
         graph = StateGraph(DeepVerificationState)
 
-        # Nodes - simplified without ToolNode
+        # Nodes
         graph.add_node("decomposer", self._decompose_node)
-        graph.add_node("researcher", self._research_node)  # Combined retriever + tool execution
+        graph.add_node("researcher", self._research_node)  # ReAct pattern
         graph.add_node("noter", self._note_node)
         graph.add_node("verifier", self._verify_node)
         graph.add_node("synthesizer", self._synthesize_node)
@@ -142,11 +159,11 @@ class DeepVerificationAgent:
             "subtopics": [],
             "structured_notes": [],
             "source_items": [],
+            "current_subtopic_sources": [],
             "conflicts_detected": [],
             "collected_items": [],
             "verified_facts": [],
             "iteration": 0,
-            "retrieval_attempts": 0,
             "tool_calls_count": 0,
             "messages": [],
             "plan": None,
@@ -181,9 +198,6 @@ class DeepVerificationAgent:
     async def _decompose_node(self, state: dict) -> dict:
         """
         DECOMPOSER: Split main query into 3-5 subtopics
-
-        Like Perplexity, we break down the question into dimensions
-        that need to be researched independently.
         """
         event = state["event"]
         category = state["event_category"]
@@ -208,7 +222,7 @@ SUBTOPIC: [specific research question]
 SUBTOPIC: [specific research question]
 ..."""
 
-        response = await self.llm.ainvoke([
+        response = await self.llm_no_tools.ainvoke([
             SystemMessage(content=prompt),
             HumanMessage(content=f"Decompose: {event}")
         ])
@@ -227,9 +241,12 @@ SUBTOPIC: [specific research question]
 
     async def _research_node(self, state: dict) -> dict:
         """
-        RESEARCHER: Directly execute searches for current subtopic
+        RESEARCHER: ReAct pattern - LLM autonomously selects tools
 
-        Simplified approach - directly call search tools instead of using ToolNode
+        For each subtopic:
+        1. LLM decides which tools to call based on the subtopic
+        2. Execute tools and collect results
+        3. Repeat until LLM stops calling tools OR max iterations reached
         """
         subtopics = state.get("subtopics", [])
         current_idx = state.get("iteration", 0)
@@ -240,75 +257,124 @@ SUBTOPIC: [specific research question]
         current_subtopic = subtopics[current_idx]
         event = state["event"]
 
-        print(f"\n[RESEARCHER] Searching subtopic {current_idx + 1}/{len(subtopics)}: {current_subtopic[:50]}...")
+        print(f"\n[RESEARCHER] Subtopic {current_idx + 1}/{len(subtopics)}: {current_subtopic[:50]}...")
+        print(f"[RESEARCHER] Using ReAct pattern (max {self.MAX_REACT_ITERATIONS} iterations)")
 
-        # Direct tool execution - much simpler than ToolNode
+        # ReAct loop for this subtopic
         all_results = []
+        messages = [
+            SystemMessage(content=f"""You are researching a specific aspect of a news event.
 
-        # Search with multiple tools in parallel
-        search_query = f"{event} {current_subtopic}"
+MAIN EVENT: {event}
+CURRENT SUBTOPIC: {current_subtopic}
 
-        try:
-            # GDELT search
-            print(f"[RESEARCHER] Calling: search_news_gdelt")
-            gdelt_results = await search_news_gdelt.ainvoke({"query": search_query})
-            if isinstance(gdelt_results, list):
-                all_results.extend(gdelt_results)
-                print(f"[RESEARCHER] GDELT: {len(gdelt_results)} results")
-        except Exception as e:
-            print(f"[RESEARCHER] GDELT error: {e}")
+Search for information about this specific subtopic using available tools.
+You have access to these search tools:
+- search_news_gdelt: FREE - For news articles (prefer this first)
+- search_web_free: FREE - For general web search via DuckDuckGo
+- search_web: PAID - High-quality Tavily search (use as fallback)
+- search_telegram: For real-time social media
+- search_youtube: For video content
 
-        try:
-            # DuckDuckGo search
-            print(f"[RESEARCHER] Calling: search_web_free")
-            ddg_results = await search_web_free.ainvoke({"query": search_query})
-            if isinstance(ddg_results, list):
-                all_results.extend(ddg_results)
-                print(f"[RESEARCHER] DuckDuckGo: {len(ddg_results)} results")
-        except Exception as e:
-            print(f"[RESEARCHER] DuckDuckGo error: {e}")
+Strategy:
+1. Start with FREE tools (GDELT, DuckDuckGo)
+2. Use paid tools only if free tools don't provide enough info
+3. Stop when you have sufficient information (5+ sources)
 
-        # If no results, try paid search
-        if len(all_results) < 5:
-            try:
-                print(f"[RESEARCHER] Calling: search_web (paid fallback)")
-                tavily_results = await search_web.ainvoke({"query": search_query})
-                if isinstance(tavily_results, list):
-                    all_results.extend(tavily_results)
-                    print(f"[RESEARCHER] Tavily: {len(tavily_results)} results")
-            except Exception as e:
-                print(f"[RESEARCHER] Tavily error: {e}")
+Focus on finding:
+- Specific facts and numbers
+- Named sources and officials
+- Dates and timeline
+- Multiple perspectives"""),
+            HumanMessage(content=f"Search for information about: {current_subtopic}")
+        ]
 
-        # Store results for this subtopic
+        for iteration in range(self.MAX_REACT_ITERATIONS):
+            # Get LLM response (may contain tool calls)
+            response = await self.llm.ainvoke(messages)
+            messages.append(response)
+
+            # Check if LLM wants to call tools
+            if not response.tool_calls:
+                print(f"[RESEARCHER] Iteration {iteration + 1}: LLM finished (no more tool calls)")
+                break
+
+            # Execute each tool call
+            tool_names = [tc["name"] for tc in response.tool_calls]
+            print(f"[RESEARCHER] Iteration {iteration + 1}: Calling {', '.join(tool_names)}")
+
+            for tool_call in response.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                tool_id = tool_call["id"]
+
+                # Execute the tool
+                try:
+                    tool = TOOL_MAP.get(tool_name)
+                    if tool:
+                        result = await tool.ainvoke(tool_args)
+
+                        # Process results
+                        if isinstance(result, list):
+                            for item in result:
+                                if isinstance(item, dict) and not item.get("error"):
+                                    item["source_name"] = item.get("source_name", tool_name)
+                                    all_results.append(item)
+                            result_str = f"Found {len(result)} results"
+                        elif isinstance(result, dict) and not result.get("error"):
+                            result["source_name"] = result.get("source_name", tool_name)
+                            all_results.append(result)
+                            result_str = "Found 1 result"
+                        else:
+                            result_str = str(result)[:500]
+
+                        # Add tool result message
+                        messages.append(ToolMessage(
+                            content=result_str,
+                            tool_call_id=tool_id
+                        ))
+                        print(f"[RESEARCHER]   └─ {tool_name}: {result_str}")
+                    else:
+                        messages.append(ToolMessage(
+                            content=f"Tool {tool_name} not found",
+                            tool_call_id=tool_id
+                        ))
+                except Exception as e:
+                    messages.append(ToolMessage(
+                        content=f"Error: {str(e)}",
+                        tool_call_id=tool_id
+                    ))
+                    print(f"[RESEARCHER]   └─ {tool_name}: Error - {e}")
+
+        print(f"[RESEARCHER] Collected {len(all_results)} sources for this subtopic")
+
+        # Store results
         existing_sources = state.get("source_items", [])
 
         return {
             **state,
             "source_items": [*existing_sources, *all_results],
+            "current_subtopic_sources": all_results,
             "status": "noting",
         }
 
     async def _note_node(self, state: dict) -> dict:
         """
         NOTER: Create structured notes for completed subtopic
-
-        Synthesize findings into intermediate notes before verification
         """
         subtopics = state.get("subtopics", [])
         current_idx = state.get("iteration", 0)
-        source_items = state.get("source_items", [])
+        current_sources = state.get("current_subtopic_sources", [])
 
         if current_idx >= len(subtopics):
             return {**state, "status": "verifying"}
 
         current_subtopic = subtopics[current_idx]
 
-        # Get sources for current subtopic (last batch)
-        # For simplicity, use all sources accumulated so far
         print(f"\n[NOTER] Creating notes for subtopic {current_idx + 1}: {current_subtopic[:40]}...")
-        print(f"[NOTER] Total sources so far: {len(source_items)}")
+        print(f"[NOTER] Sources for this subtopic: {len(current_sources)}")
 
-        if not source_items:
+        if not current_sources:
             note = {
                 "subtopic": current_subtopic,
                 "findings": ["No information found"],
@@ -317,11 +383,10 @@ SUBTOPIC: [specific research question]
                 "confidence": 0.0,
             }
         else:
-            # Synthesize findings from recent sources
-            recent_sources = source_items[-20:] if len(source_items) > 20 else source_items
+            # Synthesize findings
             sources_text = "\n".join([
                 f"- [{s.get('source_name', 'unknown')}] {s.get('title', '')}: {s.get('content', '')[:200]}"
-                for s in recent_sources if isinstance(s, dict)
+                for s in current_sources[:15] if isinstance(s, dict)
             ])
 
             prompt = f"""Analyze the search results for this subtopic.
@@ -342,12 +407,12 @@ FINDING: [specific fact with source]
 CONFLICT: [if any contradiction found]
 CONFIDENCE: [high/medium/low]"""
 
-            response = await self.llm.ainvoke([
+            response = await self.llm_no_tools.ainvoke([
                 SystemMessage(content=prompt),
                 HumanMessage(content="Analyze and create notes")
             ])
 
-            note = self._parse_note(response.content, current_subtopic, recent_sources)
+            note = self._parse_note(response.content, current_subtopic, current_sources)
 
         existing_notes = state.get("structured_notes", [])
 
@@ -356,6 +421,7 @@ CONFIDENCE: [high/medium/low]"""
         return {
             **state,
             "structured_notes": [*existing_notes, note],
+            "current_subtopic_sources": [],  # Clear for next subtopic
             "iteration": current_idx + 1,
             "status": "noting",
         }
@@ -372,8 +438,6 @@ CONFIDENCE: [high/medium/low]"""
     async def _verify_node(self, state: dict) -> dict:
         """
         VERIFIER: Cross-verify facts and detect conflicts
-
-        Key Perplexity feature: explicit conflict detection and confidence scoring
         """
         notes = state.get("structured_notes", [])
         source_items = state.get("source_items", [])
@@ -421,7 +485,7 @@ UNVERIFIED: [claim with single source]
 
 DISPUTED: [contradicting claims with explanation]"""
 
-        response = await self.llm.ainvoke([
+        response = await self.llm_no_tools.ainvoke([
             SystemMessage(content=prompt),
             HumanMessage(content="Perform deep verification")
         ])
@@ -441,8 +505,6 @@ DISPUTED: [contradicting claims with explanation]"""
     async def _synthesize_node(self, state: dict) -> dict:
         """
         SYNTHESIZER: Generate final report with citations
-
-        Combine all verified facts, note disputes, cite sources
         """
         event = state["event"]
         category = state["event_category"]
@@ -450,11 +512,9 @@ DISPUTED: [contradicting claims with explanation]"""
         unverified = state.get("unverified_claims", [])
         conflicts = state.get("conflicts_detected", [])
         source_items = state.get("source_items", [])
-        notes = state.get("structured_notes", [])
 
         print(f"\n[SYNTHESIZER] Generating final report...")
 
-        # Build context
         facts_text = json.dumps(verified_facts, indent=2, default=str)
 
         prompt = f"""Generate a comprehensive news report with citations.
@@ -483,7 +543,7 @@ IMPORTANT:
 - Include source citations
 - Note confidence levels where relevant"""
 
-        response = await self.llm.ainvoke([
+        response = await self.llm_no_tools.ainvoke([
             SystemMessage(content=prompt),
             HumanMessage(content="Generate final report with citations")
         ])
@@ -502,7 +562,7 @@ IMPORTANT:
             "timeline": self._extract_timeline(response.content),
             "verified_facts": verified_facts,
             "media": [],
-            "sources": sources[:50],  # Limit to 50
+            "sources": sources[:50],
             "unverified_claims": unverified,
             "disputed_claims": conflicts,
             "confidence_score": self._calculate_overall_confidence(verified_facts),
@@ -531,7 +591,6 @@ IMPORTANT:
             elif line.startswith("-") or line.startswith("•"):
                 subtopics.append(line.lstrip("-• ").strip())
 
-        # Ensure we have at least 3 subtopics
         if len(subtopics) < 3:
             subtopics = [
                 "What happened? (timeline and facts)",
@@ -539,7 +598,7 @@ IMPORTANT:
                 "What is the response? (government and international)",
             ]
 
-        return subtopics[:5]  # Max 5
+        return subtopics[:5]
 
     def _parse_note(self, content: str, subtopic: str, sources: list) -> dict:
         """Parse noter output into structured note"""
