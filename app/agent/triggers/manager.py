@@ -414,22 +414,28 @@ Only include SIGNIFICANT events (major breaking news)."""
         for line in response.strip().split("\n"):
             line = line.strip()
 
-            if line.startswith("INDEX:"):
+            # Handle formats like "1. INDEX: 1" or "INDEX: 1"
+            if "INDEX:" in line:
                 if current_idx is not None and current_significant:
                     if 0 <= current_idx < len(events):
                         classified.append((events[current_idx], current_category or "other"))
 
                 try:
-                    current_idx = int(line.split(":")[1].strip())
-                except:
+                    # Extract number after INDEX:
+                    idx_part = line.split("INDEX:")[1].strip()
+                    current_idx = int(idx_part.split()[0])
+                except (ValueError, IndexError):
                     current_idx = None
                 current_category = None
                 current_significant = False
 
-            elif line.startswith("CATEGORY:"):
-                current_category = line.split(":")[1].strip().lower()
+            elif "CATEGORY:" in line:
+                try:
+                    current_category = line.split("CATEGORY:")[1].strip().lower()
+                except IndexError:
+                    current_category = "other"
 
-            elif line.startswith("SIGNIFICANT:"):
+            elif "SIGNIFICANT:" in line:
                 current_significant = "yes" in line.lower()
 
         # 마지막 항목
