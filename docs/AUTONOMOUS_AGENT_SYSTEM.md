@@ -11,9 +11,33 @@
 | 버전 | 날짜 | 변경 내용 |
 |------|------|----------|
 | 4.0 | 2026-01-12 | 다중 소스 + 감지 레이어 |
-| **5.0** | **2026-01-13** | **Production-Ready Deep Verification Agent** |
+| 5.0 | 2026-01-13 | Production-Ready Deep Verification Agent |
+| **6.0** | **2026-01-13** | **Claim-Level Verification (2026 SOTA)** |
 
-### v5.0 주요 변경사항
+### v6.0 주요 변경사항
+
+**왜 바꾸는가?**
+
+v5.0 (Event-level) 검증의 한계:
+- "이란 시위" 전체를 "대체로 사실"로 판정 → 개별 거짓 주장 놓침
+- 10개 주장 중 8개 사실이어도 2개 거짓이 위험할 수 있음
+- Partial Truth (부분적 진실) 탐지 불가
+- 왜 그 verdict인지 설명 불가
+
+**2026 SOTA 연구 결과**:
+- [AIC CTU](https://arxiv.org/html/2508.04390): FEVER 8 우승, Simple RAG (AVeriTeC 0.50)
+- [HerO 2](https://arxiv.org/html/2507.11004): AVeriTeC 2025 2위, 29초/claim
+- Claim decomposition으로 **+7.5% 정확도**, 복잡한 주장에서 **+8.31%** 개선
+
+**v6.0 변경 내용**:
+- Event-level → **Claim-level** 검증
+- Subtopic 분해 → **Atomic Claim 추출** (VeriScore 방식)
+- NLI 검증 → **QA-based LLM 검증** (2026 SOTA)
+- Document-level Retrieval + MMR Reranking
+- Per-Claim Breakdown 출력
+- AP Style 기사 생성
+
+### v5.0 변경사항 (유지)
 - Deep Verification Agent v2.0 (Perplexity + GPT-Researcher 스타일)
 - 병렬 서브토픽 리서치 (`asyncio.gather()`)
 - Rate Limiting, Retry, Timeout 프로덕션 기능
