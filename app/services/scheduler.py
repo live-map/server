@@ -14,7 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal
 from app.models.feed import Feed
 from app.services.collector.telegram import CollectedMessage, TelegramCollector
 from app.services.verification.pipeline import VerificationStatus, run_pipeline

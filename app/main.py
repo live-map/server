@@ -6,53 +6,16 @@ API docs: http://localhost:8000/docs
 """
 
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
-from app.config import settings
+from app.core.config import settings
+from app.core.lifespan import lifespan
 
 logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Load ML models on startup, cleanup on shutdown."""
-    logger.info("Loading Stage 1 NLP models...")
-
-    # Lazy import to avoid loading models at import time
-    from app.services.verification.stage1.pipeline import load_all_models
-
-    load_all_models()
-    logger.info("Stage 1 models loaded successfully")
-
-    # Start scheduler if enabled
-    if settings.ENABLE_SCHEDULER:
-        from app.services.scheduler import start_scheduler
-
-        channels = None
-        if settings.TELEGRAM_CHANNELS:
-            channels = [c.strip() for c in settings.TELEGRAM_CHANNELS.split(",") if c.strip()]
-
-        start_scheduler(channels=channels)
-        logger.info("Background scheduler started")
-
-    yield
-
-    # Stop scheduler on shutdown
-    if settings.ENABLE_SCHEDULER:
-        from app.services.scheduler import stop_scheduler
-
-        stop_scheduler()
-
-    # Dispose DB engine
-    from app.db.session import engine
-
-    await engine.dispose()
-    logger.info("Shutting down...")
 
 
 app = FastAPI(
@@ -89,6 +52,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
             "type": type(exc).__name__,
         },
     )
+
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")

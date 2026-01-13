@@ -21,7 +21,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from .config import agent_settings
-from .models import (
+from .graph import (
     CollectedItem,
     InvestigationReport,
     InvestigationState,

@@ -7,7 +7,7 @@ GET /api/v1/collector/status - Get scheduler status
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from app.config import settings
+from app.core.config import settings
 from app.services.collector.telegram import TelegramCollector
 from app.services.scheduler import get_scheduler, run_once
 

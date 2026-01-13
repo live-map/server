@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
+from app.core.database import get_db
 from app.models.feed import Feed
 from app.schemas.feed import FeedItem
 

@@ -1,5 +1,5 @@
 """
-에이전트 상태 모델 (LangGraph용)
+LangGraph state definitions for investigation agent.
 """
 
 from datetime import datetime
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 class EventCategory(str, Enum):
-    """이벤트 카테고리"""
+    """Event category."""
 
     WAR = "war"
     PROTEST = "protest"
@@ -22,18 +22,17 @@ class EventCategory(str, Enum):
 
 
 class SourceType(str, Enum):
-    """소스 유형"""
+    """Source type."""
 
     NEWS = "news"
     TELEGRAM = "telegram"
     TWITTER = "twitter"
-    RSS = "rss"
     VIDEO = "video"
     IMAGE = "image"
 
 
 class CollectedItem(BaseModel):
-    """수집된 아이템"""
+    """Collected item from sources."""
 
     source_type: SourceType
     source_name: str  # e.g., "Reuters", "@iran_news"
@@ -46,16 +45,16 @@ class CollectedItem(BaseModel):
 
 
 class VerifiedFact(BaseModel):
-    """검증된 사실"""
+    """Verified fact with source attribution."""
 
     claim: str
-    supporting_sources: list[str]  # 소스 이름들
+    supporting_sources: list[str]  # Source names
     confidence: float  # 0.0 - 1.0
     conflicting_info: str | None = None
 
 
 class InvestigationPlan(BaseModel):
-    """조사 계획"""
+    """Investigation plan."""
 
     questions: list[str]
     suggested_sources: list[str]
@@ -63,36 +62,35 @@ class InvestigationPlan(BaseModel):
 
 
 class InvestigationReport(BaseModel):
-    """최종 리포트"""
+    """Final investigation report."""
 
     event_summary: str
-    category: EventCategory
+    category: EventCategory | str
     location: str | None = None
     timeline: list[str]
-    verified_facts: list[VerifiedFact]
-    media: list[str]  # 미디어 URLs
+    verified_facts: list[VerifiedFact | dict]
+    media: list[str]  # Media URLs
     sources: list[str]
     unverified_claims: list[str]
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-# LangGraph State
 class InvestigationState(TypedDict):
-    """LangGraph 상태"""
+    """LangGraph state for investigation agent."""
 
-    # 입력
-    event: str  # 트리거된 사건 설명
-    event_category: str  # 카테고리
+    # Input
+    event: str  # Triggered event description
+    event_category: str  # Category
 
-    # 조사 과정
+    # Investigation process
     plan: dict | None  # InvestigationPlan
-    collected_items: list[dict]  # CollectedItem들
-    verified_facts: list[dict]  # VerifiedFact들
+    collected_items: list[dict]  # CollectedItems
+    verified_facts: list[dict]  # VerifiedFacts
 
-    # 메타데이터
-    iteration: int  # 현재 반복 횟수
-    messages: list[Any]  # LLM 대화 히스토리
+    # Metadata
+    iteration: int  # Current iteration count
+    messages: list[Any]  # LLM conversation history
 
-    # 출력
+    # Output
     report: dict | None  # InvestigationReport
     status: str  # "planning", "collecting", "verifying", "publishing", "done"

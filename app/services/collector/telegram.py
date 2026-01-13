@@ -13,7 +13,7 @@ from pathlib import Path
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Message
 
-from app.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

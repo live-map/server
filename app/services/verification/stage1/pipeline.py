@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from fastapi.concurrency import run_in_threadpool
 
-from app.config import settings
+from app.core.config import settings
 from app.services.verification.stage1 import duplicate, fake_news, spacy_ner, subjectivity
 from app.services.verification.stage1.channel_credibility import (
     ChannelCredibilityResult,

@@ -12,7 +12,7 @@ from enum import Enum
 
 from mistralai import Mistral
 
-from app.config import settings
+from app.core.config import settings
 
 
 # Singleton client instance
