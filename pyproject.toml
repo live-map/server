@@ -3,43 +3,41 @@ name = "backend"
 version = "0.1.0"
 description = "Livemap backend - Real-time verified news feed API"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
-    # Existing
+    # Core
     "httpx>=0.28.1",
-    "mcp>=1.25.0",
-    "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
-    "python-dotenv>=1.2.1",
-    "telethon>=1.42.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "python-dotenv>=1.0.0",
+
     # FastAPI
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+
     # Database
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
     "pgvector>=0.3.0",
-    # Stage 1 NLP
-    "spacy>=3.7.0",
-    "sentence-transformers>=3.1.0",
-    "textblob>=0.18.0",
-    "transformers>=4.40.0",
-    "torch>=2.0.0",
-    # Stage 3 LLM
-    "mistralai>=1.0.0",
-    # Scheduler
-    "apscheduler>=3.10.0",
-    "greenlet>=3.3.0",
-    # Autonomous Agent (NEW)
+    "greenlet>=3.0.0",
+
+    # Autonomous Agent (LangGraph)
     "langgraph>=0.2.0",
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
-    "langchain-anthropic>=0.2.0",
     "tavily-python>=0.5.0",
-    "yt-dlp>=2024.0.0",
-    # Multi-source Trigger
-    "twikit>=2.0.0",  # X/Twitter (personal account, no API key)
+
+    # Multi-source Triggers
+    "telethon>=1.42.0",          # Telegram
+    "twikit>=2.0.0",              # X/Twitter (personal account)
+    "yt-dlp>=2024.0.0",           # YouTube/video download
+
+    # Embedding (for semantic clustering)
+    "sentence-transformers>=3.0.0",
+
+    # MCP Server (optional)
+    "mcp>=1.25.0",
 ]
 
 [dependency-groups]

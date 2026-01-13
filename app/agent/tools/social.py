@@ -48,8 +48,10 @@ async def search_telegram(query: str, channel: str | None = None) -> list[dict]:
     - query="Ukraine attack", channel="ukrainenowenglish"
     - query="OSINT footage", channel="GeoConfirmed"
 
-    Suggested channels:
-    {suggested_channels}
+    Suggested channels for different regions:
+    - Ukraine/Russia: @ukrainenowenglish, @nexta_live, @KyivIndependent
+    - Iran/Middle East: @IranIntl, @IranHRM, @AJABreaking
+    - OSINT: @GeoConfirmed, @WarMonitor3
 
     Args:
         query: Search query
@@ -57,7 +59,7 @@ async def search_telegram(query: str, channel: str | None = None) -> list[dict]:
 
     Returns:
         Message list [{text, date, channel, media_type, media_url}]
-    """.format(suggested_channels=SUGGESTED_TELEGRAM_CHANNELS)
+    """
 
     # TODO: Actual Telethon integration needed
     # Currently a placeholder

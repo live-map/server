@@ -233,6 +233,43 @@ If no significant events: NO_SIGNIFICANT_EVENTS"""
             "triggers": self.trigger_manager.get_status(),
         }
 
+    async def scan_all_sources(
+        self,
+        sources: list[str] | None = None,
+        keywords: list[str] | None = None,
+    ) -> list[dict]:
+        """
+        API용 스캔 메서드
+
+        Args:
+            sources: 스캔할 소스 목록 (gdelt, twitter, telegram). None이면 활성화된 모든 소스.
+            keywords: 필터링할 키워드. None이면 모든 이벤트.
+
+        Returns:
+            감지된 이벤트 목록
+        """
+        logger.info(f"Scanning sources: {sources or 'all'}, keywords: {keywords}")
+
+        # 트리거 매니저에서 특정 소스만 스캔
+        events = await self.trigger_manager.scan_all(sources=sources)
+
+        if not events:
+            return []
+
+        # 키워드 필터링
+        if keywords:
+            filtered_events = []
+            for event in events:
+                event_text = f"{event.title} {event.content}".lower()
+                if any(kw.lower() in event_text for kw in keywords):
+                    filtered_events.append(event)
+            events = filtered_events
+
+        # LLM 분류 (기존 로직 활용)
+        significant_events = await self._classify_and_group(events)
+
+        return significant_events
+
 
 # 하위 호환성을 위한 별칭
 NewsScanner = MultiSourceScanner

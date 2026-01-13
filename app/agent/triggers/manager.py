@@ -187,9 +187,15 @@ class TriggerManager:
 
         return results
 
-    async def scan_all(self) -> list[TriggerEvent]:
+    async def scan_all(
+        self,
+        sources: list[str] | None = None,
+    ) -> list[TriggerEvent]:
         """
         모든 트리거에서 병렬 스캔 + 감지 레이어 실행
+
+        Args:
+            sources: 스캔할 소스 목록 (gdelt, twitter, telegram). None이면 모든 소스.
 
         Returns:
             중복 제거된 이벤트 목록
@@ -200,8 +206,12 @@ class TriggerManager:
         # 병렬 스캔
         tasks = []
         for trigger in self.triggers:
-            if trigger.is_initialized:
-                tasks.append(self._scan_trigger(trigger))
+            if not trigger.is_initialized:
+                continue
+            # 소스 필터링
+            if sources and trigger.source_type.value.lower() not in [s.lower() for s in sources]:
+                continue
+            tasks.append(self._scan_trigger(trigger))
 
         if not tasks:
             logger.warning("No initialized triggers to scan")
