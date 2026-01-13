@@ -33,6 +33,9 @@ dependencies = [
     "twikit>=2.0.0",              # X/Twitter (personal account)
     "yt-dlp>=2024.0.0",           # YouTube/video download
 
+    # Free Search (DuckDuckGo)
+    "duckduckgo-search>=7.0.0",
+
     # Embedding (for semantic clustering)
     "sentence-transformers>=3.0.0",
 

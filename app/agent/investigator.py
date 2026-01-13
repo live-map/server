@@ -257,14 +257,27 @@ Investigation plan:
 
 Already collected {len(collected)} items.
 
-Use the available tools to gather more information:
-- search_web: For general news search
-- search_news_gdelt: For latest news from 100,000+ global sources
-- search_telegram: For real-time footage and local reports
-- get_video_info: To get details about video URLs
-- translate_text: To translate non-English content
+=== COST OPTIMIZATION: USE FREE TOOLS FIRST ===
 
-Choose the most appropriate tool based on the plan. Focus on getting diverse sources.
+FREE TOOLS (use these first):
+1. search_news_gdelt - FREE: For breaking news, conflicts, protests (100,000+ sources)
+2. search_web_free - FREE: For general web search (DuckDuckGo)
+3. search_telegram - FREE: For real-time footage and local reports
+4. search_youtube - FREE: For video content
+
+PAID TOOLS (use only if free tools fail):
+5. search_web - PAID: High-quality search (Tavily) - USE ONLY AS LAST RESORT
+
+UTILITY TOOLS:
+- get_video_info: Video metadata
+- translate_text: Translation
+
+RULES:
+1. ALWAYS start with search_news_gdelt for news/events
+2. Use search_web_free for general information
+3. ONLY use search_web (paid) if free tools return <3 results
+4. Focus on getting diverse sources
+
 If you have enough information (10+ items from multiple sources), say "COLLECTION_COMPLETE"."""
 
         messages = state.get("messages", [])
