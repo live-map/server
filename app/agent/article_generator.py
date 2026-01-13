@@ -272,36 +272,68 @@ class ArticleGenerator:
         """Parse LLM response into article structure."""
         article = GeneratedArticle()
 
-        sections = {
-            "HEADLINE:": "headline",
-            "LEAD:": "lead",
-            "NUT_GRAPH:": "nut_graph",
-            "BODY:": "body",
+        # More flexible section detection (handles markdown, variations)
+        section_patterns = {
+            "headline": ["HEADLINE:", "**HEADLINE:**", "## HEADLINE", "# HEADLINE"],
+            "lead": ["LEAD:", "**LEAD:**", "## LEAD", "# LEAD"],
+            "nut_graph": ["NUT_GRAPH:", "**NUT_GRAPH:**", "## NUT_GRAPH", "NUT GRAPH:", "**NUT GRAPH:**"],
+            "body": ["BODY:", "**BODY:**", "## BODY", "# BODY"],
         }
 
         current_section = None
         current_content: list[str] = []
 
+        logger.debug(f"Parsing article response:\n{content[:500]}...")
+
         for line in content.split("\n"):
+            line_upper = line.strip().upper()
+            found_section = False
+
             # Check for section headers
-            for header, attr in sections.items():
-                if line.strip().startswith(header):
-                    # Save previous section
-                    if current_section:
-                        setattr(article, current_section, "\n".join(current_content).strip())
-                    current_section = attr
-                    # Get content after header on same line
-                    remaining = line.strip()[len(header):].strip()
-                    current_content = [remaining] if remaining else []
+            for attr, patterns in section_patterns.items():
+                for pattern in patterns:
+                    if line_upper.startswith(pattern.upper()):
+                        # Save previous section
+                        if current_section:
+                            setattr(article, current_section, "\n".join(current_content).strip())
+                        current_section = attr
+                        # Get content after header on same line
+                        remaining = line.strip()[len(pattern):].strip()
+                        # Remove markdown bold markers
+                        remaining = remaining.strip("*").strip()
+                        current_content = [remaining] if remaining else []
+                        found_section = True
+                        logger.debug(f"Found section: {attr}")
+                        break
+                if found_section:
                     break
-            else:
+
+            if not found_section and current_section:
                 # Not a header, add to current section
-                if current_section:
-                    current_content.append(line)
+                current_content.append(line)
 
         # Save last section
         if current_section:
             setattr(article, current_section, "\n".join(current_content).strip())
+
+        # Log what was parsed
+        logger.info(
+            "Article parsed",
+            extra={
+                "has_headline": bool(article.headline),
+                "has_lead": bool(article.lead),
+                "has_nut_graph": bool(article.nut_graph),
+                "has_body": bool(article.body),
+            }
+        )
+
+        # If nothing was parsed, try to extract content directly
+        if not article.lead and not article.body:
+            logger.warning("Failed to parse sections, using raw content as body")
+            # Remove any markdown headers and use as body
+            clean_content = content.strip()
+            if clean_content:
+                article.body = clean_content
 
         return article
 
