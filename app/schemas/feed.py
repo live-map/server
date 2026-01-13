@@ -7,7 +7,7 @@ Reference: client/src/app/security/data/feedData.ts
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LocationSchema(BaseModel):
@@ -51,9 +51,10 @@ class FeedItem(BaseModel):
     )
     verificationStatus: Optional[str] = Field(None, alias="verification_status")
 
-    class Config:
-        populate_by_name = True
-        from_attributes = True
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+    )
 
 
 class FeedResponse(BaseModel):

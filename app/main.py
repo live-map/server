@@ -8,8 +8,9 @@ API docs: http://localhost:8000/docs
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.config import settings
@@ -47,6 +48,10 @@ async def lifespan(app: FastAPI):
 
         stop_scheduler()
 
+    # Dispose DB engine
+    from app.db.session import engine
+
+    await engine.dispose()
     logger.info("Shutting down...")
 
 
@@ -67,9 +72,23 @@ app.add_middleware(
         "http://127.0.0.1:3000",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected exceptions with consistent error response."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "type": type(exc).__name__,
+        },
+    )
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")

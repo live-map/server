@@ -39,15 +39,18 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency that provides a database session.
 
+    The session does NOT auto-commit. Callers should explicitly commit
+    when needed for better transaction control (SQLAlchemy 2.0 best practice).
+
     Usage:
         @app.get("/items")
         async def get_items(db: AsyncSession = Depends(get_db)):
             ...
+            await db.commit()  # Explicit commit when needed
     """
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise

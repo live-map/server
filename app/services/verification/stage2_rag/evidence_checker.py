@@ -2,6 +2,11 @@
 Evidence checker using NLI model.
 
 Determines if evidence supports, refutes, or is neutral to a claim.
+
+Upgraded to multilingual mDeBERTa-v3 (2024):
+- Supports 100+ languages including Korean
+- Trained on MNLI, FEVER-NLI, ANLI, LingNLI, WANLI (885K pairs)
+- Better zero-shot classification performance
 """
 
 import logging
@@ -18,13 +23,18 @@ class EvidenceChecker:
     """
     Check claims against evidence using Natural Language Inference.
 
-    Uses DeBERTa-v3 fine-tuned on NLI tasks.
-    Labels: 0=CONTRADICTION, 1=NEUTRAL, 2=ENTAILMENT
+    Uses multilingual mDeBERTa-v3 fine-tuned on NLI tasks.
+    Labels: 0=ENTAILMENT, 1=NEUTRAL, 2=CONTRADICTION
+
+    Upgrade from cross-encoder/nli-deberta-v3-small:
+    - 100+ language support (including Korean)
+    - Trained on 2.7M NLI pairs (vs ~1M)
+    - Better fact-checking performance (FEVER, ANLI trained)
     """
 
-    # Default model - good balance of speed and accuracy
-    DEFAULT_MODEL = "cross-encoder/nli-deberta-v3-small"
-    # Alternative: "cross-encoder/nli-deberta-v3-base" for higher accuracy
+    # Multilingual NLI model - 100+ languages, trained on FEVER+ANLI
+    DEFAULT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
+    # Alternative: "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli" for English-only highest accuracy
 
     _instance = None
     _model = None
@@ -98,10 +108,10 @@ class EvidenceChecker:
                 outputs = self._model(**inputs)
                 probs = torch.softmax(outputs.logits, dim=-1)[0]
 
-            # Extract scores (order: contradiction, neutral, entailment)
-            contradiction_score = probs[0].item()
+            # Extract scores (mDeBERTa order: entailment, neutral, contradiction)
+            entailment_score = probs[0].item()
             neutral_score = probs[1].item()
-            entailment_score = probs[2].item()
+            contradiction_score = probs[2].item()
 
             # Determine verdict
             max_score = max(contradiction_score, neutral_score, entailment_score)

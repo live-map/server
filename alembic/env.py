@@ -13,7 +13,7 @@ from alembic import context
 
 # Import models and Base for autogenerate
 from app.db.session import Base
-from app.models import Feed  # noqa: F401 - Import to register models
+from app.models import Channel, Feed  # noqa: F401 - Import to register models
 from app.config import settings
 
 # this is the Alembic Config object

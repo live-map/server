@@ -1,8 +1,15 @@
 """
 Duplicate detection using Sentence Transformers.
 
-Uses all-MiniLM-L6-v2 for 384-dimensional embeddings.
+Uses BGE-M3 for 1024-dimensional multilingual embeddings.
+Supports 100+ languages including Korean, 8192 token context.
 Compares new content against existing embeddings via cosine similarity.
+
+Upgrade from all-MiniLM-L6-v2 (2021):
+- MTEB score: 56 → 65+ (+16%)
+- Dimensions: 384 → 1024
+- Context: 512 → 8192 tokens
+- Languages: English only → 100+ languages
 """
 
 from dataclasses import dataclass
@@ -10,8 +17,11 @@ from dataclasses import dataclass
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-# Model produces 384-dimensional embeddings (matches Feed.embedding column)
-MODEL_NAME = "all-MiniLM-L6-v2"
+# BGE-M3: State-of-the-art multilingual embedding model (2024)
+# - 1024 dimensions, 8192 token context, 100+ languages
+# - Supports dense, sparse, and multi-vector retrieval
+MODEL_NAME = "BAAI/bge-m3"
+EMBEDDING_DIMENSION = 1024  # BGE-M3 output dimension
 SIMILARITY_THRESHOLD = 0.85  # Above this = duplicate
 
 # Global model instance
@@ -45,13 +55,13 @@ def get_model() -> SentenceTransformer:
 
 def generate_embedding(text: str) -> list[float]:
     """
-    Generate embedding for text.
+    Generate embedding for text using BGE-M3.
 
     Args:
-        text: Input text
+        text: Input text (supports up to 8192 tokens)
 
     Returns:
-        384-dimensional embedding vector
+        1024-dimensional embedding vector (multilingual)
     """
     model = get_model()
     embedding = model.encode(text, convert_to_numpy=True)

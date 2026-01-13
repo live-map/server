@@ -15,6 +15,24 @@ from mistralai import Mistral
 from app.config import settings
 
 
+# Singleton client instance
+_mistral_client: Mistral | None = None
+
+
+def get_mistral_client(api_key: str | None = None) -> Mistral | None:
+    """Get or create the Mistral client singleton."""
+    global _mistral_client
+    key = api_key or settings.MISTRAL_API_KEY
+
+    if not key:
+        return None
+
+    if _mistral_client is None:
+        _mistral_client = Mistral(api_key=key)
+
+    return _mistral_client
+
+
 class Verdict(str, Enum):
     """Verification verdict."""
 
@@ -80,9 +98,9 @@ async def verify_claim(
     Returns:
         MistralVerificationResult with verdict and analysis
     """
-    api_key = api_key or settings.MISTRAL_API_KEY
+    client = get_mistral_client(api_key)
 
-    if not api_key:
+    if not client:
         return MistralVerificationResult(
             verdict=Verdict.UNVERIFIABLE,
             confidence=0.0,
@@ -99,7 +117,6 @@ async def verify_claim(
         user_message += f"\n\nAdditional context:\n{context}"
 
     try:
-        client = Mistral(api_key=api_key)
 
         response = await client.chat.complete_async(
             model=model,

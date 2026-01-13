@@ -1,11 +1,8 @@
-# SearXNG settings for Livemap
-
 use_default_settings: true
 
-server:
-  secret_key: "livemap-searxng-secret-key-change-in-production"
-  limiter: false  # Disable rate limiting for local use
-  image_proxy: false
+general:
+  debug: false
+  instance_name: "Livemap SearXNG"
 
 search:
   safe_search: 0
@@ -13,28 +10,30 @@ search:
   default_lang: "en"
   formats:
     - html
-    - json  # Enable JSON API
+    - json
 
-# Enable specific search engines
+server:
+  secret_key: "change-me-in-production"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 15.0
+
 engines:
   - name: google
     engine: google
     shortcut: g
     disabled: false
 
-  - name: google news
-    engine: google_news
-    shortcut: gn
-    disabled: false
-
   - name: bing
     engine: bing
     shortcut: b
-    disabled: false
-
-  - name: bing news
-    engine: bing_news
-    shortcut: bn
     disabled: false
 
   - name: duckduckgo
@@ -46,13 +45,3 @@ engines:
     engine: wikipedia
     shortcut: wp
     disabled: false
-
-  - name: wikidata
-    engine: wikidata
-    shortcut: wd
-    disabled: false
-
-# Outgoing requests
-outgoing:
-  request_timeout: 10.0
-  max_request_timeout: 30.0
