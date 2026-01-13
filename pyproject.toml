@@ -41,6 +41,9 @@ dependencies = [
 
     # MCP Server (optional)
     "mcp>=1.25.0",
+
+    # Production utilities
+    "tenacity>=8.2.0",           # Retry with exponential backoff
 ]
 
 [dependency-groups]
