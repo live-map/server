@@ -30,7 +30,7 @@ class AgentSettings(BaseSettings):
 
     # GDELT (뉴스) - 인증 불필요
     gdelt_enabled: bool = True
-    gdelt_timespan: str = "1h"  # 검색 기간
+    gdelt_timespan: str = "24h"  # 검색 기간 (24시간 = 하루)
 
     # X/Twitter (Twikit) - 개인계정 필요
     twitter_enabled: bool = False

@@ -89,6 +89,7 @@ class InvestigationState(TypedDict):
 
     # Metadata
     iteration: int  # Current iteration count
+    tool_calls_count: int  # Tool calls counter (to prevent infinite loops)
     messages: list[Any]  # LLM conversation history
 
     # Output

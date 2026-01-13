@@ -44,12 +44,19 @@ class InvestigationAgent:
     """
 
     def __init__(self):
-        # LLM (저렴한 모델)
+        # LLM (저렴한 모델) - 도구 바인딩 버전 (executor용)
         self.llm = ChatOpenAI(
             model=agent_settings.llm_model,
             temperature=agent_settings.llm_temperature,
             api_key=agent_settings.openai_api_key,
         ).bind_tools(ALL_TOOLS)
+
+        # LLM (도구 없음) - 검증/발행용
+        self.llm_no_tools = ChatOpenAI(
+            model=agent_settings.llm_model,
+            temperature=agent_settings.llm_temperature,
+            api_key=agent_settings.openai_api_key,
+        )
 
         # 그래프 구성
         self.graph = self._build_graph()
@@ -121,12 +128,16 @@ class InvestigationAgent:
             "collected_items": [],
             "verified_facts": [],
             "iteration": 0,
+            "tool_calls_count": 0,
             "messages": [],
             "report": None,
             "status": "planning",
         }
 
-        config = {"configurable": {"thread_id": f"inv_{datetime.utcnow().isoformat()}"}}
+        config = {
+            "configurable": {"thread_id": f"inv_{datetime.utcnow().isoformat()}"},
+            "recursion_limit": 50,  # 기본 25에서 증가
+        }
 
         # 그래프 실행
         final_state = await self.graph.ainvoke(initial_state, config)
@@ -197,7 +208,7 @@ SOURCES:
 SEARCH_STRATEGY:
 [Brief description of how to search - what keywords, in what order]"""
 
-        response = await self.llm.ainvoke(
+        response = await self.llm_no_tools.ainvoke(
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Create investigation plan for: {event}"),
@@ -224,10 +235,20 @@ SEARCH_STRATEGY:
         plan = state.get("plan", {})
         event = state["event"]
         collected = state.get("collected_items", [])
+        tool_calls_count = state.get("tool_calls_count", 0)
 
-        # 수집 충분한지 체크
-        if len(collected) >= 10:  # 충분한 데이터
-            return {**state, "status": "verifying"}
+        # 이전 메시지에서 도구 결과가 있으면 카운트 증가
+        messages = state.get("messages", [])
+        if messages:
+            for msg in messages[-3:]:  # 최근 3개 메시지만 확인
+                if hasattr(msg, "type") and msg.type == "tool":
+                    tool_calls_count += 1
+                    break
+
+        # 수집 충분한지 체크 (10개 이상 또는 도구 호출 5회 이상)
+        if len(collected) >= 10 or tool_calls_count >= 5:
+            logger.info(f"Collection complete: {len(collected)} items, {tool_calls_count} tool calls")
+            return {**state, "status": "verifying", "tool_calls_count": tool_calls_count}
 
         system_prompt = f"""You are collecting information about: {event}
 
@@ -251,20 +272,34 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
 
         response = await self.llm.ainvoke(messages)
 
+        # 디버깅: LLM 응답 확인
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            tools_called = [t['name'] for t in response.tool_calls]
+            print(f"[EXECUTOR] Calling tools: {', '.join(tools_called)}")
+
         return {
             **state,
             "messages": [*messages, response],
+            "tool_calls_count": tool_calls_count,
         }
 
     def _should_use_tools(self, state: dict) -> Literal["tools", "verify"]:
         """도구 사용 여부 결정"""
         messages = state.get("messages", [])
+        tool_calls_count = state.get("tool_calls_count", 0)
+
+
+        # 도구 호출 횟수 제한 (5회)
+        if tool_calls_count >= 5:
+            print(f"[EXECUTOR] Tool limit reached, moving to verification")
+            return "verify"
+
         if not messages:
             return "verify"
 
         last_message = messages[-1]
 
-        # 도구 호출이 있으면 tools로
+        # 도구 호출이 있으면 tools로 (카운트 증가는 tools 노드에서)
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
 
@@ -278,7 +313,7 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
         if len(state.get("collected_items", [])) >= 10:
             return "verify"
 
-        # 그 외에는 tools 시도 (도구 없으면 verify로 fallback)
+        # 그 외에는 verify로 (무한 루프 방지)
         return "verify"
 
     async def _verify_node(self, state: dict) -> dict:
@@ -290,11 +325,16 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
         collected = state.get("collected_items", [])
         event = state["event"]
 
-        if not collected:
-            return {**state, "verified_facts": [], "status": "done"}
-
         # 메시지에서 도구 결과 추출하여 collected_items 업데이트
-        collected = self._extract_tool_results(state.get("messages", []))
+        messages = state.get("messages", [])
+        print(f"[VERIFIER] Processing {len(messages)} messages...")
+
+        collected = self._extract_tool_results(messages)
+        print(f"[VERIFIER] Extracted {len(collected)} items from tools")
+
+        if not collected:
+            print(f"[VERIFIER] No data collected, skipping verification")
+            return {**state, "verified_facts": [], "status": "done"}
 
         # 수집된 정보 요약
         collected_summary = "\n".join(
@@ -326,7 +366,7 @@ UNVERIFIED_CLAIMS:
 CONFLICTS:
 - [any conflicting information found]"""
 
-        response = await self.llm.ainvoke(
+        response = await self.llm_no_tools.ainvoke(
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content="Verify the collected information"),
@@ -334,6 +374,7 @@ CONFLICTS:
         )
 
         verified_facts = self._parse_verification(response.content)
+        print(f"[VERIFIER] Found {len(verified_facts)} verified facts")
 
         return {
             **state,
@@ -394,12 +435,14 @@ Create a professional news report with:
 
 Keep it factual and cite sources."""
 
-        response = await self.llm.ainvoke(
+        response = await self.llm_no_tools.ainvoke(
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content="Generate the final report"),
             ]
         )
+
+        print(f"[PUBLISHER] Generating final report...")
 
         # 리포트 구성
         report = {
@@ -482,10 +525,47 @@ Keep it factual and cite sources."""
 
     def _extract_tool_results(self, messages: list) -> list[dict]:
         """메시지에서 도구 결과 추출"""
+        from langchain_core.messages import ToolMessage
+
         results = []
         for msg in messages:
-            if hasattr(msg, "content") and isinstance(msg.content, str):
-                # 도구 결과는 보통 리스트/딕트 형태
+            # ToolMessage 타입 체크 (LangGraph ToolNode 결과)
+            if isinstance(msg, ToolMessage):
+                content = msg.content
+
+                # content가 이미 리스트/딕트인 경우
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            # source 정보 추가
+                            item["source_name"] = item.get("source_name", msg.name or "unknown")
+                            results.append(item)
+                elif isinstance(content, dict):
+                    content["source_name"] = content.get("source_name", msg.name or "unknown")
+                    results.append(content)
+                elif isinstance(content, str):
+                    # JSON 문자열인 경우 파싱
+                    try:
+                        if content.startswith("[") or content.startswith("{"):
+                            data = json.loads(content)
+                            if isinstance(data, list):
+                                for item in data:
+                                    if isinstance(item, dict):
+                                        item["source_name"] = item.get("source_name", msg.name or "unknown")
+                                        results.append(item)
+                            elif isinstance(data, dict):
+                                data["source_name"] = data.get("source_name", msg.name or "unknown")
+                                results.append(data)
+                    except json.JSONDecodeError:
+                        # JSON이 아닌 텍스트 결과
+                        if content and len(content) > 10:
+                            results.append({
+                                "source_name": msg.name or "unknown",
+                                "content": content,
+                                "title": f"Result from {msg.name}",
+                            })
+            # 일반 메시지에서도 JSON 체크 (fallback)
+            elif hasattr(msg, "content") and isinstance(msg.content, str):
                 try:
                     if msg.content.startswith("[") or msg.content.startswith("{"):
                         data = json.loads(msg.content)
@@ -495,16 +575,45 @@ Keep it factual and cite sources."""
                             results.append(data)
                 except:
                     pass
+
         return results
 
     def _extract_summary(self, content: str) -> str:
         """요약 추출"""
-        for line in content.split("\n"):
-            if "SUMMARY:" in line.upper():
-                return line.split(":", 1)[1].strip()
-        # 첫 문단 반환
+        lines = content.split("\n")
+        in_summary = False
+        summary_lines = []
+
+        for line in lines:
+            # SUMMARY 섹션 시작 체크 (마크다운 포함)
+            if "SUMMARY" in line.upper():
+                in_summary = True
+                # 같은 줄에 내용이 있으면 추출
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    text = parts[1].strip().strip("*").strip()
+                    if text:
+                        summary_lines.append(text)
+                continue
+
+            if in_summary:
+                # 다음 섹션 시작하면 종료
+                if any(section in line.upper() for section in ["TIMELINE:", "DETAILS:", "UNVERIFIED:"]):
+                    break
+                # 빈 줄이면 종료
+                if not line.strip():
+                    break
+                # 마크다운 볼드 제거
+                clean_line = line.strip().strip("*").strip()
+                if clean_line:
+                    summary_lines.append(clean_line)
+
+        if summary_lines:
+            return " ".join(summary_lines)[:500]
+
+        # fallback: 첫 문단 반환
         paragraphs = content.split("\n\n")
-        return paragraphs[0][:500] if paragraphs else ""
+        return paragraphs[0].strip("*").strip()[:500] if paragraphs else ""
 
     def _extract_location(self, event: str) -> str | None:
         """위치 추출 (간단한 규칙 기반)"""

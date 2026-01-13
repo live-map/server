@@ -6,11 +6,12 @@ GET /api/v1/agent/status/{id} - Get investigation status
 POST /api/v1/agent/scan - Trigger multi-source scan
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.agent import InvestigationAgent, NewsScanner
@@ -59,10 +60,7 @@ class ScanResponse(BaseModel):
 
 
 @router.post("/investigate", response_model=InvestigateResponse)
-async def start_investigation(
-    request: InvestigateRequest,
-    background_tasks: BackgroundTasks,
-):
+async def start_investigation(request: InvestigateRequest):
     """
     Start an autonomous investigation on a topic.
 
@@ -84,9 +82,10 @@ async def start_investigation(
         "report": None,
     }
 
-    # Run investigation in background
+    # Run investigation in background using asyncio.create_task
     async def run_investigation():
         try:
+            print(f"[AGENT] Starting investigation: {investigation_id}")
             agent = InvestigationAgent()
             report = await agent.investigate(
                 event=request.topic,
@@ -95,12 +94,15 @@ async def start_investigation(
             _investigations[investigation_id]["status"] = "completed"
             _investigations[investigation_id]["report"] = report.model_dump()
             _investigations[investigation_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+            print(f"[AGENT] Investigation completed: {investigation_id}")
         except Exception as e:
-            logger.error(f"Investigation failed: {e}")
+            print(f"[AGENT] Investigation failed: {e}")
             _investigations[investigation_id]["status"] = "failed"
             _investigations[investigation_id]["error"] = str(e)
 
-    background_tasks.add_task(run_investigation)
+    # Create async task (runs in background)
+    task = asyncio.create_task(run_investigation())
+    print(f"[AGENT] Task created: {task}")
 
     return InvestigateResponse(
         investigation_id=investigation_id,

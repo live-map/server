@@ -56,14 +56,17 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
 
             results = []
             for r in data.get("results", []):
+                domain = r.get("url", "").split("/")[2] if r.get("url") else "unknown"
                 results.append({
                     "title": r.get("title", ""),
                     "url": r.get("url", ""),
                     "content": r.get("content", "")[:500],
-                    "source": r.get("url", "").split("/")[2] if r.get("url") else "",
+                    "source": domain,
+                    "source_name": f"Tavily:{domain}",
                     "score": r.get("score", 0),
                 })
 
+            logger.info(f"Tavily: {len(results)} results for '{query[:30]}...'")
             return results
 
     except Exception as e:
@@ -105,8 +108,23 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
                     "sort": "datedesc",
                 },
             )
-            response.raise_for_status()
-            data = response.json()
+
+            # 응답 상태 체크
+            if response.status_code != 200:
+                logger.warning(f"GDELT returned status {response.status_code}")
+                return [{"error": f"GDELT API error: {response.status_code}", "results": []}]
+
+            # 응답 내용 체크 (빈 응답 또는 HTML 반환 시)
+            content = response.text
+            if not content or content.startswith("<!") or content.startswith("<html"):
+                logger.warning(f"GDELT returned non-JSON response")
+                return [{"info": "No results found from GDELT", "results": []}]
+
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.warning(f"GDELT JSON parse error: {json_err}")
+                return [{"error": f"GDELT returned invalid JSON", "results": []}]
 
             results = []
             for art in data.get("articles", []):
@@ -114,13 +132,19 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
                     "title": art.get("title", ""),
                     "url": art.get("url", ""),
                     "source": art.get("domain", ""),
+                    "source_name": f"GDELT:{art.get('domain', 'unknown')}",
+                    "content": art.get("title", ""),  # GDELT은 content가 없어서 title 사용
                     "published": art.get("seendate", ""),
                     "language": art.get("language", ""),
                     "country": art.get("sourcecountry", ""),
                 })
 
+            logger.info(f"GDELT: {len(results)} articles for '{query[:30]}...'")
             return results
 
+    except httpx.TimeoutException:
+        logger.warning("GDELT request timed out")
+        return [{"error": "GDELT request timed out", "results": []}]
     except Exception as e:
         logger.error(f"GDELT search error: {e}")
         return [{"error": str(e), "results": []}]

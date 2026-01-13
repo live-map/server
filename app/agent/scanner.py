@@ -250,6 +250,9 @@ If no significant events: NO_SIGNIFICANT_EVENTS"""
         """
         logger.info(f"Scanning sources: {sources or 'all'}, keywords: {keywords}")
 
+        # 트리거 초기화 (아직 안 됐으면)
+        await self.trigger_manager.initialize_all()
+
         # 트리거 매니저에서 특정 소스만 스캔
         events = await self.trigger_manager.scan_all(sources=sources)
 
