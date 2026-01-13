@@ -37,7 +37,6 @@ dependencies = [
     "langchain-openai>=0.2.0",
     "langchain-anthropic>=0.2.0",
     "tavily-python>=0.5.0",
-    "feedparser>=6.0.0",
     "yt-dlp>=2024.0.0",
     # Multi-source Trigger
     "twikit>=2.0.0",  # X/Twitter (personal account, no API key)

@@ -5,7 +5,7 @@ Verification request/response schemas.
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VerifyRequest(BaseModel):
@@ -55,8 +55,7 @@ class VerifyResponse(BaseModel):
     # DB save info
     saved_id: Optional[int] = None  # ID if saved to DB
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VerifyDetailedResponse(VerifyResponse):
@@ -68,10 +67,10 @@ class VerifyDetailedResponse(VerifyResponse):
     subjectivity_score: Optional[float] = None
     fake_probability: Optional[float] = None
 
-    # Stage 2 details
-    check_worthy_score: Optional[float] = None
-    has_existing_fact_check: Optional[bool] = None
-    fact_check_ratings: list[str] = []
+    # Stage 2 details (RAG verification)
+    stage2_verdict: Optional[str] = None
+    stage2_confidence: Optional[float] = None
+    stage2_evidence_summary: Optional[str] = None
 
     # Stage 3 details
     verdict: Optional[str] = None

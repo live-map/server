@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -21,6 +22,18 @@ from app.schemas.verify import (
 from app.services.verification.pipeline import run_pipeline
 
 router = APIRouter()
+
+
+async def _load_existing_embeddings(db: AsyncSession, limit: int = 100) -> list[tuple[int, list[float]]]:
+    """Load recent embeddings from DB for duplicate detection."""
+    result = await db.execute(
+        select(Feed.id, Feed.embedding)
+        .where(Feed.embedding.isnot(None))
+        .order_by(Feed.created_at.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    return [(row[0], list(row[1])) for row in rows if row[1] is not None]
 
 
 async def _save_to_db(
@@ -73,11 +86,11 @@ async def _save_to_db(
         stage1_is_duplicate=result.stage1_result.is_duplicate if result and result.stage1_result else False,
         stage1_subjectivity=result.stage1_result.subjectivity_score if result and result.stage1_result else None,
         stage1_fake_prob=result.stage1_result.fake_probability if result and result.stage1_result else None,
-        # Stage 2
+        # Stage 2 (RAG verification)
         stage2_completed=result.stage2_completed if result else False,
-        stage2_check_worthy=result.stage2_result.check_worthy_score if result and result.stage2_result else None,
-        stage2_has_fact_check=result.stage2_result.has_existing_fact_check if result and result.stage2_result else False,
-        stage2_fact_check_ratings=json.dumps(result.stage2_result.fact_check_ratings) if result and result.stage2_result else None,
+        stage2_verdict=result.stage2_result.verdict.value if result and result.stage2_result else None,
+        stage2_confidence=result.stage2_result.confidence if result and result.stage2_result else None,
+        stage2_evidence_summary=result.stage2_result.evidence_summary if result and result.stage2_result else None,
         # Stage 3
         stage3_completed=result.stage3_completed if result else False,
         stage3_verdict=result.stage3_result.verdict.value if result and result.stage3_result else None,
@@ -101,11 +114,11 @@ async def verify_content(
     """
     Verify news content through the 3-stage verification pipeline.
 
-    **Stages:**
+    **Stages** (3-stage mandatory pipeline):
     1. **Stage 1 (Local NLP)**: Location extraction, duplicate detection,
        subjectivity analysis, fake news detection
-    2. **Stage 2 (API)**: ClaimBuster check-worthiness, Google Fact Check lookup
-    3. **Stage 3 (LLM)**: Mistral Small deep analysis
+    2. **Stage 2 (RAG)**: CRAG evidence verification with source tiers
+    3. **Stage 3 (LLM)**: Mistral Small deep analysis + articleization
 
     **Parameters:**
     - **text** (required): Content to verify (10-5000 chars)
@@ -123,8 +136,12 @@ async def verify_content(
     saved_id = None
 
     try:
+        # Load existing embeddings for duplicate detection
+        existing_embeddings = await _load_existing_embeddings(db)
+
         result = await run_pipeline(
             text=request.text,
+            existing_embeddings=existing_embeddings,
             skip_stage3=request.skip_stage3,
         )
     except Exception as e:
@@ -183,8 +200,12 @@ async def verify_content_detailed(
     saved_id = None
 
     try:
+        # Load existing embeddings for duplicate detection
+        existing_embeddings = await _load_existing_embeddings(db)
+
         result = await run_pipeline(
             text=request.text,
+            existing_embeddings=existing_embeddings,
             skip_stage3=request.skip_stage3,
         )
     except Exception as e:
@@ -232,11 +253,11 @@ async def verify_content_detailed(
         response.subjectivity_score = result.stage1_result.subjectivity_score
         response.fake_probability = result.stage1_result.fake_probability
 
-    # Add Stage 2 details
+    # Add Stage 2 details (RAG verification)
     if result.stage2_result:
-        response.check_worthy_score = result.stage2_result.check_worthy_score
-        response.has_existing_fact_check = result.stage2_result.has_existing_fact_check
-        response.fact_check_ratings = result.stage2_result.fact_check_ratings
+        response.stage2_verdict = result.stage2_result.verdict.value
+        response.stage2_confidence = result.stage2_result.confidence
+        response.stage2_evidence_summary = result.stage2_result.evidence_summary
 
     # Add Stage 3 details
     if result.stage3_result:

@@ -238,7 +238,7 @@ Already collected {len(collected)} items.
 
 Use the available tools to gather more information:
 - search_web: For general news search
-- search_rss_feeds: For latest headlines from specific sources
+- search_news_gdelt: For latest news from 100,000+ global sources
 - search_telegram: For real-time footage and local reports
 - get_video_info: To get details about video URLs
 - translate_text: To translate non-English content

@@ -26,12 +26,12 @@ services:
     image: searxng/searxng:latest
     container_name: livemap-searxng
     restart: unless-stopped
-    volumes:
-      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
     ports:
       - "8888:8080"
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:-change-me-in-production}
+    volumes:
+      - ./docker/searxng:/etc/searxng:rw
 
   # FastAPI Application
   api:
@@ -53,7 +53,6 @@ services:
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
       TELEGRAM_PHONE: ${TELEGRAM_PHONE}
       # API Keys
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       # App settings
       DEBUG: "false"

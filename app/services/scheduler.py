@@ -25,9 +25,16 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 # Configuration
-COLLECTION_INTERVAL_MINUTES = 15
+COLLECTION_INTERVAL_MINUTES = 5  # Run every 5 minutes for testing
 HOURS_TO_LOOK_BACK = 1
-MESSAGES_PER_CHANNEL = 50
+MESSAGES_PER_CHANNEL = 30
+
+# War news channels to monitor
+WAR_CHANNELS = [
+    2117167313,   # WarFront Witness
+    1074354585,   # Военный Осведомитель (milinfolive)
+    1396864349,   # Белорусский силовик
+]
 
 
 async def get_existing_embeddings(db: AsyncSession) -> list[tuple[int, list[float]]]:
@@ -43,45 +50,71 @@ async def save_verified_feed(
     message: CollectedMessage,
     pipeline_result,
 ) -> Feed | None:
-    """Save verified message to database."""
+    """Save verified message to database with full stage results."""
     if pipeline_result.status == VerificationStatus.SKIPPED:
         return None
 
-    # Get primary location
+    # Get location name from extracted locations
     location_name = None
-    location_lat = None
-    location_lng = None
-
     if pipeline_result.locations:
-        location_name = pipeline_result.locations[0].get("text")
-        # Note: Geocoding would be needed to get lat/lng
-        # For now, we just store the name
+        location_name = ", ".join([loc.get("text", "") for loc in pipeline_result.locations[:3]])
 
+    # Build feed with all stage results
     feed = Feed(
         title=message.text[:200] if len(message.text) > 200 else message.text,
         content=message.text,
         source_name=message.channel_name,
         source_type="TELEGRAM",
-        category="WAR",  # Default, could be classified by LLM
+        category="WAR",
         sub_category="UNCLASSIFIED",
         published_at=message.date,
         location_name=location_name,
-        location_lat=location_lat,
-        location_lng=location_lng,
+        # Overall status
         credibility_score=pipeline_result.credibility_score,
         verification_status=pipeline_result.status.value,
+        stages_completed=sum([
+            pipeline_result.stage1_completed,
+            pipeline_result.stage2_completed,
+            pipeline_result.stage3_completed,
+        ]),
+        skipped_at_stage=pipeline_result.skipped_at_stage,
+        skip_reason=pipeline_result.skip_reason,
+        processing_time_ms=pipeline_result.processing_time_ms,
+        tokens_used=pipeline_result.tokens_used,
+        # Stage 1 results
+        stage1_completed=pipeline_result.stage1_completed,
+        stage1_score=pipeline_result.stage1_result.stage1_score if pipeline_result.stage1_result else None,
+        stage1_has_location=pipeline_result.has_location,
+        stage1_is_duplicate=pipeline_result.stage1_result.is_duplicate if pipeline_result.stage1_result else False,
+        stage1_subjectivity=pipeline_result.stage1_result.subjectivity_score if pipeline_result.stage1_result else None,
+        stage1_fake_prob=pipeline_result.stage1_result.fake_probability if pipeline_result.stage1_result else None,
+        # Stage 2 results (RAG verification)
+        stage2_completed=pipeline_result.stage2_completed,
+        stage2_verdict=pipeline_result.stage2_result.verdict.value if pipeline_result.stage2_result else None,
+        stage2_confidence=pipeline_result.stage2_result.confidence if pipeline_result.stage2_result else None,
+        stage2_evidence_summary=pipeline_result.stage2_result.evidence_summary if pipeline_result.stage2_result else None,
+        # Stage 3 results
+        stage3_completed=pipeline_result.stage3_completed,
+        stage3_verdict=pipeline_result.stage3_result.verdict.value if pipeline_result.stage3_result else None,
+        stage3_confidence=pipeline_result.stage3_result.confidence if pipeline_result.stage3_result else None,
+        stage3_reasoning=pipeline_result.stage3_result.reasoning if pipeline_result.stage3_result else None,
+        # Embedding
         embedding=pipeline_result.embedding,
     )
+
+    # Check if publishable
+    feed.is_publishable = feed.check_publishable()
 
     db.add(feed)
     await db.commit()
     await db.refresh(feed)
 
-    logger.info(f"Saved feed {feed.id}: {feed.title[:50]}...")
+    pub_status = "📰 PUBLISHABLE" if feed.is_publishable else "📋 Collected"
+    logger.info(f"{pub_status} Feed #{feed.id}: {feed.title[:50]}... (score: {feed.credibility_score})")
     return feed
 
 
-async def run_collection_job(channels: list[str] | None = None):
+async def run_collection_job(channels: list[int] | None = None):
     """
     Run the collection and verification job.
 
@@ -89,7 +122,8 @@ async def run_collection_job(channels: list[str] | None = None):
     2. Run verification pipeline on each message
     3. Save verified messages to database
     """
-    logger.info("Starting collection job...")
+    channels = channels or WAR_CHANNELS
+    logger.info(f"Starting collection job for {len(channels)} channels...")
     start_time = datetime.now(timezone.utc)
 
     collector = TelegramCollector()
@@ -99,7 +133,7 @@ async def run_collection_job(channels: list[str] | None = None):
         return
 
     try:
-        # Collect messages
+        # Collect messages from war channels
         messages = await collector.collect_from_channels(
             channels=channels,
             limit_per_channel=MESSAGES_PER_CHANNEL,
@@ -117,6 +151,7 @@ async def run_collection_job(channels: list[str] | None = None):
 
             verified_count = 0
             skipped_count = 0
+            publishable_count = 0
 
             for message in messages:
                 try:
@@ -128,12 +163,15 @@ async def run_collection_job(channels: list[str] | None = None):
 
                     if result.status == VerificationStatus.SKIPPED:
                         skipped_count += 1
+                        logger.debug(f"Skipped: {result.skip_reason}")
                         continue
 
                     # Save to database
                     feed = await save_verified_feed(db, message, result)
                     if feed:
                         verified_count += 1
+                        if feed.is_publishable:
+                            publishable_count += 1
                         # Add new embedding to list for next iteration
                         if result.embedding:
                             existing_embeddings.append((feed.id, result.embedding))
@@ -143,8 +181,9 @@ async def run_collection_job(channels: list[str] | None = None):
 
             elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.info(
-                f"Collection job completed: {verified_count} verified, "
-                f"{skipped_count} skipped in {elapsed:.1f}s"
+                f"✅ Collection completed: {verified_count} saved, "
+                f"📰 {publishable_count} publishable, "
+                f"⏭️ {skipped_count} skipped in {elapsed:.1f}s"
             )
 
     except Exception as e:

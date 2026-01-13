@@ -16,7 +16,6 @@ class TriggerSource(str, Enum):
     GDELT = "gdelt"
     TWITTER = "twitter"
     TELEGRAM = "telegram"
-    RSS = "rss"
 
 
 @dataclass
