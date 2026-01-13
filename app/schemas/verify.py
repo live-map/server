@@ -40,7 +40,7 @@ class VerifyResponse(BaseModel):
     has_location: bool = False
 
     # Pipeline info
-    stages_completed: int = Field(..., ge=0, le=3)
+    stages_completed: int = Field(..., ge=0, le=2)
     skipped_at_stage: Optional[int] = None
     skip_reason: Optional[str] = None
 
@@ -67,12 +67,7 @@ class VerifyDetailedResponse(VerifyResponse):
     subjectivity_score: Optional[float] = None
     fake_probability: Optional[float] = None
 
-    # Stage 2 details (RAG verification)
-    stage2_verdict: Optional[str] = None
-    stage2_confidence: Optional[float] = None
-    stage2_evidence_summary: Optional[str] = None
-
-    # Stage 3 details
+    # Stage 3 details (LLM analysis)
     verdict: Optional[str] = None
     confidence: Optional[float] = None
     reasoning: Optional[str] = None

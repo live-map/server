@@ -1,7 +1,9 @@
 """
 Verification endpoint.
 
-POST /api/v1/verify - Verify news content through 3-stage pipeline
+POST /api/v1/verify - Verify news content through simplified pipeline
+
+Note: For comprehensive verification, use the autonomous agent system.
 """
 
 import json
@@ -72,7 +74,6 @@ async def _save_to_db(
         error_message=error_message,
         stages_completed=sum([
             result.stage1_completed if result else False,
-            result.stage2_completed if result else False,
             result.stage3_completed if result else False,
         ]),
         skipped_at_stage=result.skipped_at_stage if result else None,
@@ -86,11 +87,6 @@ async def _save_to_db(
         stage1_is_duplicate=result.stage1_result.is_duplicate if result and result.stage1_result else False,
         stage1_subjectivity=result.stage1_result.subjectivity_score if result and result.stage1_result else None,
         stage1_fake_prob=result.stage1_result.fake_probability if result and result.stage1_result else None,
-        # Stage 2 (RAG verification)
-        stage2_completed=result.stage2_completed if result else False,
-        stage2_verdict=result.stage2_result.verdict.value if result and result.stage2_result else None,
-        stage2_confidence=result.stage2_result.confidence if result and result.stage2_result else None,
-        stage2_evidence_summary=result.stage2_result.evidence_summary if result and result.stage2_result else None,
         # Stage 3
         stage3_completed=result.stage3_completed if result else False,
         stage3_verdict=result.stage3_result.verdict.value if result and result.stage3_result else None,
@@ -173,7 +169,7 @@ async def verify_content(
         credibility_score=result.credibility_score,
         locations=[LocationInfo(text=loc["text"], label=loc["label"]) for loc in result.locations],
         has_location=result.has_location,
-        stages_completed=sum([result.stage1_completed, result.stage2_completed, result.stage3_completed]),
+        stages_completed=sum([result.stage1_completed, result.stage3_completed]),
         skipped_at_stage=result.skipped_at_stage,
         skip_reason=result.skip_reason,
         verification_error=verification_error,
@@ -236,7 +232,7 @@ async def verify_content_detailed(
         credibility_score=result.credibility_score,
         locations=[LocationInfo(text=loc["text"], label=loc["label"]) for loc in result.locations],
         has_location=result.has_location,
-        stages_completed=sum([result.stage1_completed, result.stage2_completed, result.stage3_completed]),
+        stages_completed=sum([result.stage1_completed, result.stage3_completed]),
         skipped_at_stage=result.skipped_at_stage,
         skip_reason=result.skip_reason,
         verification_error=verification_error,
@@ -252,12 +248,6 @@ async def verify_content_detailed(
         response.is_duplicate = result.stage1_result.is_duplicate
         response.subjectivity_score = result.stage1_result.subjectivity_score
         response.fake_probability = result.stage1_result.fake_probability
-
-    # Add Stage 2 details (RAG verification)
-    if result.stage2_result:
-        response.stage2_verdict = result.stage2_result.verdict.value
-        response.stage2_confidence = result.stage2_result.confidence
-        response.stage2_evidence_summary = result.stage2_result.evidence_summary
 
     # Add Stage 3 details
     if result.stage3_result:

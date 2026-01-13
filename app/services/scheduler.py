@@ -74,7 +74,6 @@ async def save_verified_feed(
         verification_status=pipeline_result.status.value,
         stages_completed=sum([
             pipeline_result.stage1_completed,
-            pipeline_result.stage2_completed,
             pipeline_result.stage3_completed,
         ]),
         skipped_at_stage=pipeline_result.skipped_at_stage,
@@ -88,11 +87,6 @@ async def save_verified_feed(
         stage1_is_duplicate=pipeline_result.stage1_result.is_duplicate if pipeline_result.stage1_result else False,
         stage1_subjectivity=pipeline_result.stage1_result.subjectivity_score if pipeline_result.stage1_result else None,
         stage1_fake_prob=pipeline_result.stage1_result.fake_probability if pipeline_result.stage1_result else None,
-        # Stage 2 results (RAG verification)
-        stage2_completed=pipeline_result.stage2_completed,
-        stage2_verdict=pipeline_result.stage2_result.verdict.value if pipeline_result.stage2_result else None,
-        stage2_confidence=pipeline_result.stage2_result.confidence if pipeline_result.stage2_result else None,
-        stage2_evidence_summary=pipeline_result.stage2_result.evidence_summary if pipeline_result.stage2_result else None,
         # Stage 3 results
         stage3_completed=pipeline_result.stage3_completed,
         stage3_verdict=pipeline_result.stage3_result.verdict.value if pipeline_result.stage3_result else None,
