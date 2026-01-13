@@ -1,8 +1,14 @@
 """
 Search tools for investigation agent.
 
-- search_web: Tavily-based web search
-- search_news_gdelt: GDELT news search (free)
+Priority-based search strategy (based on expert research):
+1. GDELT (free) - News/events specialized
+2. DuckDuckGo (free) - General web search
+3. Tavily (paid) - High-quality fallback
+
+- search_news_gdelt: GDELT news search (FREE, news specialized)
+- search_web_free: DuckDuckGo search (FREE, general web)
+- search_web: Tavily-based web search (PAID, high quality)
 """
 
 import logging
@@ -15,19 +21,62 @@ from app.agent.config import agent_settings
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# FREE SEARCH TOOLS (Use these first!)
+# =============================================================================
+
+
+@tool
+async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
+    """
+    FREE web search using DuckDuckGo. Use this BEFORE paid search tools.
+
+    This is a free alternative to Tavily. Always try this first for general
+    web searches to save costs.
+
+    Args:
+        query: Search query (any topic, news, general information)
+        max_results: Maximum number of results (default 10)
+
+    Returns:
+        List of results [{title, url, content, source, source_name}]
+    """
+    try:
+        from duckduckgo_search import DDGS
+
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                domain = r.get("href", "").split("/")[2] if r.get("href") else "unknown"
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("href", ""),
+                    "content": r.get("body", "")[:500],
+                    "source": domain,
+                    "source_name": f"DuckDuckGo:{domain}",
+                })
+
+        logger.info(f"DuckDuckGo: {len(results)} results for '{query[:30]}...'")
+        return results
+
+    except Exception as e:
+        logger.error(f"DuckDuckGo search error: {e}")
+        return [{"error": str(e), "results": []}]
+
+
+# =============================================================================
+# PAID SEARCH TOOLS (Use as fallback when free tools are insufficient)
+# =============================================================================
+
+
 @tool
 async def search_web(query: str, max_results: int = 10) -> list[dict]:
     """
-    Search news, articles, and information from the web.
+    PAID high-quality web search using Tavily. Use ONLY when free tools fail.
 
-    This tool allows the agent to search freely with any search query.
-    Examples:
-    - "Iran International Iran protest" -> Iran-focused media articles on protests
-    - "Tehran protest latest" -> Latest Tehran protest news
-    - "BBC Persian Iran" -> BBC Persian Iran coverage
-    - "Ukraine war Kyiv Independent" -> Ukraine-focused media coverage
-
-    The agent can include source names in the query to find specific sources.
+    This is a premium search tool with better accuracy (93.3% on benchmarks).
+    IMPORTANT: Only use this when search_web_free or search_news_gdelt
+    return insufficient results.
 
     Args:
         query: Search query (freely combine source names, keywords, regions)
@@ -74,13 +123,18 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
         return [{"error": str(e), "results": []}]
 
 
+# =============================================================================
+# NEWS-SPECIFIC TOOLS (Use for breaking news and events)
+# =============================================================================
+
+
 @tool
 async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int = 20) -> list[dict]:
     """
-    Search global news from GDELT. (Free, 100,000+ sources)
+    FREE global news search from GDELT. PRIMARY tool for news/events.
 
-    Searches worldwide news with keywords only, without specifying sources.
-    The agent can narrow scope by including source names or regions in the query.
+    ALWAYS use this FIRST for breaking news, conflicts, protests, disasters.
+    Covers 100,000+ news sources worldwide in 100+ languages.
 
     Examples:
     - "Iran protest Tehran" -> Global coverage on Tehran protests
@@ -88,7 +142,7 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
     - "Syria airstrike" -> Coverage on Syria airstrikes
 
     Args:
-        query: Search query
+        query: Search query (keywords, locations, topics)
         timespan: Search period (1h, 6h, 12h, 24h, 48h, 72h)
         max_results: Maximum number of results
 
