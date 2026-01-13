@@ -19,21 +19,18 @@ Key improvements over v1:
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel
 
 from .config import agent_settings
 from .graph import InvestigationReport, InvestigationState
-from .tools import ALL_TOOLS
+from .tools import search_news_gdelt, search_web_free, search_web
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +75,7 @@ class DeepVerificationState(InvestigationState):
     structured_notes: list[dict] = []
     source_items: list[dict] = []
     conflicts_detected: list[dict] = []
-    messages: Annotated[list, add_messages] = []
+    retrieval_attempts: int = 0
 
 
 # =============================================================================
@@ -92,7 +89,7 @@ class DeepVerificationAgent:
 
     Pipeline:
     1. DECOMPOSER: Split query into subtopics
-    2. RETRIEVER: Search each subtopic (multi-pass)
+    2. RESEARCHER: Search each subtopic directly (no complex message management)
     3. NOTER: Create structured notes per subtopic
     4. VERIFIER: Cross-verify and detect conflicts
     5. SYNTHESIZER: Generate final report with citations
@@ -103,45 +100,31 @@ class DeepVerificationAgent:
             model=agent_settings.llm_model,
             temperature=0.1,  # Lower for more factual
             api_key=agent_settings.openai_api_key,
-        ).bind_tools(ALL_TOOLS)
-
-        self.llm_no_tools = ChatOpenAI(
-            model=agent_settings.llm_model,
-            temperature=0.1,
-            api_key=agent_settings.openai_api_key,
         )
 
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
-        """Build the deep verification graph"""
+        """Build the simplified deep verification graph"""
         graph = StateGraph(DeepVerificationState)
 
-        # Nodes
+        # Nodes - simplified without ToolNode
         graph.add_node("decomposer", self._decompose_node)
-        graph.add_node("retriever", self._retrieve_node)
-        graph.add_node("tools", ToolNode(ALL_TOOLS))
+        graph.add_node("researcher", self._research_node)  # Combined retriever + tool execution
         graph.add_node("noter", self._note_node)
         graph.add_node("verifier", self._verify_node)
         graph.add_node("synthesizer", self._synthesize_node)
 
         # Flow
         graph.set_entry_point("decomposer")
-        graph.add_edge("decomposer", "retriever")
+        graph.add_edge("decomposer", "researcher")
+        graph.add_edge("researcher", "noter")
 
-        # Retriever -> tools or noter
-        graph.add_conditional_edges(
-            "retriever",
-            self._should_use_tools,
-            {"tools": "tools", "note": "noter"}
-        )
-        graph.add_edge("tools", "retriever")
-
-        # Noter -> verifier or retriever (for next subtopic)
+        # Noter -> verifier or researcher (for next subtopic)
         graph.add_conditional_edges(
             "noter",
-            self._should_continue_retrieval,
-            {"retrieve": "retriever", "verify": "verifier"}
+            self._should_continue_research,
+            {"research": "researcher", "verify": "verifier"}
         )
 
         graph.add_edge("verifier", "synthesizer")
@@ -163,6 +146,7 @@ class DeepVerificationAgent:
             "collected_items": [],
             "verified_facts": [],
             "iteration": 0,
+            "retrieval_attempts": 0,
             "tool_calls_count": 0,
             "messages": [],
             "plan": None,
@@ -172,7 +156,7 @@ class DeepVerificationAgent:
 
         config = {
             "configurable": {"thread_id": f"deep_{datetime.utcnow().isoformat()}"},
-            "recursion_limit": 100,
+            "recursion_limit": 50,
         }
 
         final_state = await self.graph.ainvoke(initial_state, config)
@@ -224,7 +208,7 @@ SUBTOPIC: [specific research question]
 SUBTOPIC: [specific research question]
 ..."""
 
-        response = await self.llm_no_tools.ainvoke([
+        response = await self.llm.ainvoke([
             SystemMessage(content=prompt),
             HumanMessage(content=f"Decompose: {event}")
         ])
@@ -238,14 +222,14 @@ SUBTOPIC: [specific research question]
             **state,
             "subtopics": subtopics,
             "iteration": 0,
-            "status": "retrieving",
+            "status": "researching",
         }
 
-    async def _retrieve_node(self, state: dict) -> dict:
+    async def _research_node(self, state: dict) -> dict:
         """
-        RETRIEVER: Search for current subtopic
+        RESEARCHER: Directly execute searches for current subtopic
 
-        Multi-pass retrieval - one subtopic at a time
+        Simplified approach - directly call search tools instead of using ToolNode
         """
         subtopics = state.get("subtopics", [])
         current_idx = state.get("iteration", 0)
@@ -256,52 +240,53 @@ SUBTOPIC: [specific research question]
         current_subtopic = subtopics[current_idx]
         event = state["event"]
 
-        print(f"\n[RETRIEVER] Searching subtopic {current_idx + 1}/{len(subtopics)}: {current_subtopic[:50]}...")
+        print(f"\n[RESEARCHER] Searching subtopic {current_idx + 1}/{len(subtopics)}: {current_subtopic[:50]}...")
 
-        prompt = f"""You are researching a specific aspect of a news event.
+        # Direct tool execution - much simpler than ToolNode
+        all_results = []
 
-MAIN EVENT: {event}
-CURRENT SUBTOPIC: {current_subtopic}
+        # Search with multiple tools in parallel
+        search_query = f"{event} {current_subtopic}"
 
-Search for information about this specific subtopic.
-Use the most appropriate search tools:
-- search_news_gdelt: FREE - For news articles (use FIRST)
-- search_web_free: FREE - For general web search
-- search_web: PAID - Only if free tools fail
+        try:
+            # GDELT search
+            print(f"[RESEARCHER] Calling: search_news_gdelt")
+            gdelt_results = await search_news_gdelt.ainvoke({"query": search_query})
+            if isinstance(gdelt_results, list):
+                all_results.extend(gdelt_results)
+                print(f"[RESEARCHER] GDELT: {len(gdelt_results)} results")
+        except Exception as e:
+            print(f"[RESEARCHER] GDELT error: {e}")
 
-Focus on finding:
-1. Specific facts and numbers
-2. Named sources and officials
-3. Dates and timeline
-4. Multiple perspectives
+        try:
+            # DuckDuckGo search
+            print(f"[RESEARCHER] Calling: search_web_free")
+            ddg_results = await search_web_free.ainvoke({"query": search_query})
+            if isinstance(ddg_results, list):
+                all_results.extend(ddg_results)
+                print(f"[RESEARCHER] DuckDuckGo: {len(ddg_results)} results")
+        except Exception as e:
+            print(f"[RESEARCHER] DuckDuckGo error: {e}")
 
-Search now for: {current_subtopic}"""
+        # If no results, try paid search
+        if len(all_results) < 5:
+            try:
+                print(f"[RESEARCHER] Calling: search_web (paid fallback)")
+                tavily_results = await search_web.ainvoke({"query": search_query})
+                if isinstance(tavily_results, list):
+                    all_results.extend(tavily_results)
+                    print(f"[RESEARCHER] Tavily: {len(tavily_results)} results")
+            except Exception as e:
+                print(f"[RESEARCHER] Tavily error: {e}")
 
-        messages = state.get("messages", [])
-        messages.append(SystemMessage(content=prompt))
-
-        response = await self.llm.ainvoke(messages)
-
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            tools = [t['name'] for t in response.tool_calls]
-            print(f"[RETRIEVER] Calling: {', '.join(tools)}")
+        # Store results for this subtopic
+        existing_sources = state.get("source_items", [])
 
         return {
             **state,
-            "messages": [*messages, response],
+            "source_items": [*existing_sources, *all_results],
+            "status": "noting",
         }
-
-    def _should_use_tools(self, state: dict) -> Literal["tools", "note"]:
-        """Check if we need to execute tools"""
-        messages = state.get("messages", [])
-        if not messages:
-            return "note"
-
-        last_msg = messages[-1]
-        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-            return "tools"
-
-        return "note"
 
     async def _note_node(self, state: dict) -> dict:
         """
@@ -311,21 +296,19 @@ Search now for: {current_subtopic}"""
         """
         subtopics = state.get("subtopics", [])
         current_idx = state.get("iteration", 0)
-        messages = state.get("messages", [])
+        source_items = state.get("source_items", [])
 
         if current_idx >= len(subtopics):
             return {**state, "status": "verifying"}
 
         current_subtopic = subtopics[current_idx]
 
-        # Extract tool results
-        source_items = self._extract_sources(messages)
-
+        # Get sources for current subtopic (last batch)
+        # For simplicity, use all sources accumulated so far
         print(f"\n[NOTER] Creating notes for subtopic {current_idx + 1}: {current_subtopic[:40]}...")
-        print(f"[NOTER] Found {len(source_items)} sources")
+        print(f"[NOTER] Total sources so far: {len(source_items)}")
 
         if not source_items:
-            # No results, move to next subtopic
             note = {
                 "subtopic": current_subtopic,
                 "findings": ["No information found"],
@@ -334,10 +317,11 @@ Search now for: {current_subtopic}"""
                 "confidence": 0.0,
             }
         else:
-            # Synthesize findings
+            # Synthesize findings from recent sources
+            recent_sources = source_items[-20:] if len(source_items) > 20 else source_items
             sources_text = "\n".join([
                 f"- [{s.get('source_name', 'unknown')}] {s.get('title', '')}: {s.get('content', '')[:200]}"
-                for s in source_items[:15]
+                for s in recent_sources if isinstance(s, dict)
             ])
 
             prompt = f"""Analyze the search results for this subtopic.
@@ -358,34 +342,31 @@ FINDING: [specific fact with source]
 CONFLICT: [if any contradiction found]
 CONFIDENCE: [high/medium/low]"""
 
-            response = await self.llm_no_tools.ainvoke([
+            response = await self.llm.ainvoke([
                 SystemMessage(content=prompt),
                 HumanMessage(content="Analyze and create notes")
             ])
 
-            note = self._parse_note(response.content, current_subtopic, source_items)
+            note = self._parse_note(response.content, current_subtopic, recent_sources)
 
         existing_notes = state.get("structured_notes", [])
-        existing_sources = state.get("source_items", [])
 
         print(f"[NOTER] Findings: {len(note.get('findings', []))}, Conflicts: {len(note.get('conflicts', []))}")
 
         return {
             **state,
             "structured_notes": [*existing_notes, note],
-            "source_items": [*existing_sources, *source_items],
             "iteration": current_idx + 1,
-            "messages": [],  # Clear messages for next subtopic
             "status": "noting",
         }
 
-    def _should_continue_retrieval(self, state: dict) -> Literal["retrieve", "verify"]:
+    def _should_continue_research(self, state: dict) -> Literal["research", "verify"]:
         """Check if more subtopics need research"""
         subtopics = state.get("subtopics", [])
         current_idx = state.get("iteration", 0)
 
         if current_idx < len(subtopics):
-            return "retrieve"
+            return "research"
         return "verify"
 
     async def _verify_node(self, state: dict) -> dict:
@@ -440,7 +421,7 @@ UNVERIFIED: [claim with single source]
 
 DISPUTED: [contradicting claims with explanation]"""
 
-        response = await self.llm_no_tools.ainvoke([
+        response = await self.llm.ainvoke([
             SystemMessage(content=prompt),
             HumanMessage(content="Perform deep verification")
         ])
@@ -502,7 +483,7 @@ IMPORTANT:
 - Include source citations
 - Note confidence levels where relevant"""
 
-        response = await self.llm_no_tools.ainvoke([
+        response = await self.llm.ainvoke([
             SystemMessage(content=prompt),
             HumanMessage(content="Generate final report with citations")
         ])
@@ -511,7 +492,7 @@ IMPORTANT:
         sources = list(set([
             s.get("url") or s.get("source_name", "unknown")
             for s in source_items
-            if s.get("url") or s.get("source_name")
+            if isinstance(s, dict) and (s.get("url") or s.get("source_name"))
         ]))
 
         report = {
@@ -560,36 +541,6 @@ IMPORTANT:
 
         return subtopics[:5]  # Max 5
 
-    def _extract_sources(self, messages: list) -> list[dict]:
-        """Extract source items from tool messages"""
-        from langchain_core.messages import ToolMessage
-
-        results = []
-        for msg in messages:
-            if isinstance(msg, ToolMessage):
-                content = msg.content
-
-                if isinstance(content, list):
-                    for item in content:
-                        if isinstance(item, dict) and not item.get("error"):
-                            item["source_name"] = item.get("source_name", msg.name or "unknown")
-                            results.append(item)
-                elif isinstance(content, dict) and not content.get("error"):
-                    content["source_name"] = content.get("source_name", msg.name or "unknown")
-                    results.append(content)
-                elif isinstance(content, str):
-                    try:
-                        data = json.loads(content)
-                        if isinstance(data, list):
-                            for item in data:
-                                if isinstance(item, dict) and not item.get("error"):
-                                    item["source_name"] = item.get("source_name", msg.name or "unknown")
-                                    results.append(item)
-                    except:
-                        pass
-
-        return results
-
     def _parse_note(self, content: str, subtopic: str, sources: list) -> dict:
         """Parse noter output into structured note"""
         findings = []
@@ -610,7 +561,7 @@ IMPORTANT:
         return {
             "subtopic": subtopic,
             "findings": findings,
-            "sources": [s.get("source_name", "unknown") for s in sources[:10]],
+            "sources": [s.get("source_name", "unknown") for s in sources[:10] if isinstance(s, dict)],
             "conflicts": conflicts,
             "confidence": confidence,
         }
