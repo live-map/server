@@ -10,6 +10,7 @@ LLM:
 - GPT-4o-mini 기반 (입력 $0.15/1M, 출력 $0.60/1M)
 """
 
+from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -60,10 +61,19 @@ class AgentSettings(BaseSettings):
     min_sources_for_verification: int = 2
     max_tokens_per_investigation: int = 4000
 
-    class Config:
-        env_prefix = "AGENT_"
-        env_file = ".env"
-        extra = "ignore"
+    # ===========================================
+    # LLM 타임아웃 및 동시성 설정
+    # ===========================================
+    llm_timeout_seconds: float = 60.0
+    max_concurrent_llm_calls: int = 3
+    investigation_timeout_seconds: float = 300.0  # 5 minutes
+
+    # Pydantic v2 configuration
+    model_config = ConfigDict(
+        env_prefix="AGENT_",
+        env_file=".env",
+        extra="ignore",
+    )
 
     def get_telegram_channels(self) -> list[str]:
         """텔레그램 채널 목록 파싱"""
