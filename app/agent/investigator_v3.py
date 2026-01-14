@@ -65,14 +65,18 @@ class V3Config:
 
     # Rate limiting
     MAX_CONCURRENT_SEARCHES: int = 5
-    MAX_CONCURRENT_LLM_CALLS: int = 3
+    MAX_CONCURRENT_LLM_CALLS: int = agent_settings.max_concurrent_llm_calls
 
-    # Timeouts (seconds)
+    # Timeouts (seconds) - from config
     TOOL_TIMEOUT: float = 30.0
-    LLM_TIMEOUT: float = 60.0
+    LLM_TIMEOUT: float = agent_settings.llm_timeout_seconds
 
     # Retry
     MAX_RETRIES: int = 3
+
+    # Input validation
+    MIN_INPUT_LENGTH: int = 10
+    MAX_INPUT_LENGTH: int = 10000
 
 
 # =============================================================================
@@ -151,21 +155,17 @@ class ClaimVerificationAgent:
         self._search_semaphore = asyncio.Semaphore(
             self.config.MAX_CONCURRENT_SEARCHES
         )
-        self._llm_semaphore = asyncio.Semaphore(
-            self.config.MAX_CONCURRENT_LLM_CALLS
+
+        # Components (LLM rate limiting is handled within each component)
+        self.claim_extractor = ClaimExtractor(
+            llm_timeout=self.config.LLM_TIMEOUT
         )
-
-        # Components
-        self.claim_extractor = ClaimExtractor()
-        self.qa_verifier = QAVerifier()
-        self.article_generator = ArticleGenerator()
-
-        # LLM for evidence search
-        self.llm = ChatOpenAI(
-            model=agent_settings.llm_model,
-            temperature=0.1,
-            api_key=agent_settings.openai_api_key,
-        ).bind_tools(ALL_TOOLS)
+        self.qa_verifier = QAVerifier(
+            llm_timeout=self.config.LLM_TIMEOUT
+        )
+        self.article_generator = ArticleGenerator(
+            llm_timeout=self.config.LLM_TIMEOUT
+        )
 
         # Build graph
         self.graph = self._build_graph()
@@ -206,6 +206,28 @@ class ClaimVerificationAgent:
         Returns:
             Investigation result with article and breakdown
         """
+        # Input validation
+        if not event or not isinstance(event, str):
+            logger.warning("Invalid input: event must be a non-empty string")
+            return {
+                "errors": ["Invalid input: event must be a non-empty string"],
+                "completed_at": datetime.utcnow(),
+            }
+
+        event = event.strip()
+
+        if len(event) < self.config.MIN_INPUT_LENGTH:
+            logger.warning(f"Input too short: {len(event)} chars (min: {self.config.MIN_INPUT_LENGTH})")
+            return {
+                "errors": [f"Input too short: minimum {self.config.MIN_INPUT_LENGTH} characters required"],
+                "completed_at": datetime.utcnow(),
+            }
+
+        if len(event) > self.config.MAX_INPUT_LENGTH:
+            logger.warning(f"Input too long: {len(event)} chars (max: {self.config.MAX_INPUT_LENGTH})")
+            event = event[:self.config.MAX_INPUT_LENGTH]
+            logger.info(f"Truncated input to {self.config.MAX_INPUT_LENGTH} characters")
+
         logger.info(
             "Starting claim-level verification",
             extra={"event": event[:100], "category": category},

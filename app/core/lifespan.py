@@ -87,9 +87,13 @@ async def run_scheduled_scan():
             print(f"\n[SCANNER] [{i+1}] Investigating: {event_desc[:80]}...")
 
             try:
-                result = await agent.investigate(
-                    event=event_desc,
-                    category=category,
+                # Add timeout to investigation (5 minutes max)
+                result = await asyncio.wait_for(
+                    agent.investigate(
+                        event=event_desc,
+                        category=category,
+                    ),
+                    timeout=300.0,  # 5 minutes
                 )
 
                 # v3: Output the generated article (AP Style)
@@ -144,6 +148,9 @@ async def run_scheduled_scan():
 
                     print("\n" + "=" * 70 + "\n")
 
+            except asyncio.TimeoutError:
+                print(f"[SCANNER] [{i+1}] Investigation timed out after 5 minutes")
+                logger.error(f"Investigation timed out for: {event_desc[:50]}")
             except Exception as e:
                 print(f"[SCANNER] [{i+1}] Investigation failed: {e}")
                 import traceback
@@ -156,20 +163,30 @@ async def run_scheduled_scan():
 
 
 async def scanner_loop():
-    """Run scanner in a loop every N minutes."""
+    """Run scanner in a loop every N minutes with error recovery."""
     interval = agent_settings.scan_interval_minutes * 60  # Convert to seconds
+    retry_delay = 60  # Wait 60s before retrying after error
 
     print(f"\n[SCHEDULER] Scanner will run every {agent_settings.scan_interval_minutes} minutes")
     print("[SCHEDULER] Running initial scan NOW...\n")
 
     # Run immediately on startup
-    await run_scheduled_scan()
+    try:
+        await run_scheduled_scan()
+    except Exception as e:
+        logger.error(f"[SCHEDULER] Initial scan failed: {e}")
+        print(f"[SCHEDULER] Initial scan failed: {e}")
 
-    # Then run on schedule
+    # Then run on schedule with error recovery
     while True:
         print(f"\n[SCHEDULER] Next scan in {agent_settings.scan_interval_minutes} minutes...")
         await asyncio.sleep(interval)
-        await run_scheduled_scan()
+        try:
+            await run_scheduled_scan()
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Scan failed, retrying in {retry_delay}s: {e}")
+            print(f"[SCHEDULER] Scan failed: {e}")
+            await asyncio.sleep(retry_delay)
 
 
 @asynccontextmanager
@@ -180,6 +197,12 @@ async def lifespan(app: FastAPI):
     # Setup logging first
     setup_logging()
 
+    # Validate required configuration
+    if not agent_settings.openai_api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is required. Please set it in your environment or .env file."
+        )
+
     print("\n" + "=" * 60)
     print("  LIVEMAP API - Starting...")
     print("=" * 60)
@@ -188,6 +211,7 @@ async def lifespan(app: FastAPI):
     print(f"  GDELT Enabled: {agent_settings.gdelt_enabled}")
     print(f"  Twitter Enabled: {agent_settings.twitter_enabled}")
     print(f"  Telegram Enabled: {agent_settings.telegram_enabled}")
+    print(f"  OpenAI API Key: {'✓ Set' if agent_settings.openai_api_key else '✗ Missing'}")
     print("=" * 60 + "\n")
 
     # Start scanner in background
@@ -195,17 +219,22 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup on shutdown
+    # Cleanup on shutdown with timeouts
     if _scanner_task:
         print("\n[SCHEDULER] Stopping scanner...")
         _scanner_task.cancel()
         try:
-            await _scanner_task
+            await asyncio.wait_for(_scanner_task, timeout=10.0)
         except asyncio.CancelledError:
             pass
+        except asyncio.TimeoutError:
+            logger.warning("Scanner task did not cancel within 10s")
 
-    # Dispose DB engine
-    from app.core.database import engine
-    await engine.dispose()
+    # Dispose DB engine with timeout
+    try:
+        from app.core.database import engine
+        await asyncio.wait_for(engine.dispose(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Database dispose timed out after 10s")
 
     print("[SHUTDOWN] Livemap API stopped.")

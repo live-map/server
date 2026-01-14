@@ -167,10 +167,17 @@ class QAVerifier:
         model: str | None = None,
         temperature: float = 0.1,
         max_evidence_chars: int = 60000,  # ~60K chars per AIC CTU
+        llm_timeout: float = 60.0,
+        max_concurrent_verifications: int = 3,
     ):
         self.model = model or agent_settings.llm_model
         self.temperature = temperature
         self.max_evidence_chars = max_evidence_chars
+        self.llm_timeout = llm_timeout
+        self.max_concurrent = max_concurrent_verifications
+
+        # Semaphore for rate limiting concurrent LLM calls
+        self._verification_semaphore = asyncio.Semaphore(max_concurrent_verifications)
 
         self.llm = ChatOpenAI(
             model=self.model,
@@ -255,24 +262,28 @@ class QAVerifier:
 
         logger.info(
             "Verifying multiple claims",
-            extra={"claim_count": len(claims)},
+            extra={"claim_count": len(claims), "max_concurrent": self.max_concurrent},
         )
 
-        # Verify each claim
-        verdicts: list[ClaimVerdict] = []
-        for claim in claims:
-            try:
-                verdict = await self.verify_claim(claim, evidence_docs)
-                verdicts.append(verdict)
-            except Exception as e:
-                logger.error(f"Failed to verify claim {claim.id}: {e}")
-                verdicts.append(ClaimVerdict(
-                    claim_id=claim.id,
-                    claim_text=claim.text,
-                    verdict="NOT_ENOUGH_INFO",
-                    confidence=1,
-                    reasoning=f"Verification failed: {e}",
-                ))
+        # Helper function for rate-limited verification
+        async def verify_with_semaphore(claim: ExtractedClaim) -> ClaimVerdict:
+            async with self._verification_semaphore:
+                try:
+                    return await self.verify_claim(claim, evidence_docs)
+                except Exception as e:
+                    logger.error(f"Failed to verify claim {claim.id}: {e}")
+                    return ClaimVerdict(
+                        claim_id=claim.id,
+                        claim_text=claim.text,
+                        verdict="NOT_ENOUGH_INFO",
+                        confidence=1,
+                        reasoning=f"Verification failed: {e}",
+                    )
+
+        # Verify claims in parallel with rate limiting
+        verdicts = await asyncio.gather(
+            *[verify_with_semaphore(claim) for claim in claims]
+        )
 
         # Calculate statistics
         supported = sum(1 for v in verdicts if v.verdict == "SUPPORTED")
@@ -304,10 +315,13 @@ class QAVerifier:
     async def _generate_questions(self, claim: str) -> list[str]:
         """Generate verification questions for a claim."""
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content="You are a fact-checker generating verification questions."),
-                HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
-            ])
+            response = await asyncio.wait_for(
+                self.llm.ainvoke([
+                    SystemMessage(content="You are a fact-checker generating verification questions."),
+                    HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
+                ]),
+                timeout=self.llm_timeout,
+            )
 
             questions = []
             for line in response.content.split("\n"):
@@ -319,6 +333,9 @@ class QAVerifier:
 
             return questions[:4] if questions else [f"Is the following claim true: {claim}?"]
 
+        except asyncio.TimeoutError:
+            logger.warning(f"Question generation timed out after {self.llm_timeout}s")
+            return [f"Is the following claim true: {claim}?"]
         except Exception as e:
             logger.warning(f"Question generation failed: {e}")
             return [f"Is the following claim true: {claim}?"]
@@ -378,17 +395,27 @@ class QAVerifier:
         questions_text = "\n".join([f"- {q}" for q in questions])
 
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content="You are a professional fact-checker."),
-                HumanMessage(content=VERIFICATION_PROMPT.format(
-                    claim=claim,
-                    evidence=evidence,
-                    questions=questions_text,
-                )),
-            ])
+            response = await asyncio.wait_for(
+                self.llm.ainvoke([
+                    SystemMessage(content="You are a professional fact-checker."),
+                    HumanMessage(content=VERIFICATION_PROMPT.format(
+                        claim=claim,
+                        evidence=evidence,
+                        questions=questions_text,
+                    )),
+                ]),
+                timeout=self.llm_timeout,
+            )
 
             return self._parse_verdict(response.content)
 
+        except asyncio.TimeoutError:
+            logger.error(f"Verdict generation timed out after {self.llm_timeout}s")
+            return {
+                "verdict": "NOT_ENOUGH_INFO",
+                "confidence": 1,
+                "reasoning": f"Verification timed out after {self.llm_timeout}s",
+            }
         except Exception as e:
             logger.error(f"Verdict generation failed: {e}")
             return {
@@ -420,10 +447,23 @@ class QAVerifier:
 
             elif line.startswith("CONFIDENCE:"):
                 try:
-                    conf = int(line[11:].strip().split()[0])
+                    conf_text = line[11:].strip()
+                    # Handle various formats: "4", "4/5", "80%", "4 out of 5"
+                    if "%" in conf_text:
+                        # Convert percentage to 1-5 scale
+                        pct = int(conf_text.replace("%", "").split()[0])
+                        conf = max(1, min(5, round(pct / 20)))
+                    elif "/" in conf_text:
+                        # Handle "4/5" format
+                        numerator = int(conf_text.split("/")[0].strip())
+                        conf = max(1, min(5, numerator))
+                    else:
+                        # Handle "4" or "4 out of 5" format
+                        conf = int(conf_text.split()[0])
                     result["confidence"] = max(1, min(5, conf))
                 except (ValueError, IndexError):
-                    pass
+                    # Keep default confidence (3)
+                    logger.debug(f"Could not parse confidence from: {line}")
 
             elif line.startswith("EVIDENCE_QUOTES:"):
                 in_quotes = True

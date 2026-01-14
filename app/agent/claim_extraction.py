@@ -17,6 +17,7 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Literal
@@ -140,8 +141,10 @@ class ClaimExtractor:
         self,
         model: str | None = None,
         temperature: float = 0.0,
+        llm_timeout: float = 60.0,
     ):
         self.model = model or agent_settings.llm_model
+        self.llm_timeout = llm_timeout
         self.llm = ChatOpenAI(
             model=self.model,
             temperature=temperature,
@@ -168,12 +171,15 @@ class ClaimExtractor:
         )
 
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content=CLAIM_EXTRACTION_SYSTEM_PROMPT),
-                HumanMessage(
-                    content=CLAIM_EXTRACTION_USER_PROMPT.format(text=text)
-                ),
-            ])
+            response = await asyncio.wait_for(
+                self.llm.ainvoke([
+                    SystemMessage(content=CLAIM_EXTRACTION_SYSTEM_PROMPT),
+                    HumanMessage(
+                        content=CLAIM_EXTRACTION_USER_PROMPT.format(text=text)
+                    ),
+                ]),
+                timeout=self.llm_timeout,
+            )
 
             claims = self._parse_claims(response.content)
             verifiable_claims = [c for c in claims if c.is_verifiable]
@@ -197,6 +203,9 @@ class ClaimExtractor:
 
             return result
 
+        except asyncio.TimeoutError:
+            logger.error(f"Claim extraction timed out after {self.llm_timeout}s")
+            return ClaimExtractionResult(original_text=text)
         except Exception as e:
             logger.error(f"Claim extraction failed: {e}")
             return ClaimExtractionResult(original_text=text)

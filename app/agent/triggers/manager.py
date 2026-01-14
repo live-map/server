@@ -16,6 +16,7 @@
 import asyncio
 import hashlib
 import logging
+import time
 from collections import Counter
 from datetime import datetime
 from typing import Callable, Optional
@@ -73,7 +74,9 @@ class TriggerManager:
         self.on_new_cluster = on_new_cluster
         self.triggers: list[BaseTrigger] = []
         self.last_scan: datetime | None = None
-        self.event_hashes: set[str] = set()  # 중복 방지
+        # 중복 방지 - dict[hash, timestamp] for time-based expiry
+        self.event_hashes: dict[str, float] = {}
+        self.hash_expiry_seconds: float = 86400  # 24 hours
 
         # LLM (이벤트 분류용)
         if openai_api_key:
@@ -327,13 +330,17 @@ class TriggerManager:
 
     def _deduplicate_events(self, events: list[TriggerEvent]) -> list[TriggerEvent]:
         """
-        중복 이벤트 제거
+        중복 이벤트 제거 (시간 기반 만료)
 
         동일한 사건이 여러 소스에서 감지될 수 있음
         제목 유사도로 중복 판단
         """
+        current_time = time.time()
         unique = []
         seen_titles = set()
+
+        # 먼저 만료된 해시 정리
+        self._cleanup_expired_hashes(current_time)
 
         for event in events:
             # 제목 정규화 (소문자, 공백 제거)
@@ -349,14 +356,24 @@ class TriggerManager:
                 ).hexdigest()
 
                 if event_hash not in self.event_hashes:
-                    self.event_hashes.add(event_hash)
+                    self.event_hashes[event_hash] = current_time
                     unique.append(event)
 
-        # 메모리 관리
-        if len(self.event_hashes) > 10000:
-            self.event_hashes.clear()
-
         return unique
+
+    def _cleanup_expired_hashes(self, current_time: float) -> None:
+        """만료된 해시 정리 (24시간 이상 된 항목 제거)"""
+        if len(self.event_hashes) > 5000:
+            # 메모리 임계치 초과 시 정리
+            expired = [
+                h for h, ts in self.event_hashes.items()
+                if current_time - ts > self.hash_expiry_seconds
+            ]
+            for h in expired:
+                del self.event_hashes[h]
+
+            if expired:
+                logger.debug(f"Cleaned up {len(expired)} expired event hashes")
 
     async def _classify_events(
         self, events: list[TriggerEvent]
@@ -405,7 +422,7 @@ Only include SIGNIFICANT events (major breaking news)."""
     def _parse_classification(
         self, response: str, events: list[TriggerEvent]
     ) -> list[tuple[TriggerEvent, str]]:
-        """분류 결과 파싱"""
+        """분류 결과 파싱 (안전한 파싱)"""
         classified = []
         current_idx = None
         current_category = None
@@ -416,23 +433,35 @@ Only include SIGNIFICANT events (major breaking news)."""
 
             # Handle formats like "1. INDEX: 1" or "INDEX: 1"
             if "INDEX:" in line:
+                # Save previous entry if valid
                 if current_idx is not None and current_significant:
                     if 0 <= current_idx < len(events):
                         classified.append((events[current_idx], current_category or "other"))
 
+                # Parse new INDEX safely
                 try:
-                    # Extract number after INDEX:
                     idx_part = line.split("INDEX:")[1].strip()
-                    current_idx = int(idx_part.split()[0])
-                except (ValueError, IndexError):
+                    # Handle various formats: "0", "0 ", "0,", etc.
+                    idx_str = ""
+                    for char in idx_part:
+                        if char.isdigit():
+                            idx_str += char
+                        else:
+                            break
+                    current_idx = int(idx_str) if idx_str else None
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"Failed to parse INDEX from: {line}, error: {e}")
                     current_idx = None
+
                 current_category = None
                 current_significant = False
 
             elif "CATEGORY:" in line:
                 try:
-                    current_category = line.split("CATEGORY:")[1].strip().lower()
-                except IndexError:
+                    category_part = line.split("CATEGORY:")[1].strip().lower()
+                    # Clean up category (remove extra chars)
+                    current_category = category_part.split()[0] if category_part else "other"
+                except (IndexError, AttributeError):
                     current_category = "other"
 
             elif "SIGNIFICANT:" in line:
