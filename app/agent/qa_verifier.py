@@ -167,10 +167,12 @@ class QAVerifier:
         model: str | None = None,
         temperature: float = 0.1,
         max_evidence_chars: int = 60000,  # ~60K chars per AIC CTU
+        llm_timeout: float = 60.0,
     ):
         self.model = model or agent_settings.llm_model
         self.temperature = temperature
         self.max_evidence_chars = max_evidence_chars
+        self.llm_timeout = llm_timeout
 
         self.llm = ChatOpenAI(
             model=self.model,
@@ -304,10 +306,13 @@ class QAVerifier:
     async def _generate_questions(self, claim: str) -> list[str]:
         """Generate verification questions for a claim."""
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content="You are a fact-checker generating verification questions."),
-                HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
-            ])
+            response = await asyncio.wait_for(
+                self.llm.ainvoke([
+                    SystemMessage(content="You are a fact-checker generating verification questions."),
+                    HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
+                ]),
+                timeout=self.llm_timeout,
+            )
 
             questions = []
             for line in response.content.split("\n"):
@@ -319,6 +324,9 @@ class QAVerifier:
 
             return questions[:4] if questions else [f"Is the following claim true: {claim}?"]
 
+        except asyncio.TimeoutError:
+            logger.warning(f"Question generation timed out after {self.llm_timeout}s")
+            return [f"Is the following claim true: {claim}?"]
         except Exception as e:
             logger.warning(f"Question generation failed: {e}")
             return [f"Is the following claim true: {claim}?"]
@@ -378,17 +386,27 @@ class QAVerifier:
         questions_text = "\n".join([f"- {q}" for q in questions])
 
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content="You are a professional fact-checker."),
-                HumanMessage(content=VERIFICATION_PROMPT.format(
-                    claim=claim,
-                    evidence=evidence,
-                    questions=questions_text,
-                )),
-            ])
+            response = await asyncio.wait_for(
+                self.llm.ainvoke([
+                    SystemMessage(content="You are a professional fact-checker."),
+                    HumanMessage(content=VERIFICATION_PROMPT.format(
+                        claim=claim,
+                        evidence=evidence,
+                        questions=questions_text,
+                    )),
+                ]),
+                timeout=self.llm_timeout,
+            )
 
             return self._parse_verdict(response.content)
 
+        except asyncio.TimeoutError:
+            logger.error(f"Verdict generation timed out after {self.llm_timeout}s")
+            return {
+                "verdict": "NOT_ENOUGH_INFO",
+                "confidence": 1,
+                "reasoning": f"Verification timed out after {self.llm_timeout}s",
+            }
         except Exception as e:
             logger.error(f"Verdict generation failed: {e}")
             return {

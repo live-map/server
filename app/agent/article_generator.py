@@ -19,6 +19,7 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Literal
@@ -155,8 +156,10 @@ class ArticleGenerator:
         self,
         model: str | None = None,
         temperature: float = 0.3,
+        llm_timeout: float = 60.0,
     ):
         self.model = model or agent_settings.llm_model
+        self.llm_timeout = llm_timeout
         self.llm = ChatOpenAI(
             model=self.model,
             temperature=temperature,
@@ -195,19 +198,28 @@ class ArticleGenerator:
 
         # Generate article
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content="You are a professional AP-style news writer."),
-                HumanMessage(content=ARTICLE_GENERATION_PROMPT.format(
-                    event_summary=event_summary,
-                    verified_claims=verified_text or "None",
-                    refuted_claims=refuted_text or "None",
-                    unverified_claims=unverified_text or "None",
-                    sources=sources_text or "No sources available",
-                )),
-            ])
+            response = await asyncio.wait_for(
+                self.llm.ainvoke([
+                    SystemMessage(content="You are a professional AP-style news writer."),
+                    HumanMessage(content=ARTICLE_GENERATION_PROMPT.format(
+                        event_summary=event_summary,
+                        verified_claims=verified_text or "None",
+                        refuted_claims=refuted_text or "None",
+                        unverified_claims=unverified_text or "None",
+                        sources=sources_text or "No sources available",
+                    )),
+                ]),
+                timeout=self.llm_timeout,
+            )
 
             article = self._parse_article(response.content)
 
+        except asyncio.TimeoutError:
+            logger.error(f"Article generation timed out after {self.llm_timeout}s")
+            article = GeneratedArticle(
+                headline="Article Generation Timeout",
+                body=f"Unable to generate article: LLM timed out after {self.llm_timeout}s",
+            )
         except Exception as e:
             logger.error(f"Article generation failed: {e}")
             article = GeneratedArticle(

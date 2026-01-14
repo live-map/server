@@ -151,21 +151,17 @@ class ClaimVerificationAgent:
         self._search_semaphore = asyncio.Semaphore(
             self.config.MAX_CONCURRENT_SEARCHES
         )
-        self._llm_semaphore = asyncio.Semaphore(
-            self.config.MAX_CONCURRENT_LLM_CALLS
+
+        # Components (LLM rate limiting is handled within each component)
+        self.claim_extractor = ClaimExtractor(
+            llm_timeout=self.config.LLM_TIMEOUT
         )
-
-        # Components
-        self.claim_extractor = ClaimExtractor()
-        self.qa_verifier = QAVerifier()
-        self.article_generator = ArticleGenerator()
-
-        # LLM for evidence search
-        self.llm = ChatOpenAI(
-            model=agent_settings.llm_model,
-            temperature=0.1,
-            api_key=agent_settings.openai_api_key,
-        ).bind_tools(ALL_TOOLS)
+        self.qa_verifier = QAVerifier(
+            llm_timeout=self.config.LLM_TIMEOUT
+        )
+        self.article_generator = ArticleGenerator(
+            llm_timeout=self.config.LLM_TIMEOUT
+        )
 
         # Build graph
         self.graph = self._build_graph()

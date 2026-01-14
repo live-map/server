@@ -405,7 +405,7 @@ Only include SIGNIFICANT events (major breaking news)."""
     def _parse_classification(
         self, response: str, events: list[TriggerEvent]
     ) -> list[tuple[TriggerEvent, str]]:
-        """분류 결과 파싱"""
+        """분류 결과 파싱 (안전한 파싱)"""
         classified = []
         current_idx = None
         current_category = None
@@ -416,23 +416,35 @@ Only include SIGNIFICANT events (major breaking news)."""
 
             # Handle formats like "1. INDEX: 1" or "INDEX: 1"
             if "INDEX:" in line:
+                # Save previous entry if valid
                 if current_idx is not None and current_significant:
                     if 0 <= current_idx < len(events):
                         classified.append((events[current_idx], current_category or "other"))
 
+                # Parse new INDEX safely
                 try:
-                    # Extract number after INDEX:
                     idx_part = line.split("INDEX:")[1].strip()
-                    current_idx = int(idx_part.split()[0])
-                except (ValueError, IndexError):
+                    # Handle various formats: "0", "0 ", "0,", etc.
+                    idx_str = ""
+                    for char in idx_part:
+                        if char.isdigit():
+                            idx_str += char
+                        else:
+                            break
+                    current_idx = int(idx_str) if idx_str else None
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"Failed to parse INDEX from: {line}, error: {e}")
                     current_idx = None
+
                 current_category = None
                 current_significant = False
 
             elif "CATEGORY:" in line:
                 try:
-                    current_category = line.split("CATEGORY:")[1].strip().lower()
-                except IndexError:
+                    category_part = line.split("CATEGORY:")[1].strip().lower()
+                    # Clean up category (remove extra chars)
+                    current_category = category_part.split()[0] if category_part else "other"
+                except (IndexError, AttributeError):
                     current_category = "other"
 
             elif "SIGNIFICANT:" in line:

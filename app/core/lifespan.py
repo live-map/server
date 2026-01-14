@@ -156,20 +156,30 @@ async def run_scheduled_scan():
 
 
 async def scanner_loop():
-    """Run scanner in a loop every N minutes."""
+    """Run scanner in a loop every N minutes with error recovery."""
     interval = agent_settings.scan_interval_minutes * 60  # Convert to seconds
+    retry_delay = 60  # Wait 60s before retrying after error
 
     print(f"\n[SCHEDULER] Scanner will run every {agent_settings.scan_interval_minutes} minutes")
     print("[SCHEDULER] Running initial scan NOW...\n")
 
     # Run immediately on startup
-    await run_scheduled_scan()
+    try:
+        await run_scheduled_scan()
+    except Exception as e:
+        logger.error(f"[SCHEDULER] Initial scan failed: {e}")
+        print(f"[SCHEDULER] Initial scan failed: {e}")
 
-    # Then run on schedule
+    # Then run on schedule with error recovery
     while True:
         print(f"\n[SCHEDULER] Next scan in {agent_settings.scan_interval_minutes} minutes...")
         await asyncio.sleep(interval)
-        await run_scheduled_scan()
+        try:
+            await run_scheduled_scan()
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Scan failed, retrying in {retry_delay}s: {e}")
+            print(f"[SCHEDULER] Scan failed: {e}")
+            await asyncio.sleep(retry_delay)
 
 
 @asynccontextmanager
@@ -180,6 +190,12 @@ async def lifespan(app: FastAPI):
     # Setup logging first
     setup_logging()
 
+    # Validate required configuration
+    if not agent_settings.openai_api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is required. Please set it in your environment or .env file."
+        )
+
     print("\n" + "=" * 60)
     print("  LIVEMAP API - Starting...")
     print("=" * 60)
@@ -188,6 +204,7 @@ async def lifespan(app: FastAPI):
     print(f"  GDELT Enabled: {agent_settings.gdelt_enabled}")
     print(f"  Twitter Enabled: {agent_settings.twitter_enabled}")
     print(f"  Telegram Enabled: {agent_settings.telegram_enabled}")
+    print(f"  OpenAI API Key: {'✓ Set' if agent_settings.openai_api_key else '✗ Missing'}")
     print("=" * 60 + "\n")
 
     # Start scanner in background
