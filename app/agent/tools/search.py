@@ -42,15 +42,17 @@ async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
         List of results [{title, url, content, source, source_name}]
     """
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
 
         results = []
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=max_results):
-                domain = r.get("href", "").split("/")[2] if r.get("href") else "unknown"
+                # New ddgs package uses 'link' instead of 'href'
+                url = r.get("link", r.get("href", ""))
+                domain = url.split("/")[2] if url and "/" in url else "unknown"
                 results.append({
                     "title": r.get("title", ""),
-                    "url": r.get("href", ""),
+                    "url": url,
                     "content": r.get("body", "")[:500],
                     "source": domain,
                     "source_name": f"DuckDuckGo:{domain}",

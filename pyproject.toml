@@ -10,37 +10,32 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
     "python-dotenv>=1.0.0",
-
     # FastAPI
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-
     # Database
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
     "pgvector>=0.3.0",
     "greenlet>=3.0.0",
-
     # Autonomous Agent (LangGraph)
     "langgraph>=0.2.0",
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
     "tavily-python>=0.5.0",
-
     # Multi-source Triggers
-    "telethon>=1.42.0",          # Telegram
-    "twikit>=2.0.0",              # X/Twitter (personal account)
-    "yt-dlp>=2024.0.0",           # YouTube/video download
-
-    # Free Search (DuckDuckGo)
-    "duckduckgo-search>=7.0.0",
-
+    "telethon>=1.42.0", # Telegram
+    "twikit>=2.0.0", # X/Twitter (personal account)
+    "yt-dlp>=2024.0.0", # YouTube/video download
+    # Free Search (DuckDuckGo - new package name)
+    "ddgs>=9.10.0",
     # Embedding (for semantic clustering)
     "sentence-transformers>=3.0.0",
-
     # MCP Server (optional)
     "mcp>=1.25.0",
+    # Production utilities
+    "tenacity>=8.2.0", # Retry with exponential backoff
 ]
 
 [dependency-groups]
