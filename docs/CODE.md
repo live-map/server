@@ -10,7 +10,21 @@
 |------|------|----------|
 | 1.0 | 2026-01-12 | 초기 작성 (Stage 0-3 파이프라인) |
 | 2.0 | 2026-01-13 | 레거시 제거, 에이전트 시스템 중심으로 재작성 |
-| **3.0** | **2026-01-14** | **Claim-Level Verification v3 (2026 SOTA) 구현** |
+| 3.0 | 2026-01-14 | Claim-Level Verification v3 (2026 SOTA) 구현 |
+| **3.1** | **2026-01-14** | **Production-Ready 품질 개선 (안정성, 성능, 코드 품질)** |
+
+### v3.1 품질 개선 (2026-01-14) ✅ NEW
+
+**왜 변경되었나?**
+- 코드 품질 심층 분석으로 15개 이슈 수정
+- 프로덕션 레벨 안정성 확보
+
+**핵심 변경:**
+1. **LLM 타임아웃**: 모든 LLM 호출에 60초 타임아웃
+2. **병렬화**: Claim 검증을 `asyncio.gather()` + `Semaphore`로 병렬 처리
+3. **입력 검증**: 최소/최대 길이 검증
+4. **Pydantic v2**: `model_config = ConfigDict(...)` 마이그레이션
+5. **에러 복구**: 스캐너 루프에 에러 복구 로직
 
 ---
 
@@ -282,27 +296,72 @@ class ArticleGenerator:
     async def generate(self, event_summary, verification_result) -> GeneratedArticle
 ```
 
-### 4.3 AgentConfig
+### 4.3 AgentConfig (v3.1 업데이트)
 
 ```python
 # app/agent/config.py
+from pydantic import ConfigDict
+from pydantic_settings import BaseSettings
+
 class AgentSettings(BaseSettings):
     # LLM
-    openai_api_key: str
+    openai_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.3
 
     # Search
-    tavily_api_key: str | None = None
+    tavily_api_key: str = ""
     gdelt_enabled: bool = True
 
     # Scanner
     scan_interval_minutes: int = 15
 
-    # Triggers
-    significant_categories: list[str] = ["war", "protest", "terrorism", "military", "violence"]
+    # ★ v3.1 NEW: 타임아웃 및 동시성 설정
+    llm_timeout_seconds: float = 60.0
+    max_concurrent_llm_calls: int = 3
+    investigation_timeout_seconds: float = 300.0  # 5 minutes
+
+    # Pydantic v2 configuration
+    model_config = ConfigDict(
+        env_prefix="AGENT_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+# 싱글톤 인스턴스
+agent_settings = AgentSettings()
 ```
 
-### 4.3 도구 추가하기
+### 4.4 V3Config (investigator_v3.py)
+
+```python
+class V3Config:
+    """Configuration for Claim-Level Verification Agent."""
+
+    # Claim extraction
+    MAX_CLAIMS: int = 10
+
+    # Evidence retrieval
+    MAX_EVIDENCE_PER_CLAIM: int = 10
+    MAX_TOTAL_EVIDENCE: int = 50
+
+    # Rate limiting (from agent_settings)
+    MAX_CONCURRENT_SEARCHES: int = 5
+    MAX_CONCURRENT_LLM_CALLS: int = agent_settings.max_concurrent_llm_calls
+
+    # Timeouts (seconds)
+    TOOL_TIMEOUT: float = 30.0
+    LLM_TIMEOUT: float = agent_settings.llm_timeout_seconds
+
+    # Retry
+    MAX_RETRIES: int = 3
+
+    # ★ v3.1 NEW: 입력 검증
+    MIN_INPUT_LENGTH: int = 10
+    MAX_INPUT_LENGTH: int = 10000
+```
+
+### 4.5 도구 추가하기
 
 **1단계: 도구 함수 정의**
 
@@ -343,7 +402,7 @@ ALL_TOOLS = [
 ]
 ```
 
-### 4.4 트리거 추가하기
+### 4.6 트리거 추가하기
 
 ```python
 # app/agent/triggers/new_source.py
@@ -599,4 +658,4 @@ docker exec -it livemap-db psql -U livemap -d livemap
 ---
 
 *최종 업데이트: 2026-01-14*
-*버전: 3.0 (Claim-Level Verification Agent v3)*
+*버전: 3.1 (Production-Ready Claim-Level Verification)*

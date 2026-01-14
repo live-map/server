@@ -4,7 +4,30 @@
 >
 > **근거**: 연구 결과 Claim decomposition으로 +7.5% 정확도, 복잡한 주장에서 최대 +8.31% 개선
 >
-> **상태**: ✅ **구현 완료** (2026-01-13)
+> **상태**: ✅ **Production-Ready** (2026-01-14 v3.1)
+
+---
+
+## 변경 이력 (History)
+
+| 버전 | 날짜 | 변경 내용 | 작성자 |
+|------|------|----------|--------|
+| 1.0 | 2026-01-13 | 초기 구현 계획 작성 | Claude |
+| **1.1** | **2026-01-14** | **품질 개선 Phase 1-3 추가 (15개 이슈 수정)** | Claude |
+
+### v1.1 품질 개선 추가 (2026-01-14)
+
+**왜 추가되었나?**
+- v3.0 구현 완료 후 깊은 코드 분석으로 19개 이슈 발견
+- CRITICAL 5개, HIGH 8개, MEDIUM 6개 → 총 15개 수정
+- "웰메이드고 완벽한 시스템" 요청에 대한 품질 개선
+
+**새로 추가된 Phase:**
+| Phase | 심각도 | 수정 개수 | 브랜치 | 커밋 |
+|-------|--------|----------|--------|------|
+| Phase 6 | CRITICAL | 5개 | `fix/critical-issues` | `9f6e46b` |
+| Phase 7 | HIGH | 7개 | `fix/high-priority` | `090db87` |
+| Phase 8 | MEDIUM | 3개 | `fix/code-quality` | `33e63da` |
 
 ---
 
@@ -17,21 +40,39 @@
 | Phase 3 | Article Generator (AP Style) | ✅ 완료 |
 | Phase 4 | Pipeline Integration (investigator_v3) | ✅ 완료 |
 | Phase 5 | Testing & Bug Fixes | ✅ 완료 |
+| **Phase 6** | **CRITICAL 안정성 개선** | **✅ 완료** |
+| **Phase 7** | **HIGH 성능/신뢰성 개선** | **✅ 완료** |
+| **Phase 8** | **MEDIUM 코드 품질 개선** | **✅ 완료** |
 
 ### 구현된 파일
-- `app/agent/claim_extraction.py` - VeriScore 스타일 Claim 추출
-- `app/agent/qa_verifier.py` - QA 기반 LLM 검증
-- `app/agent/article_generator.py` - AP Style 기사 생성
-- `app/agent/investigator_v3.py` - 5단계 파이프라인 통합
-- `app/core/lifespan.py` - ClaimVerificationAgent 사용
+- `app/agent/claim_extraction.py` - VeriScore 스타일 Claim 추출 + LLM 타임아웃
+- `app/agent/qa_verifier.py` - QA 기반 LLM 검증 + 병렬화 + Semaphore
+- `app/agent/article_generator.py` - AP Style 기사 생성 + LLM 타임아웃
+- `app/agent/investigator_v3.py` - 5단계 파이프라인 + 입력 검증
+- `app/agent/config.py` - Pydantic v2 + 설정 외부화
+- `app/agent/tools/search.py` - URL 검증 + 에러 처리 통일
+- `app/agent/triggers/manager.py` - 시간 기반 중복 감지 + 안전한 파싱
+- `app/core/lifespan.py` - 에러 복구 + API 키 검증 + 타임아웃
 
-### 테스트 결과
+### 테스트 결과 (v3.1)
 ```
-Claims: 1
-Evidence: 10
-Supported: 1
-Reliability: 100%
-Article: AP Style with 2026 dates ✅
+=== E2E Test: ClaimVerificationAgent ===
+
+1. Agent initialization... ✓
+   - LLM timeout: 60.0s
+   - Max concurrent: 3
+   - Min input length: 10
+
+2. Input validation (too short)... ✓ (correctly rejected)
+3. Input validation (empty)... ✓ (correctly rejected)
+
+4. Full investigation test...
+   - Claims extracted: 2
+   - Verdicts: 2 (all SUPPORTED, confidence 5/5)
+   - Article headline: North Korea Conducts Ballistic Missile Test
+   - Article length: 995 chars
+
+=== All Tests Passed ===
 ```
 
 ---
@@ -516,7 +557,102 @@ langgraph = ">=0.2.0"
 
 ---
 
+---
+
+## Phase 6-8: 품질 개선 상세 (2026-01-14)
+
+### Phase 6: CRITICAL 안정성 개선
+
+| # | 이슈 | 파일 | 수정 내용 |
+|---|------|------|----------|
+| 1 | LLM Semaphore 미사용 | `investigator_v3.py` | 미사용 변수 제거, 컴포넌트에 타임아웃 전달 |
+| 2 | 스캐너 에러 복구 없음 | `lifespan.py` | 60초 후 재시도 로직 추가 |
+| 3 | API 키 검증 없음 | `lifespan.py` | 시작 시 `OPENAI_API_KEY` 검증 |
+| 4 | LLM 타임아웃 없음 | `claim_extraction.py`, `qa_verifier.py`, `article_generator.py` | `asyncio.wait_for()` 적용 |
+| 5 | LLM 파싱 취약성 | `triggers/manager.py` | 안전한 INDEX/CATEGORY 파싱 |
+
+**핵심 코드 패턴:**
+```python
+# LLM 타임아웃 적용 (60초)
+response = await asyncio.wait_for(
+    self.llm.ainvoke([...]),
+    timeout=self.llm_timeout,
+)
+```
+
+### Phase 7: HIGH 성능/신뢰성 개선
+
+| # | 이슈 | 파일 | 수정 내용 |
+|---|------|------|----------|
+| 6 | Claim 검증 순차 처리 | `qa_verifier.py` | `asyncio.gather()` + `Semaphore`로 병렬화 |
+| 7 | 종료 타임아웃 없음 | `lifespan.py` | 10초 타임아웃 추가 |
+| 8 | investigate 타임아웃 없음 | `lifespan.py` | 5분 타임아웃 추가 |
+| 9 | 중복 감지 메모리 문제 | `triggers/manager.py` | 시간 기반 만료 (24시간) |
+| 10 | 에러 반환 형식 불일치 | `tools/search.py` | 일관되게 `[]` 반환 |
+| 11 | Confidence 파싱 실패 | `qa_verifier.py` | `%`, `/5`, 일반 숫자 처리 |
+| 13 | URL 파싱 취약점 | `tools/search.py` | `_is_valid_url()` 헬퍼 추가 |
+
+**핵심 코드 패턴:**
+```python
+# 병렬 검증 with rate limiting
+async def verify_with_semaphore(claim: ExtractedClaim) -> ClaimVerdict:
+    async with self._verification_semaphore:
+        return await self.verify_claim(claim, evidence_docs)
+
+verdicts = await asyncio.gather(
+    *[verify_with_semaphore(claim) for claim in claims]
+)
+```
+
+### Phase 8: MEDIUM 코드 품질 개선
+
+| # | 이슈 | 파일 | 수정 내용 |
+|---|------|------|----------|
+| 14 | Pydantic v1 Config | `config.py` | `model_config = ConfigDict(...)` |
+| 15 | 입력 검증 부족 | `investigator_v3.py` | `MIN/MAX_INPUT_LENGTH` 검증 |
+| 17 | 하드코딩된 설정값 | `config.py`, `investigator_v3.py` | `agent_settings`에서 로드 |
+
+**핵심 코드 패턴:**
+```python
+# Pydantic v2 마이그레이션
+from pydantic import ConfigDict
+
+class AgentSettings(BaseSettings):
+    model_config = ConfigDict(
+        env_prefix="AGENT_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    # 새 설정값
+    llm_timeout_seconds: float = 60.0
+    max_concurrent_llm_calls: int = 3
+    investigation_timeout_seconds: float = 300.0
+```
+
+---
+
+## 참조 (2026 업데이트)
+
+### 2026 SOTA 연구
+
+| 연구 | 성과 | 적용 |
+|------|------|------|
+| [AVeriTeC 2025](https://arxiv.org/html/2410.23850v1) | Ev2R recall 평가 | 평가 지표 |
+| [HerO 2](https://arxiv.org/html/2507.11004) | AVeriTeC 2025 2위, 최단 런타임 | 파이프라인 설계 |
+| [AVerImaTeC 2025-2026](https://fever.ai/task.html) | 멀티모달 검증 태스크 | 향후 확장 참고 |
+
+### 프로덕션 패턴 참고
+
+| 패턴 | 참고 | 적용 |
+|------|------|------|
+| [asyncio Semaphore](https://www.newline.co/@zaoyang/python-asyncio-for-llm-concurrency-best-practices--bc079176) | LLM Concurrency Best Practices | `qa_verifier.py` |
+| [Rate Limiting](https://villoro.com/blog/async-openai-calls-rate-limiter/) | OpenAI API Calls | 모든 LLM 호출 |
+| [AP Stylebook AI Guidelines](https://www.poynter.org/reporting-editing/2025/ap-stylebook-breaking-news-updates/) | AI 생성 콘텐츠 공개 | `article_generator.py` |
+
+---
+
 *작성일: 2026-01-13*
-*완료일: 2026-01-13*
-*버전: 1.0*
-*상태: ✅ 구현 완료*
+*품질 개선: 2026-01-14*
+*버전: 1.1 (Production-Ready)*
+*상태: ✅ 구현 완료 + 품질 개선 완료*

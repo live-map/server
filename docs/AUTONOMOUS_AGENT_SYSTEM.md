@@ -12,7 +12,46 @@
 |------|------|----------|
 | 4.0 | 2026-01-12 | 다중 소스 + 감지 레이어 |
 | 5.0 | 2026-01-13 | Production-Ready Deep Verification Agent |
-| **6.0** | **2026-01-13** | **Claim-Level Verification v3 (2026 SOTA) - 구현 완료** |
+| 6.0 | 2026-01-13 | Claim-Level Verification v3 (2026 SOTA) - 구현 완료 |
+| **6.1** | **2026-01-14** | **Production-Ready 품질 개선 (15개 이슈 수정)** |
+
+### v6.1 품질 개선 (2026-01-14) ✅ NEW
+
+**왜 추가되었나?**
+- 코드 품질 심층 분석으로 19개 이슈 발견 → 15개 수정
+- CRITICAL 5개: 시스템 안정성 직접 영향
+- HIGH 7개: 성능 및 신뢰성
+- MEDIUM 3개: 코드 품질
+
+**핵심 개선 사항:**
+
+| 카테고리 | 개선 내용 |
+|----------|----------|
+| **안정성** | LLM 타임아웃 (60초), 스캐너 에러 복구, API 키 검증 |
+| **성능** | Claim 검증 병렬화 (`asyncio.gather` + `Semaphore`) |
+| **신뢰성** | URL 검증, 입력 검증, 시간 기반 중복 감지 (24h 만료) |
+| **코드 품질** | Pydantic v2, 설정 외부화, 안전한 LLM 파싱 |
+
+**프로덕션 기능 추가:**
+```python
+# 1. LLM 호출 타임아웃
+response = await asyncio.wait_for(llm.ainvoke([...]), timeout=60.0)
+
+# 2. 병렬 검증 with rate limiting
+async with self._verification_semaphore:
+    return await self.verify_claim(claim, evidence_docs)
+
+# 3. 입력 검증
+if len(event) < MIN_INPUT_LENGTH:
+    return {"errors": ["Input too short"]}
+```
+
+**테스트 결과:**
+- Import 테스트: 8개 모듈 ✓
+- 서버 실행 테스트: ✓
+- E2E 테스트: ✓ (입력 검증, 조사 파이프라인)
+
+---
 
 ### v6.0 주요 변경사항 (구현 완료 ✅)
 
@@ -371,4 +410,4 @@ app/
 ---
 
 *최종 업데이트: 2026-01-14*
-*버전: 6.0 (Claim-Level Verification Agent v3)*
+*버전: 6.1 (Production-Ready Claim-Level Verification)*
