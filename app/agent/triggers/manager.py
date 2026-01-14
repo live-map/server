@@ -16,6 +16,7 @@
 import asyncio
 import hashlib
 import logging
+import time
 from collections import Counter
 from datetime import datetime
 from typing import Callable, Optional
@@ -73,7 +74,9 @@ class TriggerManager:
         self.on_new_cluster = on_new_cluster
         self.triggers: list[BaseTrigger] = []
         self.last_scan: datetime | None = None
-        self.event_hashes: set[str] = set()  # 중복 방지
+        # 중복 방지 - dict[hash, timestamp] for time-based expiry
+        self.event_hashes: dict[str, float] = {}
+        self.hash_expiry_seconds: float = 86400  # 24 hours
 
         # LLM (이벤트 분류용)
         if openai_api_key:
@@ -327,13 +330,17 @@ class TriggerManager:
 
     def _deduplicate_events(self, events: list[TriggerEvent]) -> list[TriggerEvent]:
         """
-        중복 이벤트 제거
+        중복 이벤트 제거 (시간 기반 만료)
 
         동일한 사건이 여러 소스에서 감지될 수 있음
         제목 유사도로 중복 판단
         """
+        current_time = time.time()
         unique = []
         seen_titles = set()
+
+        # 먼저 만료된 해시 정리
+        self._cleanup_expired_hashes(current_time)
 
         for event in events:
             # 제목 정규화 (소문자, 공백 제거)
@@ -349,14 +356,24 @@ class TriggerManager:
                 ).hexdigest()
 
                 if event_hash not in self.event_hashes:
-                    self.event_hashes.add(event_hash)
+                    self.event_hashes[event_hash] = current_time
                     unique.append(event)
 
-        # 메모리 관리
-        if len(self.event_hashes) > 10000:
-            self.event_hashes.clear()
-
         return unique
+
+    def _cleanup_expired_hashes(self, current_time: float) -> None:
+        """만료된 해시 정리 (24시간 이상 된 항목 제거)"""
+        if len(self.event_hashes) > 5000:
+            # 메모리 임계치 초과 시 정리
+            expired = [
+                h for h, ts in self.event_hashes.items()
+                if current_time - ts > self.hash_expiry_seconds
+            ]
+            for h in expired:
+                del self.event_hashes[h]
+
+            if expired:
+                logger.debug(f"Cleaned up {len(expired)} expired event hashes")
 
     async def _classify_events(
         self, events: list[TriggerEvent]

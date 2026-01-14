@@ -12,6 +12,7 @@ Priority-based search strategy (based on expert research):
 """
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 from langchain_core.tools import tool
@@ -19,6 +20,28 @@ from langchain_core.tools import tool
 from app.agent.config import agent_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _is_valid_url(url: str) -> bool:
+    """Validate URL format."""
+    if not url:
+        return False
+    try:
+        result = urlparse(url)
+        return all([result.scheme in ("http", "https"), result.netloc])
+    except Exception:
+        return False
+
+
+def _extract_domain(url: str) -> str:
+    """Safely extract domain from URL."""
+    if not url:
+        return "unknown"
+    try:
+        parsed = urlparse(url)
+        return parsed.netloc.replace("www.", "") or "unknown"
+    except Exception:
+        return "unknown"
 
 
 # =============================================================================
@@ -49,7 +72,13 @@ async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
             for r in ddgs.text(query, max_results=max_results):
                 # New ddgs package uses 'link' instead of 'href'
                 url = r.get("link", r.get("href", ""))
-                domain = url.split("/")[2] if url and "/" in url else "unknown"
+
+                # Validate URL
+                if not _is_valid_url(url):
+                    logger.debug(f"Skipping invalid URL: {url}")
+                    continue
+
+                domain = _extract_domain(url)
                 results.append({
                     "title": r.get("title", ""),
                     "url": url,
@@ -63,7 +92,7 @@ async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
 
     except Exception as e:
         logger.error(f"DuckDuckGo search error: {e}")
-        return [{"error": str(e), "results": []}]
+        return []  # Return empty list on error
 
 
 # =============================================================================
@@ -88,7 +117,8 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
         List of results [{title, url, content, source}]
     """
     if not agent_settings.tavily_api_key:
-        return [{"error": "Tavily API key not configured", "results": []}]
+        logger.warning("Tavily API key not configured")
+        return []
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -107,10 +137,16 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
 
             results = []
             for r in data.get("results", []):
-                domain = r.get("url", "").split("/")[2] if r.get("url") else "unknown"
+                url = r.get("url", "")
+
+                # Validate URL
+                if not _is_valid_url(url):
+                    continue
+
+                domain = _extract_domain(url)
                 results.append({
                     "title": r.get("title", ""),
-                    "url": r.get("url", ""),
+                    "url": url,
                     "content": r.get("content", "")[:500],
                     "source": domain,
                     "source_name": f"Tavily:{domain}",
@@ -122,7 +158,7 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
 
     except Exception as e:
         logger.error(f"Tavily search error: {e}")
-        return [{"error": str(e), "results": []}]
+        return []  # Return empty list on error
 
 
 # =============================================================================
@@ -168,27 +204,34 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
             # 응답 상태 체크
             if response.status_code != 200:
                 logger.warning(f"GDELT returned status {response.status_code}")
-                return [{"error": f"GDELT API error: {response.status_code}", "results": []}]
+                return []
 
             # 응답 내용 체크 (빈 응답 또는 HTML 반환 시)
             content = response.text
             if not content or content.startswith("<!") or content.startswith("<html"):
                 logger.warning(f"GDELT returned non-JSON response")
-                return [{"info": "No results found from GDELT", "results": []}]
+                return []
 
             try:
                 data = response.json()
             except Exception as json_err:
                 logger.warning(f"GDELT JSON parse error: {json_err}")
-                return [{"error": f"GDELT returned invalid JSON", "results": []}]
+                return []
 
             results = []
             for art in data.get("articles", []):
+                url = art.get("url", "")
+
+                # Validate URL
+                if not _is_valid_url(url):
+                    continue
+
+                domain = _extract_domain(url)
                 results.append({
                     "title": art.get("title", ""),
-                    "url": art.get("url", ""),
-                    "source": art.get("domain", ""),
-                    "source_name": f"GDELT:{art.get('domain', 'unknown')}",
+                    "url": url,
+                    "source": domain,
+                    "source_name": f"GDELT:{domain}",
                     "content": art.get("title", ""),  # GDELT은 content가 없어서 title 사용
                     "published": art.get("seendate", ""),
                     "language": art.get("language", ""),
@@ -200,7 +243,7 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
 
     except httpx.TimeoutException:
         logger.warning("GDELT request timed out")
-        return [{"error": "GDELT request timed out", "results": []}]
+        return []
     except Exception as e:
         logger.error(f"GDELT search error: {e}")
-        return [{"error": str(e), "results": []}]
+        return []

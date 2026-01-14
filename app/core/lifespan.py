@@ -87,9 +87,13 @@ async def run_scheduled_scan():
             print(f"\n[SCANNER] [{i+1}] Investigating: {event_desc[:80]}...")
 
             try:
-                result = await agent.investigate(
-                    event=event_desc,
-                    category=category,
+                # Add timeout to investigation (5 minutes max)
+                result = await asyncio.wait_for(
+                    agent.investigate(
+                        event=event_desc,
+                        category=category,
+                    ),
+                    timeout=300.0,  # 5 minutes
                 )
 
                 # v3: Output the generated article (AP Style)
@@ -144,6 +148,9 @@ async def run_scheduled_scan():
 
                     print("\n" + "=" * 70 + "\n")
 
+            except asyncio.TimeoutError:
+                print(f"[SCANNER] [{i+1}] Investigation timed out after 5 minutes")
+                logger.error(f"Investigation timed out for: {event_desc[:50]}")
             except Exception as e:
                 print(f"[SCANNER] [{i+1}] Investigation failed: {e}")
                 import traceback
@@ -212,17 +219,22 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup on shutdown
+    # Cleanup on shutdown with timeouts
     if _scanner_task:
         print("\n[SCHEDULER] Stopping scanner...")
         _scanner_task.cancel()
         try:
-            await _scanner_task
+            await asyncio.wait_for(_scanner_task, timeout=10.0)
         except asyncio.CancelledError:
             pass
+        except asyncio.TimeoutError:
+            logger.warning("Scanner task did not cancel within 10s")
 
-    # Dispose DB engine
-    from app.core.database import engine
-    await engine.dispose()
+    # Dispose DB engine with timeout
+    try:
+        from app.core.database import engine
+        await asyncio.wait_for(engine.dispose(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Database dispose timed out after 10s")
 
     print("[SHUTDOWN] Livemap API stopped.")
