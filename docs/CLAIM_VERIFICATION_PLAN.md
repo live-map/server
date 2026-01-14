@@ -3,6 +3,36 @@
 > **목표**: Event-level 검증을 Claim-level 검증으로 업그레이드하여 정확도 향상
 >
 > **근거**: 연구 결과 Claim decomposition으로 +7.5% 정확도, 복잡한 주장에서 최대 +8.31% 개선
+>
+> **상태**: ✅ **구현 완료** (2026-01-13)
+
+---
+
+## 구현 상태
+
+| Phase | 설명 | 상태 |
+|-------|------|------|
+| Phase 1 | Claim Extraction (VeriScore) | ✅ 완료 |
+| Phase 2 | QA-Based Verification (AIC CTU) | ✅ 완료 |
+| Phase 3 | Article Generator (AP Style) | ✅ 완료 |
+| Phase 4 | Pipeline Integration (investigator_v3) | ✅ 완료 |
+| Phase 5 | Testing & Bug Fixes | ✅ 완료 |
+
+### 구현된 파일
+- `app/agent/claim_extraction.py` - VeriScore 스타일 Claim 추출
+- `app/agent/qa_verifier.py` - QA 기반 LLM 검증
+- `app/agent/article_generator.py` - AP Style 기사 생성
+- `app/agent/investigator_v3.py` - 5단계 파이프라인 통합
+- `app/core/lifespan.py` - ClaimVerificationAgent 사용
+
+### 테스트 결과
+```
+Claims: 1
+Evidence: 10
+Supported: 1
+Reliability: 100%
+Article: AP Style with 2026 dates ✅
+```
 
 ---
 
@@ -465,16 +495,28 @@ langgraph = ">=0.2.0"
 
 ---
 
-## 구현 순서
+## 구현 순서 (완료)
 
-1. **Phase 1**: `nli_verifier.py` 구현 (NLI 모델 래퍼)
-2. **Phase 2**: `claim_extraction.py` 구현 (VeriScore 스타일)
-3. **Phase 3**: `article_generator.py` 구현 (AP Style)
-4. **Phase 4**: `investigator_v3.py` 통합 (LangGraph Pipeline)
-5. **Phase 5**: 테스트 및 v1 삭제
+1. **Phase 1**: ✅ `claim_extraction.py` 구현 (VeriScore 스타일)
+2. **Phase 2**: ✅ `qa_verifier.py` 구현 (QA-Based LLM 검증)
+3. **Phase 3**: ✅ `article_generator.py` 구현 (AP Style)
+4. **Phase 4**: ✅ `investigator_v3.py` 통합 (5-Stage Pipeline)
+5. **Phase 5**: ✅ 테스트 및 버그 수정
+   - LLM 분류 파서 버그 수정
+   - DuckDuckGo 패키지 업데이트 (`ddgs`)
+   - 기사 파서 유연성 개선
+
+### 관련 커밋
+| 커밋 | 설명 |
+|------|------|
+| `8272f8d` | Claim-Level Verification Agent v3.0 |
+| `202fc70` | LLM 분류 파서 버그 수정 |
+| `2806546` | DuckDuckGo 패키지 및 Lifespan 수정 |
+| `818439d` | 기사 파서 유연성 개선 |
 
 ---
 
 *작성일: 2026-01-13*
+*완료일: 2026-01-13*
 *버전: 1.0*
-*상태: 승인 대기*
+*상태: ✅ 구현 완료*

@@ -1,6 +1,6 @@
 # Livemap Backend - 개발자 가이드
 
-> 자율 에이전트 시스템 기반 코드베이스 가이드
+> Claim-Level Verification Agent v3 기반 코드베이스 가이드
 
 ---
 
@@ -9,7 +9,8 @@
 | 버전 | 날짜 | 변경 내용 |
 |------|------|----------|
 | 1.0 | 2026-01-12 | 초기 작성 (Stage 0-3 파이프라인) |
-| **2.0** | **2026-01-13** | **레거시 제거, 에이전트 시스템 중심으로 재작성** |
+| 2.0 | 2026-01-13 | 레거시 제거, 에이전트 시스템 중심으로 재작성 |
+| **3.0** | **2026-01-14** | **Claim-Level Verification v3 (2026 SOTA) 구현** |
 
 ---
 
@@ -77,25 +78,29 @@ backend/
 │   ├── core/                      # 공유 인프라
 │   │   ├── config.py              # 환경변수 (Settings)
 │   │   ├── database.py            # SQLAlchemy 세션
-│   │   └── lifespan.py            # 앱 시작/종료 이벤트
+│   │   └── lifespan.py            # 앱 시작/종료 (ClaimVerificationAgent 사용)
 │   │
 │   ├── agent/                     # 자율 에이전트 시스템
 │   │   ├── graph/
 │   │   │   └── state.py           # LangGraph 상태 정의
 │   │   ├── tools/
 │   │   │   ├── __init__.py        # ALL_TOOLS 익스포트
-│   │   │   ├── search.py          # GDELT, Tavily, DuckDuckGo
+│   │   │   ├── search.py          # GDELT, Tavily, ddgs
 │   │   │   ├── social.py          # Telegram, YouTube
 │   │   │   └── media.py           # Video download
 │   │   ├── triggers/
 │   │   │   ├── base.py            # TriggerEvent 모델
 │   │   │   ├── gdelt.py           # GDELT 트리거
 │   │   │   ├── telegram.py        # Telegram 트리거
-│   │   │   └── manager.py         # TriggerManager
+│   │   │   └── manager.py         # TriggerManager (LLM 분류)
 │   │   ├── config.py              # 에이전트 설정
 │   │   ├── scanner.py             # NewsScanner
-│   │   ├── investigator.py        # V1 에이전트
-│   │   └── investigator_v2.py     # V2 Deep Verification
+│   │   ├── claim_extraction.py    # ★ V3: VeriScore 스타일 Claim 추출
+│   │   ├── qa_verifier.py         # ★ V3: QA 기반 LLM 검증
+│   │   ├── article_generator.py   # ★ V3: AP Style 기사 생성
+│   │   ├── investigator_v3.py     # ★ V3: Claim-Level Verification (현재)
+│   │   ├── investigator_v2.py     # V2: Deep Verification (레거시)
+│   │   └── investigator.py        # V1: 기본 에이전트 (레거시)
 │   │
 │   ├── api/v1/
 │   │   ├── routes/
@@ -209,55 +214,92 @@ result2 = await search_duckduckgo(query)
 
 ## 4. 에이전트 시스템
 
-### 4.1 Deep Verification Agent 구조
+### 4.1 Claim-Level Verification Agent v3 (현재 사용)
 
 ```python
-# app/agent/investigator_v2.py
+# app/agent/investigator_v3.py
 
-class DeepVerificationAgent:
+class ClaimVerificationAgent:
     """
+    2026 SOTA 기반 5단계 파이프라인 (AIC CTU + HerO 2 + VeriScore)
+
     Pipeline:
-    1. DECOMPOSER: 쿼리 분해
-    2. PARALLEL_RESEARCHER: 병렬 리서치 (ReAct)
-    3. VERIFIER: 교차 검증
-    4. SYNTHESIZER: 리포트 생성
+    1. EXTRACTOR: VeriScore 스타일 원자적 주장 추출
+    2. RETRIEVER: 다중 소스 증거 수집 (GDELT/DDG/Tavily)
+    3. VERIFIER: QA 기반 LLM 검증
+    4. AGGREGATOR: Confidence-Weighted Voting
+    5. SYNTHESIZER: AP Style 기사 생성
     """
 
-    def __init__(self, config: AgentConfig | None = None):
-        self.config = config or AgentConfig()
+    def __init__(self, model: str | None = None):
+        self.model = model or agent_settings.llm_model
+        self.claim_extractor = ClaimExtractor(model=self.model)
+        self.qa_verifier = QAVerifier(model=self.model)
+        self.article_generator = ArticleGenerator(model=self.model)
 
-        # Rate Limiting
-        self._search_semaphore = asyncio.Semaphore(5)
-        self._llm_semaphore = asyncio.Semaphore(3)
+    async def investigate(self, event: str, category: str) -> dict:
+        # 1. Claim Extraction
+        claims = await self.claim_extractor.extract(event)
 
-        # LLM 설정
-        self.llm = ChatOpenAI(...).bind_tools(ALL_TOOLS)
-        self.llm_no_tools = ChatOpenAI(...)
+        # 2. Evidence Retrieval (parallel)
+        evidence = await self._gather_evidence(claims)
 
-    async def investigate(self, event: str, category: str) -> InvestigationReport:
-        ...
+        # 3. QA Verification
+        verdicts = await self.qa_verifier.verify_claims(claims, evidence)
+
+        # 4. Aggregation
+        aggregated = self._aggregate_verdicts(verdicts)
+
+        # 5. Article Generation (AP Style)
+        article = await self.article_generator.generate(event, verdicts)
+
+        return {
+            "claims": claims,
+            "evidence_docs": evidence,
+            "verdicts": verdicts,
+            "article": article,
+            **aggregated,
+        }
 ```
 
-### 4.2 AgentConfig
+### 4.2 핵심 컴포넌트
 
 ```python
-class AgentConfig:
-    # ReAct 제한
-    MAX_REACT_ITERATIONS: int = 3
-    MAX_SUBTOPICS: int = 5
+# app/agent/claim_extraction.py
+class ClaimExtractor:
+    """VeriScore 스타일 원자적 주장 추출"""
+    async def extract(self, text: str) -> ClaimExtractionResult
 
-    # Rate Limiting
-    MAX_CONCURRENT_SEARCHES: int = 5
-    MAX_CONCURRENT_LLM_CALLS: int = 3
+# app/agent/qa_verifier.py
+class QAVerifier:
+    """QA 기반 LLM 검증 (AIC CTU 방식)"""
+    async def verify_claim(self, claim, evidence_docs) -> ClaimVerdict
+    async def verify_claims(self, claims, evidence_docs) -> VerificationResult
 
-    # Timeout
-    TOOL_TIMEOUT: float = 30.0
-    LLM_TIMEOUT: float = 60.0
+# app/agent/article_generator.py
+class ArticleGenerator:
+    """AP Style 기사 생성 (AP Stylebook 2024-2026 준수)"""
+    async def generate(self, event_summary, verification_result) -> GeneratedArticle
+```
 
-    # Retry
-    MAX_RETRIES: int = 3
-    RETRY_MIN_WAIT: float = 1.0
-    RETRY_MAX_WAIT: float = 10.0
+### 4.3 AgentConfig
+
+```python
+# app/agent/config.py
+class AgentSettings(BaseSettings):
+    # LLM
+    openai_api_key: str
+    llm_model: str = "gpt-4o-mini"
+
+    # Search
+    tavily_api_key: str | None = None
+    gdelt_enabled: bool = True
+
+    # Scanner
+    scan_interval_minutes: int = 15
+
+    # Triggers
+    significant_categories: list[str] = ["war", "protest", "terrorism", "military", "violence"]
 ```
 
 ### 4.3 도구 추가하기
@@ -543,7 +585,18 @@ docker exec -it livemap-db psql -U livemap -d livemap
 | FastAPI Best Practices | [github.com/zhanymkanov/fastapi-best-practices](https://github.com/zhanymkanov/fastapi-best-practices) |
 | LangGraph Production Template | [github.com/wassim249/fastapi-langgraph-agent-production-ready-template](https://github.com/wassim249/fastapi-langgraph-agent-production-ready-template) |
 
+### 2026 SOTA 연구
+
+| 연구 | 링크 |
+|------|------|
+| AIC CTU (FEVER 8 Winner) | [arxiv.org/html/2508.04390](https://arxiv.org/html/2508.04390) |
+| HerO 2 (AVeriTeC 2025) | [arxiv.org/html/2507.11004](https://arxiv.org/html/2507.11004) |
+| MedRAGChecker (2026) | [arxiv.org/html/2601.06519](https://arxiv.org/html/2601.06519) |
+| Claim Verification Survey | [arxiv.org/html/2408.14317v2](https://arxiv.org/html/2408.14317v2) |
+| VeriScore | [github.com/Yixiao-Song/VeriScore](https://github.com/Yixiao-Song/VeriScore) |
+| AP Stylebook 2024-2026 | [Amazon](https://www.amazon.com/Associated-Press-Stylebook-2024-2026/dp/154160511X) |
+
 ---
 
-*최종 업데이트: 2026-01-13*
-*버전: 2.0 (에이전트 시스템 중심)*
+*최종 업데이트: 2026-01-14*
+*버전: 3.0 (Claim-Level Verification Agent v3)*
