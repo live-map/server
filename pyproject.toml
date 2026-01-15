@@ -36,6 +36,9 @@ dependencies = [
     "mcp>=1.25.0",
     # Production utilities
     "tenacity>=8.2.0", # Retry with exponential backoff
+    # JWT Authentication (NextAuth/Auth.js token validation)
+    "fastapi-nextauth-jwt>=1.0.0",  # NextAuth JWT decoder for FastAPI
+    "python-jose[cryptography]>=3.3.0",  # JWT encoding/decoding
 ]
 
 [dependency-groups]
