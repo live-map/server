@@ -7,6 +7,10 @@ Uses fastapi-nextauth-jwt library to decode NextAuth's encrypted JWE tokens.
 NextAuth uses JWE (JSON Web Encryption) by default with A256CBC-HS512 algorithm.
 This library handles the decryption using the AUTH_SECRET.
 
+Supports both:
+1. Cookie-based authentication (authjs.session-token cookie)
+2. Bearer token authentication (Authorization: Bearer <token>)
+
 This guard follows the NestJS guard pattern where authentication is checked
 before the request reaches the controller.
 
@@ -16,8 +20,10 @@ References:
 - https://docs.nestjs.com/guards (conceptual reference)
 """
 
+import json
 import logging
 from dataclasses import dataclass
+from json import JSONDecodeError
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -26,8 +32,11 @@ from fastapi_nextauth_jwt import NextAuthJWT
 from fastapi_nextauth_jwt.exceptions import (
     InvalidTokenError,
     MissingTokenError,
-    TokenExpiredError,
+    TokenExpiredException,
 )
+from fastapi_nextauth_jwt.fastapi_nextauth_jwt import check_expiry
+from jose import jwe
+from jose.exceptions import JWEError
 
 from app.core.config import settings
 
@@ -64,6 +73,42 @@ def get_jwt_decoder() -> NextAuthJWT:
             check_expiry=True,  # Check token expiration
         )
     return _jwt_decoder
+
+
+def decode_jwe_token(token: str, should_check_expiry: bool = True) -> dict:
+    """
+    Manually decrypt a JWE token using the same key as NextAuthJWT.
+
+    This function allows decrypting tokens from Authorization header,
+    not just from cookies.
+
+    Args:
+        token: The encrypted JWE token string
+        should_check_expiry: Whether to check token expiration
+
+    Returns:
+        dict: Decoded token payload
+
+    Raises:
+        InvalidTokenError: If token is invalid
+        TokenExpiredException: If token has expired
+    """
+    decoder = get_jwt_decoder()
+
+    try:
+        # Use the same key that NextAuthJWT uses
+        decrypted_token_string = jwe.decrypt(token, decoder.key)
+        payload = json.loads(decrypted_token_string)
+    except (JWEError, JSONDecodeError) as e:
+        logger.error(f"JWE decryption failed: {e}")
+        raise InvalidTokenError(status_code=401, message="Invalid JWT format")
+
+    if should_check_expiry:
+        if "exp" not in payload:
+            raise InvalidTokenError(status_code=401, message="Invalid JWT format, missing exp")
+        check_expiry(payload["exp"])
+
+    return payload
 
 
 # ============================================================
@@ -206,16 +251,24 @@ async def get_current_user_optional(
     Returns:
         JWTPayload | None: Decoded token payload or None if not authenticated
     """
-    token = token_from_header or await get_token_from_cookie(request)
+    # Check if we have a token from header or cookie
+    token_from_cookie = await get_token_from_cookie(request)
+    token = token_from_header or token_from_cookie
 
     if not token:
         return None
 
     try:
-        decoder = get_jwt_decoder()
-        payload = decoder.decode(token)
+        # If token came from header, use manual decryption
+        # If token came from cookie, use the NextAuthJWT callable
+        if token_from_header:
+            payload = decode_jwe_token(token_from_header)
+        else:
+            decoder = get_jwt_decoder()
+            payload = decoder(request)
+
         return JWTPayload.from_dict(payload)
-    except (InvalidTokenError, TokenExpiredError, MissingTokenError) as e:
+    except (InvalidTokenError, TokenExpiredException, MissingTokenError) as e:
         logger.warning(f"JWT validation failed: {e}")
         return None
     except Exception as e:
@@ -248,7 +301,9 @@ async def get_current_user(
     Raises:
         HTTPException: 401 if not authenticated or token invalid
     """
-    token = token_from_header or await get_token_from_cookie(request)
+    # Check if we have a token from header or cookie
+    token_from_cookie = await get_token_from_cookie(request)
+    token = token_from_header or token_from_cookie
 
     if not token:
         raise HTTPException(
@@ -258,10 +313,16 @@ async def get_current_user(
         )
 
     try:
-        decoder = get_jwt_decoder()
-        payload = decoder.decode(token)
+        # If token came from header, use manual decryption
+        # If token came from cookie, use the NextAuthJWT callable
+        if token_from_header:
+            payload = decode_jwe_token(token_from_header)
+        else:
+            decoder = get_jwt_decoder()
+            payload = decoder(request)
+
         return JWTPayload.from_dict(payload)
-    except TokenExpiredError:
+    except TokenExpiredException:
         logger.error("JWT token has expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -273,6 +334,13 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except MissingTokenError:
+        logger.error("Missing JWT token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated. Please provide a valid JWT token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except Exception as e:

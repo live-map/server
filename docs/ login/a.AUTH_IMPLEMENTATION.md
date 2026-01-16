@@ -9,15 +9,18 @@ This document explains how JWT authentication is implemented in the FastAPI back
 1. [Technology Stack](#technology-stack)
 2. [Architecture Overview](#architecture-overview)
 3. [File Structure](#file-structure)
-4. [Implementation Details](#implementation-details)
-   - [Configuration](#configuration)
-   - [Interpreter (JWT Guard)](#interpreter-jwt-guard)
-   - [JWT Test Module](#jwt-test-module)
+4. [How JWT Guard Orchestrates Token Decoding](#how-jwt-guard-orchestrates-token-decoding)
+5. [Implementation Details](#implementation-details)
+   - [JWT Guard (jwt_guard.py)](#jwt-guard-jwt_guardpy)
+   - [Controller](#controller)
+   - [Service](#service)
+   - [Repository](#repository)
    - [User Model](#user-model)
-5. [JWT Token Validation Flow](#jwt-token-validation-flow)
-6. [API Endpoints](#api-endpoints)
-7. [Usage Examples](#usage-examples)
-8. [References](#references)
+6. [JWT Token Validation Flow](#jwt-token-validation-flow)
+7. [API Endpoints](#api-endpoints)
+8. [Usage Examples](#usage-examples)
+9. [Troubleshooting](#troubleshooting)
+10. [References](#references)
 
 ---
 
@@ -29,8 +32,7 @@ This document explains how JWT authentication is implemented in the FastAPI back
 | SQLAlchemy | 2.0+ | Async ORM |
 | asyncpg | 0.30+ | PostgreSQL async driver |
 | Pydantic | 2.10+ | Data validation |
-| fastapi-nextauth-jwt | 1.0+ | NextAuth JWT decoder |
-| python-jose | 3.3+ | JWT handling |
+| fastapi-nextauth-jwt | 0.2+ | NextAuth JWE token decoder |
 
 ---
 
@@ -42,14 +44,14 @@ This document explains how JWT authentication is implemented in the FastAPI back
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌────────────────┐                                                    │
-│  │  HTTP Request  │ (with JWT in cookie or Authorization header)       │
+│  │  HTTP Request  │ (with JWT in cookie OR Authorization: Bearer)      │
 │  └───────┬────────┘                                                    │
 │          │                                                              │
 │          ▼                                                              │
 │  ┌────────────────┐                                                    │
 │  │   JWT Guard    │ (api/v1/interpreter/jwt_guard.py)                  │
 │  │  - Extract JWT │                                                    │
-│  │  - Decrypt     │ (using AUTH_SECRET)                                │
+│  │  - Decrypt JWE │ (using AUTH_SECRET)                                │
 │  │  - Validate    │                                                    │
 │  └───────┬────────┘                                                    │
 │          │ JWTPayload                                                   │
@@ -78,15 +80,12 @@ This document explains how JWT authentication is implemented in the FastAPI back
            ▼
     ┌──────────────┐
     │  PostgreSQL  │
-    │  (Shared DB) │
     └──────────────┘
 ```
 
 ---
 
 ## File Structure
-
-The project follows a **NestJS-like modular structure** where each feature has its own folder containing all related files.
 
 ```
 server/
@@ -97,24 +96,19 @@ server/
 │   │       ├── interpreter/                 # JWT Guard/Interceptor module
 │   │       │   ├── __init__.py              # Module exports
 │   │       │   └── jwt_guard.py             # JWT validation & guards
-│   │       ├── jwt_test/                    # JWT Test feature module
-│   │       │   ├── __init__.py              # Module exports
-│   │       │   ├── controller.py            # API route handlers
-│   │       │   ├── service.py               # Business logic
-│   │       │   ├── repository.py            # Database operations
-│   │       │   └── schemas.py               # Pydantic schemas
-│   │       └── routes/                      # Other route modules
-│   │           ├── feeds.py
-│   │           └── agent.py
+│   │       └── jwt_test/                    # JWT Test feature module
+│   │           ├── __init__.py              # Module exports
+│   │           ├── controller.py            # API route handlers
+│   │           ├── service.py               # Business logic
+│   │           ├── repository.py            # Database operations
+│   │           └── schemas.py               # Pydantic schemas
 │   ├── core/
 │   │   ├── config.py                        # Application settings
 │   │   └── database.py                      # SQLAlchemy async setup
 │   ├── models/
 │   │   └── user.py                          # SQLAlchemy User model
 │   └── main.py                              # FastAPI app entry point
-├── docs/
-│   └── AUTH_IMPLEMENTATION.md               # This file
-└── .env.example                             # Environment variables template
+└── .env                                     # Environment variables
 ```
 
 ### Module Structure Comparison (NestJS vs FastAPI)
@@ -130,118 +124,327 @@ server/
 
 ---
 
-## Implementation Details
+## How JWT Guard Orchestrates Token Decoding
 
-### Configuration
+This section explains how all the functions and classes in `jwt_guard.py` work together to decode JWE tokens from NextAuth.
 
-**File: `app/core/config.py`**
+### Orchestration Overview
 
-```python
-from pydantic_settings import BaseSettings
-
-
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-
-    # Application
-    APP_NAME: str = "Livemap API"
-    DEBUG: bool = True
-
-    # Database (Backend - feeds, channels, etc.)
-    DATABASE_URL: str = "postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap"
-
-    # Database (Frontend/Auth - shared with NextAuth for user data)
-    AUTH_DATABASE_URL: str | None = None
-
-    # JWT/Auth Configuration
-    # CRITICAL: Must match frontend's AUTH_SECRET
-    AUTH_SECRET: str = ""
-
-    # Frontend URL for CORS configuration
-    FRONTEND_URL: str = "http://localhost:3000"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
-
-
-settings = Settings()
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    JWT Guard Orchestration Flow                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  HTTP Request arrives with JWT token                                        │
+│  (in cookie or Authorization header)                                        │
+│                          │                                                   │
+│                          ▼                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Step 1: TOKEN EXTRACTION                                            │   │
+│  │  ─────────────────────────                                           │   │
+│  │                                                                       │   │
+│  │  get_token_from_header()  ←── HTTPBearer extracts from               │   │
+│  │         │                      "Authorization: Bearer <token>"        │   │
+│  │         │                                                             │   │
+│  │         ▼                                                             │   │
+│  │  token found? ──No──► get_token_from_cookie()                        │   │
+│  │         │                      │                                      │   │
+│  │        Yes                     ▼                                      │   │
+│  │         │              Checks multiple cookie names:                  │   │
+│  │         │              - authjs.session-token                         │   │
+│  │         │              - __Secure-authjs.session-token                │   │
+│  │         │              - next-auth.session-token                      │   │
+│  │         │              - __Secure-next-auth.session-token             │   │
+│  │         │                      │                                      │   │
+│  │         └──────────────────────┘                                      │   │
+│  │                     │                                                 │   │
+│  │                     ▼                                                 │   │
+│  │              Raw JWT Token (encrypted JWE string)                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                          │                                                   │
+│                          ▼                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Step 2: JWE DECRYPTION                                              │   │
+│  │  ──────────────────────                                              │   │
+│  │                                                                       │   │
+│  │  get_jwt_decoder() ──► Returns NextAuthJWT singleton                 │   │
+│  │         │                                                             │   │
+│  │         │  NextAuthJWT(                                               │   │
+│  │         │      secret=AUTH_SECRET,      ← Must match frontend        │   │
+│  │         │      csrf_prevention_enabled=False,                         │   │
+│  │         │      check_expiry=True                                      │   │
+│  │         │  )                                                          │   │
+│  │         │                                                             │   │
+│  │         ▼                                                             │   │
+│  │  decoder(request)  ← Callable, takes Request object (SYNC, not async)│   │
+│  │         │                                                             │   │
+│  │         │  Internally performs:                                       │   │
+│  │         │  1. Extract token from cookies (authjs.session-token, etc.) │   │
+│  │         │  2. HKDF key derivation from AUTH_SECRET                    │   │
+│  │         │  3. JWE decryption (A256CBC-HS512 algorithm)                │   │
+│  │         │  4. JSON parsing of decrypted payload                       │   │
+│  │         │  5. Expiration check (if check_expiry=True)                 │   │
+│  │         │                                                             │   │
+│  │         ▼                                                             │   │
+│  │  Decrypted payload (Python dict)                                      │   │
+│  │  {"id": "...", "email": "...", "name": "...", "role": "..."}         │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                          │                                                   │
+│                          ▼                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Step 3: PAYLOAD PARSING                                             │   │
+│  │  ───────────────────────                                             │   │
+│  │                                                                       │   │
+│  │  JWTPayload.from_dict(payload)                                       │   │
+│  │         │                                                             │   │
+│  │         │  Converts raw dict to typed dataclass:                      │   │
+│  │         │  - user_id = data["id"] or data["sub"]                      │   │
+│  │         │  - email = data["email"]                                    │   │
+│  │         │  - name = data["name"]                                      │   │
+│  │         │  - role = data["role"] or "USER"                            │   │
+│  │         │  - exp = data["exp"]                                        │   │
+│  │         │  - iat = data["iat"]                                        │   │
+│  │         │                                                             │   │
+│  │         ▼                                                             │   │
+│  │  JWTPayload instance (typed, validated)                               │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                          │                                                   │
+│                          ▼                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Step 4: GUARD SELECTION (which guard was used?)                     │   │
+│  │  ─────────────────────────────────────────────────────────────────   │   │
+│  │                                                                       │   │
+│  │  CurrentUserOptional (get_current_user_optional)                     │   │
+│  │  ├── No token? → Return None (no error)                              │   │
+│  │  └── Invalid token? → Return None (no error)                         │   │
+│  │                                                                       │   │
+│  │  CurrentUser (get_current_user)                                      │   │
+│  │  ├── No token? → Raise 401 Unauthorized                              │   │
+│  │  └── Invalid token? → Raise 401 Unauthorized                         │   │
+│  │                                                                       │   │
+│  │  CurrentAdmin (get_current_admin)                                    │   │
+│  │  ├── Calls get_current_user first                                    │   │
+│  │  └── role != "ADMIN"? → Raise 403 Forbidden                          │   │
+│  │                                                                       │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                          │                                                   │
+│                          ▼                                                   │
+│              JWTPayload passed to Controller                                 │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Key Configuration Fields:
+### Function Relationships
 
-| Field | Description |
-|-------|-------------|
-| `DATABASE_URL` | Main database connection for backend data |
-| `AUTH_DATABASE_URL` | Shared database where NextAuth stores users (optional) |
-| `AUTH_SECRET` | **CRITICAL**: Must match frontend's `AUTH_SECRET` for JWT decryption |
-| `FRONTEND_URL` | Frontend URL for CORS whitelist |
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     jwt_guard.py Function Map                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  SINGLETON                                                               │
+│  ─────────                                                               │
+│  _jwt_decoder (module variable)                                          │
+│       ▲                                                                  │
+│       │ creates/returns                                                  │
+│       │                                                                  │
+│  get_jwt_decoder() ─────────────────────────────────────────────────┐   │
+│                                                                      │   │
+│  TOKEN EXTRACTORS                                                    │   │
+│  ────────────────                                                    │   │
+│  get_token_from_header() ◄── HTTPBearer (bearer_scheme)             │   │
+│       │                                                              │   │
+│       ▼ fallback                                                     │   │
+│  get_token_from_cookie() ◄── Request.cookies                        │   │
+│       │                                                              │   │
+│       │                                                              │   │
+│  DATA CLASS                                                          │   │
+│  ──────────                                                          │   │
+│  JWTPayload                                                          │   │
+│  ├── user_id: str                                                    │   │
+│  ├── email: str | None                                               │   │
+│  ├── name: str | None                                                │   │
+│  ├── role: str                                                       │   │
+│  ├── exp: int | None                                                 │   │
+│  ├── iat: int | None                                                 │   │
+│  └── from_dict(data) ◄── classmethod factory                        │   │
+│       ▲                                                              │   │
+│       │ creates                                                      │   │
+│       │                                                              │   │
+│  GUARDS (Dependencies)         uses decoder(request)                 │   │
+│  ─────────────────────         ─────────────────────                 │   │
+│  get_current_user_optional() ────────────────────────────────────────┘   │
+│       ▲                                                                  │
+│       │ same logic + error handling                                      │
+│       │                                                                  │
+│  get_current_user()                                                      │
+│       ▲                                                                  │
+│       │ depends on                                                       │
+│       │                                                                  │
+│  get_current_admin() ──► checks role == "ADMIN"                         │
+│                                                                          │
+│                                                                          │
+│  TYPE ALIASES (for clean route signatures)                               │
+│  ─────────────────────────────────────────                               │
+│  CurrentUserOptional = Annotated[JWTPayload | None, Depends(...)]       │
+│  CurrentUser = Annotated[JWTPayload, Depends(...)]                      │
+│  CurrentAdmin = Annotated[JWTPayload, Depends(...)]                     │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why This Design?
+
+| Component | Purpose | Why It's Separate |
+|-----------|---------|-------------------|
+| `get_jwt_decoder()` | Creates/returns decoder | Singleton pattern avoids recreating decoder on every request |
+| `get_token_from_header()` | Extracts from header | Separated for clarity; uses FastAPI's HTTPBearer |
+| `get_token_from_cookie()` | Extracts from cookie | Handles multiple cookie names (v4/v5, dev/prod) |
+| `JWTPayload` | Typed container | Provides IDE autocomplete and type safety |
+| `get_current_user_optional()` | Optional auth | For routes that work with or without auth |
+| `get_current_user()` | Required auth | For protected routes |
+| `get_current_admin()` | Admin auth | Builds on `get_current_user()` + role check |
+| Type aliases | Clean signatures | `CurrentUser` is shorter than `Annotated[JWTPayload, Depends(...)]` |
 
 ---
 
-### Interpreter (JWT Guard)
+## Implementation Details
+
+### JWT Guard (jwt_guard.py)
 
 **File: `app/api/v1/interpreter/jwt_guard.py`**
 
-The interpreter module contains the JWT guard that validates tokens before requests reach the controller.
-
-#### 1. JWT Decoder Setup
-
 ```python
+"""
+JWT Guard - Authentication interceptor for FastAPI routes.
+
+Validates JWT tokens generated by NextAuth.js (Auth.js) from the frontend.
+Uses fastapi-nextauth-jwt library to decode NextAuth's encrypted JWE tokens.
+
+NextAuth uses JWE (JSON Web Encryption) by default with A256CBC-HS512 algorithm.
+This library handles the decryption using the AUTH_SECRET.
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi_nextauth_jwt import NextAuthJWT
+from fastapi_nextauth_jwt.exceptions import (
+    InvalidTokenError,
+    MissingTokenError,
+    TokenExpiredException,
+)
+
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 1-9: Module Docstring**
+- Documents the purpose of this file
+- Explains that NextAuth uses JWE (encrypted JWT) with A256CBC-HS512 algorithm
+- The `fastapi-nextauth-jwt` library handles decryption
+
+**Lines 11-14: Standard Library Imports**
+- `logging`: For debug/error messages when token validation fails
+- `dataclass`: Python's built-in decorator for creating data classes
+- `Annotated`: For type hints with metadata (used by FastAPI dependency injection)
+
+**Lines 16-17: FastAPI Imports**
+- `Depends`: Decorator for dependency injection
+- `HTTPException`: For throwing HTTP errors (401, 403)
+- `Request`: Access to HTTP request object (cookies, headers)
+- `status`: HTTP status code constants
+- `HTTPAuthorizationCredentials`, `HTTPBearer`: For extracting Bearer tokens
+
+**Lines 18-23: NextAuth JWT Library**
+- `NextAuthJWT`: Callable class that decrypts JWE tokens (takes `Request` object)
+- `InvalidTokenError`: Token is malformed or decryption failed
+- `MissingTokenError`: No token was provided
+- `TokenExpiredException`: Token has expired
+
+**Line 25: Settings Import**
+- `settings.AUTH_SECRET`: Must match frontend's AUTH_SECRET
+
+**Line 27: Logger Setup**
+- Creates a logger named after this module for debugging
+
+---
+
+```python
 _jwt_decoder: NextAuthJWT | None = None
 
 
 def get_jwt_decoder() -> NextAuthJWT:
-    """Get or create the NextAuthJWT decoder instance."""
-    global _jwt_decoder
+    """
+    Get or create the NextAuth JWT decoder singleton.
 
+    Uses AUTH_SECRET from settings to decrypt JWE tokens.
+    The same AUTH_SECRET must be used in the frontend's NextAuth configuration.
+
+    Returns:
+        NextAuthJWT: Configured JWT decoder instance
+    """
+    global _jwt_decoder
     if _jwt_decoder is None:
         if not settings.AUTH_SECRET:
             raise ValueError(
                 "AUTH_SECRET is not configured. "
                 "Set AUTH_SECRET in .env to match your frontend's AUTH_SECRET."
             )
-
         _jwt_decoder = NextAuthJWT(
             secret=settings.AUTH_SECRET,
             csrf_prevention_enabled=False,
             check_expiry=True,
         )
-
     return _jwt_decoder
 ```
 
-**Line-by-Line Explanation:**
+#### Line-by-Line Explanation:
 
-- **Line 1-2**: Import `NextAuthJWT` from `fastapi-nextauth-jwt` library
-- **Line 5**: Global singleton for the decoder instance
-- **Lines 8-23**: Factory function to create/return the decoder
-  - Validates `AUTH_SECRET` is configured
-  - Creates `NextAuthJWT` with:
-    - `secret`: Encryption key (must match frontend)
-    - `csrf_prevention_enabled=False`: CSRF handled by frontend
-    - `check_expiry=True`: Validates token hasn't expired
+**Line 30: Module-Level Variable**
+- `_jwt_decoder`: Stores the singleton instance
+- `None` initially, created on first use
+- `_` prefix indicates it's private to this module
 
-#### 2. JWT Payload Data Class
+**Lines 33-52: Singleton Factory Function**
+- `global _jwt_decoder`: Allows modifying the module-level variable
+- Only creates a new decoder if one doesn't exist (singleton pattern)
+- Validates `AUTH_SECRET` is configured before creating decoder
+- `NextAuthJWT` configuration:
+  - `secret`: The encryption key (must match frontend's AUTH_SECRET)
+  - `csrf_prevention_enabled=False`: CSRF is handled by frontend
+  - `check_expiry=True`: Automatically rejects expired tokens
+
+---
 
 ```python
-from dataclasses import dataclass
-
-
 @dataclass
 class JWTPayload:
-    """Decoded JWT token payload from NextAuth."""
+    """
+    Decoded JWT token payload from NextAuth.
+
+    Contains user information embedded in the JWT by NextAuth's jwt() callback.
+
+    Attributes:
+        user_id: User identifier from token.id
+        email: User email from token.email
+        name: User name from token.name
+        role: User role from token.role (custom field added in jwt callback)
+        exp: Token expiration timestamp
+        iat: Token issued at timestamp
+    """
+
     user_id: str
     email: str | None
     name: str | None
     role: str
     exp: int | None = None
     iat: int | None = None
-    jti: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "JWTPayload":
@@ -253,82 +456,442 @@ class JWTPayload:
             role=data.get("role", "USER"),
             exp=data.get("exp"),
             iat=data.get("iat"),
-            jti=data.get("jti"),
         )
 ```
 
-#### 3. Authentication Guards (Dependencies)
+#### Line-by-Line Explanation:
+
+**Lines 55-72: JWTPayload Data Class**
+- `@dataclass`: Automatically generates `__init__`, `__repr__`, etc.
+- Fields match what NextAuth stores in the token:
+  - `user_id`: Required, user's unique identifier
+  - `email`: Optional (some OAuth users might not have email)
+  - `name`: Optional
+  - `role`: User's role (USER or ADMIN), defaults to "USER"
+  - `exp`: Expiration timestamp (Unix epoch seconds)
+  - `iat`: Issued-at timestamp
+
+**Lines 74-85: Factory Method**
+- `@classmethod`: Can be called as `JWTPayload.from_dict(data)`
+- `data.get("id", data.get("sub", ""))`: Tries `id` first (NextAuth format), falls back to `sub` (standard JWT)
+- `data.get("role", "USER")`: Defaults to "USER" if role not in token
+
+---
 
 ```python
-from typing import Annotated
-from fastapi import Depends, HTTPException, status
+bearer_scheme = HTTPBearer(
+    scheme_name="Bearer",
+    description="NextAuth JWT token from the Authorization header",
+    auto_error=False,
+)
 
 
+async def get_token_from_header(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> str | None:
+    """
+    Extract JWT token from Authorization header.
+
+    The frontend should send the token as:
+    Authorization: Bearer <jwt_token>
+    """
+    if credentials is None:
+        return None
+    return credentials.credentials
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 88-92: HTTPBearer Setup**
+- Creates a security scheme for Swagger docs
+- `auto_error=False`: Don't throw error if header missing (we also check cookies)
+
+**Lines 95-107: Header Token Extractor**
+- `Annotated[..., Depends(bearer_scheme)]`: FastAPI injects the parsed Authorization header
+- Returns the token string, or `None` if no Authorization header
+
+---
+
+```python
+async def get_token_from_cookie(request: Request) -> str | None:
+    """
+    Extract JWT token from NextAuth session cookie.
+
+    NextAuth stores the JWT in a cookie with one of these names:
+    - __Secure-authjs.session-token (production/HTTPS)
+    - authjs.session-token (development/HTTP)
+    - __Secure-next-auth.session-token (NextAuth v4)
+    - next-auth.session-token (NextAuth v4 development)
+    """
+    cookie_names = [
+        "__Secure-authjs.session-token",
+        "authjs.session-token",
+        "__Secure-next-auth.session-token",
+        "next-auth.session-token",
+    ]
+
+    for cookie_name in cookie_names:
+        token = request.cookies.get(cookie_name)
+        if token:
+            logger.debug(f"Found JWT token in cookie: {cookie_name}")
+            return token
+
+    return None
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 110-132: Cookie Token Extractor**
+- NextAuth uses different cookie names based on environment:
+  - `__Secure-` prefix: Production (HTTPS only, more secure)
+  - No prefix: Development (HTTP allowed)
+  - `authjs`: NextAuth v5 (Auth.js)
+  - `next-auth`: NextAuth v4 (legacy)
+- Loops through all possible names and returns the first match
+- Returns `None` if no cookie found
+
+---
+
+```python
+async def get_current_user_optional(
+    request: Request,
+    token_from_header: Annotated[str | None, Depends(get_token_from_header)],
+) -> JWTPayload | None:
+    """
+    Get current user from JWT token (optional).
+
+    This guard does NOT raise an error if no token is found.
+    Use this for routes that should work for both authenticated and anonymous users.
+    """
+    token = token_from_header or await get_token_from_cookie(request)
+
+    if not token:
+        return None
+
+    try:
+        # Get the decoder and call it with the request (sync, not async)
+        # NextAuthJWT is a callable that takes Request and returns decoded payload
+        decoder = get_jwt_decoder()
+        payload = decoder(request)  # Synchronous call - reads token from cookies
+        return JWTPayload.from_dict(payload)
+    except (InvalidTokenError, TokenExpiredException, MissingTokenError) as e:
+        logger.warning(f"JWT validation failed: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Unexpected error during JWT validation: {e}")
+        return None
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 135-158: Optional Authentication Guard**
+- Returns `JWTPayload | None`: Either user data or `None`
+- `token_from_header or await get_token_from_cookie(request)`: Try header first, then cookie
+- If no token found, return `None` (don't throw error)
+- `decoder(request)`: Call the decoder with Request object (synchronous, NOT async)
+- The decoder reads the token from cookies automatically
+- On successful decode, convert to typed `JWTPayload`
+- On any error, log warning and return `None`
+
+---
+
+```python
 async def get_current_user(
     request: Request,
     token_from_header: Annotated[str | None, Depends(get_token_from_header)],
 ) -> JWTPayload:
     """
     Get current user from JWT token (required).
-    Raises HTTPException if not authenticated.
+
+    Raises HTTPException if:
+    - No token is provided
+    - Token is invalid or expired
+    - Token decryption fails
+
+    Use this guard for protected routes that REQUIRE authentication.
     """
     token = token_from_header or await get_token_from_cookie(request)
 
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated.",
+            detail="Not authenticated. Please provide a valid JWT token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     try:
+        # Get the decoder and call it with the request (sync, not async)
         decoder = get_jwt_decoder()
-        payload = await decoder(request)
+        payload = decoder(request)  # Synchronous call
         return JWTPayload.from_dict(payload)
-    except Exception as e:
+    except TokenExpiredException:
+        logger.error("JWT token has expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid or expired token: {str(e)}",
+            detail="Token has expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+    except InvalidTokenError as e:
+        logger.error(f"Invalid JWT token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except MissingTokenError:
+        logger.error("Missing JWT token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated. Please provide a valid JWT token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during JWT validation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token validation failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+```
 
+#### Line-by-Line Explanation:
 
+**Lines 161-208: Required Authentication Guard**
+- Returns `JWTPayload` (not optional) - will throw if authentication fails
+- Same token extraction as optional guard
+- No token → 401 Unauthorized with `WWW-Authenticate: Bearer` header
+- `decoder(request)`: Call the decoder with Request object (synchronous, NOT async)
+- Different error messages for different failure types:
+  - `TokenExpiredException`: "Token has expired. Please log in again."
+  - `InvalidTokenError`: "Invalid token. Please log in again."
+  - `MissingTokenError`: "Not authenticated. Please provide a valid JWT token."
+  - Other errors: "Token validation failed"
+
+---
+
+```python
 async def get_current_admin(
     current_user: Annotated[JWTPayload, Depends(get_current_user)],
 ) -> JWTPayload:
-    """Get current user and verify admin role."""
+    """
+    Get current user and verify admin role (required).
+
+    Validates that the authenticated user has ADMIN role.
+    Use this guard for admin-only routes.
+    """
     if current_user.role != "ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required.",
         )
+
     return current_user
-
-
-# Type aliases for clean route signatures
-CurrentUser = Annotated[JWTPayload, Depends(get_current_user)]
-CurrentAdmin = Annotated[JWTPayload, Depends(get_current_admin)]
-CurrentUserOptional = Annotated[JWTPayload | None, Depends(get_current_user_optional)]
 ```
 
-**Guard Types:**
+#### Line-by-Line Explanation:
 
-| Type | Description | HTTP Status on Failure |
-|------|-------------|------------------------|
-| `CurrentUserOptional` | Returns `None` if not authenticated | N/A |
-| `CurrentUser` | Requires authentication | 401 Unauthorized |
-| `CurrentAdmin` | Requires authentication + ADMIN role | 401/403 |
+**Lines 211-226: Admin Authentication Guard**
+- `Depends(get_current_user)`: First runs `get_current_user` - user must be authenticated
+- If role is not "ADMIN", raises 403 Forbidden (not 401 - user IS authenticated, just not authorized)
+- Returns the same `JWTPayload` if user is admin
 
 ---
 
-### JWT Test Module
+```python
+# Type Aliases for Dependency Injection
+CurrentUserOptional = Annotated[JWTPayload | None, Depends(get_current_user_optional)]
+CurrentUser = Annotated[JWTPayload, Depends(get_current_user)]
+CurrentAdmin = Annotated[JWTPayload, Depends(get_current_admin)]
+```
 
-The `jwt_test` module follows NestJS conventions with all related files in one folder.
+#### Line-by-Line Explanation:
 
-#### Repository (`repository.py`)
+**Lines 229-232: Type Aliases**
+- Shortcuts for cleaner route signatures
+- Instead of: `async def route(user: Annotated[JWTPayload, Depends(get_current_user)]):`
+- You write: `async def route(user: CurrentUser):`
+
+---
+
+### Controller
+
+**File: `app/api/v1/jwt_test/controller.py`**
 
 ```python
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.v1.interpreter import CurrentAdmin, CurrentUser, CurrentUserOptional
+from app.api.v1.jwt_test.schemas import (
+    AuthStatusResponse,
+    TokenPayloadResponse,
+    UserInfoResponse,
+    UserListResponse,
+)
+from app.api.v1.jwt_test.service import UserService
+from app.db.session import get_db
+
+router = APIRouter()
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 1-15: Imports**
+- `CurrentAdmin, CurrentUser, CurrentUserOptional`: Our authentication guards from jwt_guard.py
+- `UserService`: Business logic layer
+- `get_db`: Database session dependency
+
+```python
+async def get_user_service(db: AsyncSession = Depends(get_db)) -> UserService:
+    """Dependency that provides UserService instance."""
+    return UserService(db)
+
+
+UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 18-23: Service Dependency**
+- `get_user_service`: Creates UserService with injected database session
+- `UserServiceDep`: Type alias for cleaner route signatures
+
+```python
+@router.get("/me", response_model=UserInfoResponse)
+async def get_current_user_info(
+    current_user: CurrentUser,
+    service: UserServiceDep,
+    fetch_from_db: bool = Query(True, description="Fetch additional data from database"),
+) -> UserInfoResponse:
+    """Get detailed information about the currently authenticated user."""
+    user_info = await service.get_user_info(current_user, fetch_from_db=fetch_from_db)
+    return UserInfoResponse(
+        user_id=user_info.user_id,
+        email=user_info.email,
+        name=user_info.name,
+        role=user_info.role,
+        from_database=user_info.from_database,
+    )
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 26-40: Get Current User Route**
+- `CurrentUser`: Requires authentication (401 if not authenticated)
+- `service: UserServiceDep`: UserService injected automatically
+- `fetch_from_db`: Query parameter `?fetch_from_db=false` to skip database lookup
+- Calls service layer for business logic
+- Returns typed response
+
+---
+
+### Service
+
+**File: `app/api/v1/jwt_test/service.py`**
+
+```python
+from dataclasses import dataclass
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.v1.interpreter import JWTPayload
+from app.api.v1.jwt_test.repository import UserRepository
+from app.models.user import User
+
+
+@dataclass
+class UserInfo:
+    """User information combining JWT and database data."""
+    user_id: str
+    email: str | None
+    name: str | None
+    role: str
+    from_database: bool = False
+
+    @classmethod
+    def from_jwt(cls, jwt: JWTPayload) -> "UserInfo":
+        """Create UserInfo from JWT payload only."""
+        return cls(
+            user_id=jwt.user_id,
+            email=jwt.email,
+            name=jwt.name,
+            role=jwt.role,
+            from_database=False,
+        )
+
+    @classmethod
+    def from_jwt_and_db(cls, jwt: JWTPayload, user: User) -> "UserInfo":
+        """Create UserInfo combining JWT and database data."""
+        return cls(
+            user_id=jwt.user_id,
+            email=user.email or jwt.email,
+            name=user.name or jwt.name,
+            role=user.role or jwt.role,
+            from_database=True,
+        )
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 10-39: UserInfo Data Class**
+- Combines data from JWT and database
+- `from_database`: Indicates if database was queried
+- `from_jwt()`: Creates from JWT only (faster, no DB call)
+- `from_jwt_and_db()`: Prefers DB data, falls back to JWT
+
+```python
+class UserService:
+    """Service class for user-related business logic."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.repository = UserRepository(session)
+
+    async def get_user_info(
+        self,
+        jwt_payload: JWTPayload,
+        fetch_from_db: bool = True,
+    ) -> UserInfo:
+        """
+        Get user information from JWT and optionally from database.
+
+        Flow: Service -> Repository -> Database
+        """
+        if not fetch_from_db:
+            return UserInfo.from_jwt(jwt_payload)
+
+        user = await self.repository.get_by_id(jwt_payload.user_id)
+
+        if user is None:
+            return UserInfo.from_jwt(jwt_payload)
+
+        return UserInfo.from_jwt_and_db(jwt_payload, user)
+```
+
+#### Line-by-Line Explanation:
+
+**Lines 42-66: UserService Class**
+- Constructor receives database session and creates repository
+- `get_user_info()`:
+  - If `fetch_from_db=False`, just use JWT data
+  - Otherwise, fetch from database via repository
+  - If user not found in DB, fall back to JWT data
+  - Combine JWT and DB data if user found
+
+---
+
+### Repository
+
+**File: `app/api/v1/jwt_test/repository.py`**
+
+```python
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.user import User
 
 
@@ -349,88 +912,17 @@ class UserRepository:
         stmt = select(User).limit(limit).offset(offset)
         result = await self.session.execute(stmt)
         return result.scalars().all()
-
-    async def exists(self, user_id: str) -> bool:
-        """Check if a user exists by ID."""
-        from sqlalchemy import exists as sql_exists
-        stmt = select(sql_exists().where(User.id == user_id))
-        result = await self.session.execute(stmt)
-        return result.scalar_one()
 ```
 
-#### Service (`service.py`)
+#### Line-by-Line Explanation:
 
-```python
-from app.api.v1.interpreter import JWTPayload
-from app.api.v1.jwt_test.repository import UserRepository
-
-
-class UserService:
-    """Service class for user-related business logic."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.repository = UserRepository(session)
-
-    async def get_user_info(
-        self, jwt_payload: JWTPayload, fetch_from_db: bool = True
-    ) -> UserInfo:
-        """
-        Get user information from JWT and optionally from database.
-
-        Flow: Service -> Repository -> Database
-        """
-        if not fetch_from_db:
-            return UserInfo.from_jwt(jwt_payload)
-
-        user = await self.repository.get_by_id(jwt_payload.user_id)
-
-        if user is None:
-            return UserInfo.from_jwt(jwt_payload)
-
-        return UserInfo.from_jwt_and_db(jwt_payload, user)
-```
-
-#### Controller (`controller.py`)
-
-```python
-from fastapi import APIRouter, Depends
-from app.api.v1.interpreter import CurrentUser, CurrentAdmin
-from app.api.v1.jwt_test.service import UserService
-from app.api.v1.jwt_test.schemas import UserInfoResponse
-
-router = APIRouter()
-
-
-async def get_user_service(db: AsyncSession = Depends(get_db)) -> UserService:
-    """Dependency that provides UserService instance."""
-    return UserService(db)
-
-
-@router.get("/me", response_model=UserInfoResponse)
-async def get_current_user_info(
-    current_user: CurrentUser,
-    service: UserService = Depends(get_user_service),
-    fetch_from_db: bool = True,
-) -> UserInfoResponse:
-    """
-    Get current user information.
-
-    Flow: Controller -> Service -> Repository -> Database
-    """
-    user_info = await service.get_user_info(current_user, fetch_from_db)
-    return UserInfoResponse(**user_info.__dict__)
-
-
-@router.get("/", response_model=UserListResponse)
-async def list_users(
-    current_admin: CurrentAdmin,
-    service: UserService = Depends(get_user_service),
-) -> UserListResponse:
-    """List all users (admin only)."""
-    users = await service.list_users()
-    return UserListResponse(users=users)
-```
+**Lines 9-25: UserRepository Class**
+- Pure database access layer - no business logic
+- `get_by_id()`:
+  - `select(User)`: SQLAlchemy SELECT statement
+  - `.where(User.id == user_id)`: WHERE clause
+  - `scalar_one_or_none()`: Returns one User or None
+- `get_all()`: Paginated list of all users
 
 ---
 
@@ -439,9 +931,12 @@ async def list_users(
 **File: `app/models/user.py`**
 
 ```python
+from datetime import datetime
+
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
-from app.core.database import Base
+
+from app.db.database import Base
 
 
 class User(Base):
@@ -449,11 +944,12 @@ class User(Base):
     User model matching the frontend Prisma User schema.
     Table name: 'users' (matches Prisma @@map("users"))
     """
+
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(25), primary_key=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(255), unique=True)
+    email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     email_verified: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, name="email_verified"
     )
@@ -469,6 +965,20 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), name="updated_at"
     )
 ```
+
+#### Field Explanations:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String(25) | CUID from Prisma (primary key) |
+| `name` | String(255) | User's display name (optional) |
+| `email` | String(255) | Unique email address |
+| `email_verified` | DateTime | When email was verified (null = unverified) |
+| `hashed_password` | String(255) | bcrypt hashed password (null for OAuth users) |
+| `image` | String(1000) | Profile image URL |
+| `role` | String(10) | User role (USER or ADMIN) |
+| `created_at` | DateTime | Account creation timestamp |
+| `updated_at` | DateTime | Last update timestamp |
 
 ---
 
@@ -493,7 +1003,7 @@ class User(Base):
 │     │ get_token_from_cookie() - Check session cookies          │       │
 │     └─────────────────────────────────────────────────────────┘       │
 │                                                                        │
-│  3. JWT Decryption (fastapi-nextauth-jwt)                              │
+│  3. JWE Decryption (fastapi-nextauth-jwt)                              │
 │     ┌─────────────────────────────────────────────────────────┐       │
 │     │ NextAuthJWT(secret=AUTH_SECRET)                          │       │
 │     │                                                          │       │
@@ -558,17 +1068,55 @@ class User(Base):
   "email": "user@example.com",
   "name": "John Doe",
   "role": "USER",
-  "email_verified": true,
-  "image": "https://example.com/avatar.jpg",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:00Z",
   "from_database": true
+}
+```
+
+**401 Error (not authenticated)**
+```json
+{
+  "detail": "Not authenticated. Please provide a valid JWT token."
+}
+```
+
+**403 Error (not admin)**
+```json
+{
+  "detail": "Admin privileges required."
 }
 ```
 
 ---
 
 ## Usage Examples
+
+### Using Guards in Your Routes
+
+```python
+from app.api.v1.interpreter import CurrentUser, CurrentUserOptional, CurrentAdmin
+
+# 1. PUBLIC - Anyone can access
+@router.get("/public")
+async def public_route():
+    return {"message": "Anyone can see this"}
+
+# 2. OPTIONAL - Works for both logged in and anonymous
+@router.get("/optional")
+async def optional_route(user: CurrentUserOptional):
+    if user:
+        return {"message": f"Hello {user.name}!"}
+    return {"message": "Hello anonymous!"}
+
+# 3. REQUIRED - Must be logged in
+@router.get("/protected")
+async def protected_route(user: CurrentUser):
+    return {"message": f"Hello {user.name}!", "user_id": user.user_id}
+
+# 4. ADMIN ONLY - Must be logged in AND have ADMIN role
+@router.get("/admin")
+async def admin_route(admin: CurrentAdmin):
+    return {"message": "You are an admin!", "role": admin.role}
+```
 
 ### Frontend: Fetching User Data with Cookies
 
@@ -585,38 +1133,77 @@ if (!response.ok) {
 const userData = await response.json();
 ```
 
-### Frontend: Using Authorization Header
-
-```typescript
-import { getSession } from "next-auth/react";
-
-async function fetchUserData() {
-  const session = await getSession();
-
-  const response = await fetch("http://localhost:8000/api/v1/jwt-test/me", {
-    headers: {
-      Authorization: `Bearer ${session?.accessToken}`,
-    },
-  });
-
-  return response.json();
-}
-```
-
 ### Testing with cURL
 
+The JWT guard supports **both** cookie-based and Bearer token authentication:
+
 ```bash
-# Get user info (with cookie)
+# Method 1: Using Cookie (browser sends this automatically)
 curl -X GET "http://localhost:8000/api/v1/jwt-test/me" \
   -H "Cookie: authjs.session-token=<your_token>"
 
-# Get user info (with Authorization header)
+# Method 2: Using Authorization Bearer header (works in Swagger!)
 curl -X GET "http://localhost:8000/api/v1/jwt-test/me" \
   -H "Authorization: Bearer <your_token>"
 
-# Check auth status
+# Check auth status (without token)
 curl -X GET "http://localhost:8000/api/v1/jwt-test/status"
 ```
+
+### How to Get Your JWT Token
+
+1. Open your frontend app and log in
+2. Open browser DevTools (F12)
+3. Go to **Application** → **Cookies** → your domain
+4. Copy the value of `authjs.session-token` cookie
+
+### Testing with Swagger UI
+
+1. Go to `http://localhost:8000/docs`
+2. Click the **"Authorize"** button (lock icon at top right)
+3. Paste your JWT token in the **Value** field
+4. Click **"Authorize"** then **"Close"**
+5. Now you can test any protected endpoint!
+
+---
+
+## Troubleshooting
+
+### "AUTH_SECRET is not configured"
+
+**Problem:** Backend can't find AUTH_SECRET.
+
+**Solution:**
+```bash
+# .env file
+AUTH_SECRET=your-secret-here
+```
+
+### "Invalid token" or "Token validation failed"
+
+**Problem:** AUTH_SECRET doesn't match between frontend and backend.
+
+**Solution:**
+1. Check frontend `.env`: `AUTH_SECRET=abc123`
+2. Check backend `.env`: `AUTH_SECRET=abc123`
+3. They must be **exactly** the same
+
+### "Token has expired"
+
+**Problem:** JWT is too old.
+
+**Solution:**
+1. Log out and log back in on frontend
+2. Check frontend `session.maxAge` setting
+
+### "Not authenticated" when using cookies
+
+**Problem:** Cookie not being sent to backend.
+
+**Solution:**
+1. Check CORS settings allow credentials
+2. Use `credentials: "include"` in fetch
+3. Check cookie domain matches
 
 ---
 
@@ -624,21 +1211,15 @@ curl -X GET "http://localhost:8000/api/v1/jwt-test/status"
 
 ### Official Documentation
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [FastAPI Dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/)
 - [SQLAlchemy 2.0 Async Documentation](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)
-- [Pydantic v2 Documentation](https://docs.pydantic.dev/latest/)
 - [Auth.js (NextAuth) Documentation](https://authjs.dev/)
 
 ### Libraries
 - [fastapi-nextauth-jwt (PyPI)](https://pypi.org/project/fastapi-nextauth-jwt/)
-- [fastapi-nextauth-jwt (GitHub)](https://github.com/TCatshoek/fastapi-nextauth-jwt)
-- [python-jose (PyPI)](https://pypi.org/project/python-jose/)
+- [fastapi-nextauth-jwt (GitHub)](https://github.com/nicobytes/fastapi-nextauth-jwt)
 
 ### Architecture Patterns
 - [Repository Pattern - Martin Fowler](https://martinfowler.com/eaaCatalog/repository.html)
 - [Service Layer Pattern - Martin Fowler](https://martinfowler.com/eaaCatalog/serviceLayer.html)
 - [NestJS Modules](https://docs.nestjs.com/modules) (conceptual reference)
-- [Dependency Injection in FastAPI](https://fastapi.tiangolo.com/tutorial/dependencies/)
-
-### Security
-- [OWASP JWT Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html)
-- [FastAPI Security Best Practices](https://testdriven.io/blog/fastapi-jwt-auth/)
