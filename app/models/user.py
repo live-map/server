@@ -7,11 +7,17 @@ after validating the JWT token from NextAuth.
 
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.account import Account
+    from app.models.item import Item
+    from app.models.session import Session
 
 
 class Role(str, Enum):
@@ -55,6 +61,17 @@ class User(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, name="updated_at"
+    )
+
+    # Relationships (matching Prisma schema)
+    accounts: Mapped[list["Account"]] = relationship(
+        "Account", back_populates="user", cascade="all, delete-orphan"
+    )
+    sessions: Mapped[list["Session"]] = relationship(
+        "Session", back_populates="user", cascade="all, delete-orphan"
+    )
+    items: Mapped[list["Item"]] = relationship(
+        "Item", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

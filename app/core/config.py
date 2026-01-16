@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # JWT/Auth Configuration
     # This MUST match the AUTH_SECRET in the frontend's .env file
     # Generate with: openssl rand -base64 32
-    AUTH_SECRET: str = ""
+    AUTH_SECRET: str = "E8VqfS2mKh5Cso1u3wwIShpGGNQBMhwHiD2a6x/MpuA="
 
     # Frontend URL for CORS and cookie settings
     FRONTEND_URL: str = "http://localhost:3000"
