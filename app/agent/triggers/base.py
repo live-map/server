@@ -116,18 +116,37 @@ class BaseTrigger(ABC):
         pass
 
     def _default_keywords(self) -> list[str]:
-        """기본 키워드 목록"""
+        """
+        기본 키워드 목록 (v2: GDELT API 제한에 맞춘 15개)
+
+        NOTE: GDELT는 키워드를 최대 15개까지 지원
+        후처리에서 significance scoring으로 노이즈 필터링 필요
+        """
         return [
-            # 전쟁/군사
-            "war", "military", "airstrike", "missile", "invasion",
-            "armed conflict", "troops", "bombing",
-            # 시위/불안
-            "protest", "demonstration", "riot", "uprising", "unrest",
-            # 테러/폭력
-            "terrorist", "attack", "explosion", "violence",
-            "casualties", "killed", "massacre",
-            # 긴급
-            "breaking", "urgent", "emergency",
+            # 전쟁/분쟁 (최우선)
+            "airstrike",
+            "missile",
+            "shelling",
+            "troops",
+            "invasion",
+
+            # 대량 피해
+            "casualties",
+            "massacre",
+            "killed",
+
+            # 테러
+            "bombing",
+            "explosion",
+
+            # 시위/폭동
+            "protest",
+            "riot",
+
+            # 주요 분쟁 지역 (고유명사)
+            "Ukraine",
+            "Gaza",
+            "Hamas",
         ]
 
     def _matches_keywords(self, text: str) -> list[str]:
