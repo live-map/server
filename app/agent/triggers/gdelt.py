@@ -54,7 +54,13 @@ class GDELTTrigger(BaseTrigger):
         return True
 
     async def scan(self) -> list[TriggerEvent]:
-        """GDELT에서 키워드 검색"""
+        """
+        GDELT에서 키워드 검색
+
+        NOTE: GDELT API는 본문 전체에서 키워드를 검색하므로,
+        제목에 키워드가 없어도 관련 기사일 수 있음.
+        후처리(significance scoring)에서 최종 필터링.
+        """
         self.last_scan = datetime.utcnow()
         events = []
 
@@ -94,22 +100,24 @@ class GDELTTrigger(BaseTrigger):
                         continue
                     self.seen_hashes.add(content_hash)
 
-                    # 키워드 매칭 확인
                     title = art.get("title", "")
+
+                    # 제목에서 키워드 매칭 확인 (있으면 표시용, 없어도 포함)
                     matched = self._matches_keywords(title)
 
-                    if matched:
-                        events.append(TriggerEvent(
-                            title=title,
-                            source=TriggerSource.GDELT,
-                            source_name=art.get("domain", "unknown"),
-                            url=art.get("url", ""),
-                            detected_at=datetime.utcnow(),
-                            language=art.get("language", "en"),
-                            country=art.get("sourcecountry", ""),
-                            keywords_matched=matched,
-                            raw_data=art,
-                        ))
+                    # GDELT가 이미 키워드로 필터링했으므로 모든 기사 포함
+                    # 최종 필터링은 significance scoring에서 수행
+                    events.append(TriggerEvent(
+                        title=title,
+                        source=TriggerSource.GDELT,
+                        source_name=art.get("domain", "unknown"),
+                        url=art.get("url", ""),
+                        detected_at=datetime.utcnow(),
+                        language=art.get("language", "en"),
+                        country=art.get("sourcecountry", ""),
+                        keywords_matched=matched if matched else ["[gdelt-fulltext]"],
+                        raw_data=art,
+                    ))
 
                 # 메모리 관리
                 if len(self.seen_hashes) > 10000:
