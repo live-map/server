@@ -10,6 +10,7 @@
 - 소스 하드코딩 없음
 - 키워드 기반 글로벌 검색
 - 에이전트가 소스를 결정하지 않음 - 모든 소스에서 자동 수집
+- 결정론적 유의성 점수 + LLM 검증 (v2)
 """
 
 import asyncio
@@ -22,6 +23,13 @@ from langchain_openai import ChatOpenAI
 
 from .config import agent_settings
 from .triggers import TriggerEvent, TriggerManager
+from .significance import (
+    calculate_significance,
+    filter_significant_events,
+    classify_with_llm,
+    SignificanceScore,
+    SignificanceConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +62,10 @@ class MultiSourceScanner:
 
     def _create_trigger_manager(self) -> TriggerManager:
         """설정 기반 트리거 매니저 생성"""
+        # NOTE: LLM API 키를 전달하지 않음 - TriggerManager의 LLM 분류 비활성화
+        # 대신 Scanner의 significance scoring + LLM 검증 사용
         manager = TriggerManager(
-            openai_api_key=agent_settings.openai_api_key,
+            openai_api_key=None,  # TriggerManager에서 LLM 분류 비활성화
             llm_model=agent_settings.llm_model,
         )
 
@@ -123,94 +133,176 @@ class MultiSourceScanner:
         return significant_events
 
     async def _classify_and_group(self, events: list[TriggerEvent]) -> list[dict]:
-        """LLM으로 이벤트 분류 및 그룹화"""
-        if not events or not self.llm:
-            # LLM 없으면 기본 형식으로 변환
-            return [
-                {
-                    "description": e.title,
-                    "category": "other",
-                    "sources": [e.source_name],
-                    "trigger_source": e.source.value,
-                    "keywords": e.keywords_matched,
-                }
-                for e in events
-            ]
+        """
+        이벤트 분류 및 그룹화 (v2: 결정론적 점수 + LLM)
 
-        # 배치로 분류
-        events_text = "\n".join([
-            f"- [{e.source.value}:{e.source_name}] {e.title}"
-            for e in events[:40]
-        ])
+        1. 결정론적 점수 계산 (노이즈 필터링)
+        2. 선택적 LLM 검증 (높은 점수만)
+        3. 모든 결정 로깅
+        """
+        if not events:
+            return []
 
-        system_prompt = """You are a breaking news analyst specializing in international conflicts.
+        # 이벤트를 dict로 변환
+        event_dicts = [
+            {
+                "title": e.title,
+                "content": e.content,
+                "source_name": e.source_name,
+                "source": e.source.value,
+                "url": e.url,
+                "keywords_matched": e.keywords_matched,
+                "language": e.language,
+            }
+            for e in events
+        ]
 
-Analyze these events from multiple sources (news, Twitter, Telegram).
-Group related events into single incidents.
+        # 1. 결정론적 점수 계산
+        scored_events = []
+        for event_dict, trigger_event in zip(event_dicts, events):
+            score = calculate_significance(
+                title=event_dict["title"],
+                content=event_dict.get("content", ""),
+                source_domain=event_dict["source_name"],
+                language=event_dict.get("language", "en"),
+            )
 
-Categories:
-- war: Armed conflicts, military operations, airstrikes
-- protest: Demonstrations, civil unrest, riots
-- terrorism: Terrorist attacks, bombings
-- military: Military movements, exercises
-- violence: General violence, casualties
-- other: Not fitting above
+            # 로깅 (설정에 따라)
+            if agent_settings.log_all_scores:
+                logger.info(
+                    f"[SCORE] {score.total_score:3d} [{score.level.value:8s}] "
+                    f"{event_dict['title'][:60]}... "
+                    f"| {score.reasoning}"
+                )
 
-For each SIGNIFICANT event, respond:
-EVENT: [One sentence description with location]
-CATEGORY: [category]
-SOURCES: [list of sources that reported this]
-CONFIDENCE: [high/medium/low]
+            scored_events.append((event_dict, score, trigger_event))
 
-Combine related news from different sources into ONE event.
-Only include breaking/significant events, not routine news.
+        # 2. 임계값 필터링
+        min_score = agent_settings.min_publish_score
+        filtered = [
+            (e, s, t) for e, s, t in scored_events
+            if s.total_score >= min_score
+        ]
 
-If no significant events: NO_SIGNIFICANT_EVENTS"""
+        logger.info(
+            f"Significance filter: {len(filtered)}/{len(scored_events)} events "
+            f"passed (threshold={min_score})"
+        )
+
+        if not filtered:
+            # 모든 이벤트가 필터링됨 - 상세 로그
+            logger.warning(
+                f"All {len(events)} events filtered out. "
+                f"Highest score: {max(s.total_score for _, s, _ in scored_events) if scored_events else 0}"
+            )
+            return []
+
+        # 3. LLM 검증 (선택적)
+        if agent_settings.use_llm_scoring and self.llm:
+            return await self._llm_validate_and_format(filtered)
+
+        # LLM 없으면 결정론적 결과만 반환
+        return self._format_results(filtered)
+
+    async def _llm_validate_and_format(
+        self,
+        filtered_events: list[tuple[dict, SignificanceScore, TriggerEvent]],
+    ) -> list[dict]:
+        """LLM으로 추가 검증 및 포맷팅"""
+        event_dicts = [e for e, _, _ in filtered_events]
 
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Events from multiple sources:\n{events_text}"),
-            ])
+            llm_results = await classify_with_llm(
+                events=event_dicts,
+                llm=self.llm,
+                min_score=agent_settings.min_publish_score,
+            )
 
-            return self._parse_classification(response.content, events)
+            if not llm_results:
+                logger.warning("LLM returned no results, using deterministic scores")
+                return self._format_results(filtered_events)
+
+            # LLM 결과와 결정론적 점수 조합
+            results = []
+            for event_dict, llm_score, category, reasoning in llm_results:
+                # 원본 이벤트 찾기
+                det_score = None
+                for e, s, t in filtered_events:
+                    if e["title"] == event_dict["title"]:
+                        det_score = s
+                        break
+
+                # 조합 점수 계산
+                if agent_settings.combine_scores and det_score:
+                    final_score = (det_score.total_score + llm_score) // 2
+                else:
+                    final_score = llm_score
+
+                logger.info(
+                    f"[FINAL] {final_score:3d} [{category:8s}] "
+                    f"{event_dict['title'][:50]}... "
+                    f"(det={det_score.total_score if det_score else 'N/A'}, llm={llm_score}) "
+                    f"| {reasoning[:50]}"
+                )
+
+                results.append({
+                    "description": event_dict["title"],
+                    "category": category,
+                    "sources": [event_dict["source_name"]],
+                    "trigger_source": event_dict["source"],
+                    "keywords": event_dict.get("keywords_matched", []),
+                    "url": event_dict.get("url", ""),
+                    "significance_score": final_score,
+                    "deterministic_score": det_score.total_score if det_score else None,
+                    "llm_score": llm_score,
+                    "reasoning": reasoning,
+                })
+
+            return results
 
         except Exception as e:
-            logger.error(f"Classification error: {e}")
-            return []
+            logger.error(f"LLM validation error: {e}")
+            return self._format_results(filtered_events)
 
-    def _parse_classification(
-        self, response: str, original_events: list[TriggerEvent]
+    def _format_results(
+        self,
+        filtered_events: list[tuple[dict, SignificanceScore, TriggerEvent]],
     ) -> list[dict]:
-        """분류 결과 파싱"""
-        if "NO_SIGNIFICANT_EVENTS" in response:
-            return []
-
+        """결과 포맷팅 (LLM 없이)"""
         results = []
-        current_event = {}
+        for event_dict, score, trigger_event in filtered_events:
+            # 카테고리 추론
+            category = self._infer_category(event_dict, score)
 
-        for line in response.strip().split("\n"):
-            line = line.strip()
-
-            if line.startswith("EVENT:"):
-                if current_event and "description" in current_event:
-                    results.append(current_event)
-                current_event = {"description": line[6:].strip()}
-
-            elif line.startswith("CATEGORY:"):
-                current_event["category"] = line[9:].strip().lower()
-
-            elif line.startswith("SOURCES:"):
-                sources_text = line[8:].strip()
-                current_event["sources"] = [s.strip() for s in sources_text.split(",")]
-
-            elif line.startswith("CONFIDENCE:"):
-                current_event["confidence"] = line[11:].strip().lower()
-
-        if current_event and "description" in current_event:
-            results.append(current_event)
+            results.append({
+                "description": event_dict["title"],
+                "category": category,
+                "sources": [event_dict["source_name"]],
+                "trigger_source": event_dict["source"],
+                "keywords": event_dict.get("keywords_matched", []),
+                "url": event_dict.get("url", ""),
+                "significance_score": score.total_score,
+                "deterministic_score": score.total_score,
+                "reasoning": score.reasoning,
+            })
 
         return results
+
+    def _infer_category(self, event_dict: dict, score: SignificanceScore) -> str:
+        """키워드 기반 카테고리 추론"""
+        text = f"{event_dict['title']} {event_dict.get('content', '')}".lower()
+
+        if any(kw in text for kw in ["war", "invasion", "airstrike", "troops"]):
+            return "war"
+        if any(kw in text for kw in ["terrorist", "bombing", "hostage"]):
+            return "terrorism"
+        if any(kw in text for kw in ["protest", "demonstration", "riot"]):
+            return "protest"
+        if any(kw in text for kw in ["military", "army", "navy", "air force"]):
+            return "military"
+        if any(kw in text for kw in ["violence", "killed", "casualties"]):
+            return "violence"
+        return "other"
 
     async def _safe_callback(self, description: str, category: str):
         """안전한 콜백 호출"""
