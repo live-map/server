@@ -55,6 +55,24 @@ class AgentSettings(BaseSettings):
     max_news_per_scan: int = 50
 
     # ===========================================
+    # 유의성 점수 설정 (Significance Scoring)
+    # ===========================================
+    # 점수 임계값 (0-100)
+    # 30: 중간 키워드 1개 + 일반 소스 + 영어 + 기본
+    # 40: 중간 키워드 2개 또는 높은 키워드 1개
+    # 60: 높은 키워드 여러 개 또는 신뢰 소스
+    min_publish_score: int = 30  # 발행 고려 최소 점수 (더 많은 뉴스 포함)
+    min_investigate_score: int = 50  # 조사 시작 최소 점수
+
+    # 점수 계산 방식
+    use_deterministic_scoring: bool = True  # 결정론적 점수 사용
+    use_llm_scoring: bool = True  # LLM 점수도 사용
+    combine_scores: bool = True  # 두 점수 조합 (평균)
+
+    # 디버깅
+    log_all_scores: bool = True  # 모든 점수 계산 로깅
+
+    # ===========================================
     # 조사 에이전트 설정
     # ===========================================
     max_investigation_iterations: int = 3
