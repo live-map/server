@@ -36,6 +36,8 @@ dependencies = [
     "mcp>=1.25.0",
     # Production utilities
     "tenacity>=8.2.0", # Retry with exponential backoff
+    # JWT Authentication (NextAuth JWE decryption)
+    "fastapi-nextauth-jwt>=0.2.4",  # Decode NextAuth JWE tokens
 ]
 
 [dependency-groups]
