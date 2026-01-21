@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
+
+
 @dataclass
 class SpecificityResult:
     is_specific: bool

@@ -80,6 +80,12 @@ class AgentSettings(BaseSettings):
     max_tokens_per_investigation: int = 4000
 
     # ===========================================
+    # 구체성 필터 설정 (Specificity Gate)
+    # ===========================================
+    specificity_enabled: bool = True  # 일반 배경기사 필터링
+    specificity_min_score: float = 0.3  # 최소 구체성 점수 (0-1)
+
+    # ===========================================
     # 중복 제거 설정 (Deduplication)
     # ===========================================
     dedup_enabled: bool = True
