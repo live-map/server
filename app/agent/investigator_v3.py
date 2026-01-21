@@ -545,6 +545,44 @@ class ClaimVerificationAgent:
                 "current_stage": "done",
             }
 
+        # === GATE 3: Evidence Sufficiency ===
+        if agent_settings.evidence_gate_enabled:
+            supported_claims = state.get("supported_claims", [])
+            total_claims = len(state.get("claims", []))
+
+            min_supported = agent_settings.min_supported_claims
+            min_ratio = agent_settings.min_evidence_ratio
+
+            if len(supported_claims) < min_supported:
+                logger.info(
+                    f"[GATE3-REJECT] Insufficient evidence: "
+                    f"{len(supported_claims)}/{min_supported} supported claims"
+                )
+                return {
+                    **state,
+                    "article": None,
+                    "article_en": None,
+                    "article_ko": None,
+                    "skip_reason": "insufficient_evidence",
+                    "current_stage": "done",
+                }
+
+            if total_claims > 0:
+                ratio = len(supported_claims) / total_claims
+                if ratio < min_ratio:
+                    logger.info(
+                        f"[GATE3-REJECT] Low evidence ratio: "
+                        f"{ratio:.2%} < {min_ratio:.0%}"
+                    )
+                    return {
+                        **state,
+                        "article": None,
+                        "article_en": None,
+                        "article_ko": None,
+                        "skip_reason": "low_evidence_ratio",
+                        "current_stage": "done",
+                    }
+
         # Reconstruct VerificationResult
         verdicts = state.get("verdicts", [])
         verdict_objects = [ClaimVerdict(**v) for v in verdicts]
