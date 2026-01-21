@@ -31,7 +31,7 @@ class AgentSettings(BaseSettings):
 
     # GDELT (뉴스) - 인증 불필요
     gdelt_enabled: bool = True
-    gdelt_timespan: str = "15m"  # 검색 기간 (15분, GDELT 업데이트 주기와 동일)
+    gdelt_timespan: str = "7d"  # 검색 기간 (테스트용 일주일)
 
     # X/Twitter (Twikit) - 개인계정 필요
     twitter_enabled: bool = False
@@ -51,7 +51,7 @@ class AgentSettings(BaseSettings):
     # ===========================================
     # 스캐너 설정
     # ===========================================
-    scan_interval_minutes: int = 1  # 테스트용 1분 간격 (원래: 15분)
+    scan_interval_minutes: int = 1440  # 24시간 (1일 단위)
     max_news_per_scan: int = 100
 
     # ===========================================
@@ -61,7 +61,7 @@ class AgentSettings(BaseSettings):
     # 30: 중간 키워드 1개 + 일반 소스 + 영어 + 기본
     # 40: 중간 키워드 2개 또는 높은 키워드 1개
     # 60: 높은 키워드 여러 개 또는 신뢰 소스
-    min_publish_score: int = 30  # 발행 고려 최소 점수 (더 많은 뉴스 포함)
+    min_publish_score: int = 15  # 발행 고려 최소 점수 (테스트용 낮춤)
     min_investigate_score: int = 50  # 조사 시작 최소 점수
 
     # 점수 계산 방식
@@ -107,6 +107,28 @@ class AgentSettings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     max_concurrent_llm_calls: int = 3
     investigation_timeout_seconds: float = 300.0  # 5 minutes
+
+    # ===========================================
+    # 콘텐츠 필터링 게이트 설정
+    # ===========================================
+
+    # Gate 1: Check-worthiness
+    checkworthiness_enabled: bool = True
+    entertainment_pattern_threshold: int = 2  # N개 이상 패턴 매칭 시 거부
+    speculation_pattern_threshold: int = 2
+    human_interest_pattern_threshold: int = 3  # 인물 특집/미담 기사 거부
+
+    # Gate 2: Specificity (TODO: 다국어 패턴 추가 필요)
+    specificity_enabled: bool = False  # 임시 비활성화 - 영어 패턴만 인식
+    min_specificity_score: float = 0.4  # 0-1, 이 점수 미만이면 거부
+
+    # Gate 3: Evidence Sufficiency
+    evidence_gate_enabled: bool = True
+    min_supported_claims: int = 1       # 최소 검증된 주장 수
+    min_evidence_ratio: float = 0.3     # 검증된 주장 비율 (0-1)
+
+    # 로깅
+    log_gate_rejections: bool = True    # 거부 사유 로깅
 
     # Pydantic v2 configuration
     model_config = ConfigDict(
