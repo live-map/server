@@ -82,10 +82,11 @@ class AgentSettings(BaseSettings):
     max_tokens_per_investigation: int = 4000
 
     # ===========================================
-    # 구체성 필터 설정 (Specificity Gate)
-    # ===========================================
-    specificity_enabled: bool = True  # 일반 배경기사 필터링
-    specificity_min_score: float = 0.3  # 최소 구체성 점수 (0-1)
+
+    evidence_gate_enabled: bool = True  # 증거 검증 게이트 활성화
+    min_supported_claims: int = 2       # SUPPORTED 판정 필요 최소 주장 수
+    min_evidence_ratio: float = 0.5     # 최소 증거 비율 (supported/total)
+
 
     # ===========================================
     # 중복 제거 설정 (Deduplication)
