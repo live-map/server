@@ -83,9 +83,17 @@ class AgentSettings(BaseSettings):
     # 중복 제거 설정 (Deduplication)
     # ===========================================
     dedup_enabled: bool = True
-    dedup_similarity_threshold: float = 0.85   # 잠재적 일치 (LLM 검증 필요)
+    # Similarity thresholds (tune based on actual data distribution)
+    # >= duplicate: Skip as duplicate
+    # >= potential: Needs LLM verification
+    # >= related: Link as story chain
+    # < related: Create new event
     dedup_duplicate_threshold: float = 0.95    # 확실한 중복 (스킵)
+    dedup_potential_threshold: float = 0.85    # 잠재적 일치 (LLM 검증 필요)
+    dedup_related_threshold: float = 0.70      # 관련 이벤트 (스토리 체인)
     dedup_time_window_days: int = 7            # 조회 기간 (일)
+    # Logging for threshold tuning
+    dedup_log_all_similarities: bool = True    # 모든 유사도 점수 로깅
 
     # ===========================================
     # 이중 언어 설정 (Bilingual)

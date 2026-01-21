@@ -9,17 +9,20 @@ Layer 2: Semantic search (pgvector)
 - Cosine similarity using BGE-M3 embeddings
 - Configurable thresholds for duplicate/related detection
 
-Similarity thresholds:
-- >= 0.95: Duplicate (skip)
-- 0.85-0.94: Potential match (LLM verification needed)
-- 0.70-0.84: Related event (link as story chain)
-- < 0.70: Different event (create new)
+Similarity thresholds (from config):
+- >= duplicate_threshold: Duplicate (skip)
+- >= potential_threshold: Potential match (LLM verification needed)
+- >= related_threshold: Related event (link as story chain)
+- < related_threshold: Different event (create new)
+
+Threshold tuning:
+- Set dedup_log_all_similarities=True to log all similarity scores
+- Analyze logs to determine optimal thresholds for your data
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from dataclasses import dataclass
@@ -29,6 +32,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..config import agent_settings
 
 if TYPE_CHECKING:
     from app.models.event import Event
@@ -92,26 +97,34 @@ class EventMatcher:
     def __init__(
         self,
         db: AsyncSession,
-        duplicate_threshold: float = 0.95,
-        potential_threshold: float = 0.85,
-        related_threshold: float = 0.70,
-        time_window_days: int = 7,
+        duplicate_threshold: float | None = None,
+        potential_threshold: float | None = None,
+        related_threshold: float | None = None,
+        time_window_days: int | None = None,
     ):
         """
         Initialize event matcher.
 
         Args:
             db: Database session
-            duplicate_threshold: Similarity above this = duplicate
-            potential_threshold: Similarity above this = potential match
-            related_threshold: Similarity above this = related event
-            time_window_days: Only check events within this time window
+            duplicate_threshold: Similarity above this = duplicate (default from config)
+            potential_threshold: Similarity above this = potential match (default from config)
+            related_threshold: Similarity above this = related event (default from config)
+            time_window_days: Only check events within this time window (default from config)
         """
         self.db = db
-        self.duplicate_threshold = duplicate_threshold
-        self.potential_threshold = potential_threshold
-        self.related_threshold = related_threshold
-        self.time_window_days = time_window_days
+        # Use config values as defaults, allow override
+        self.duplicate_threshold = duplicate_threshold or agent_settings.dedup_duplicate_threshold
+        self.potential_threshold = potential_threshold or agent_settings.dedup_potential_threshold
+        self.related_threshold = related_threshold or agent_settings.dedup_related_threshold
+        self.time_window_days = time_window_days or agent_settings.dedup_time_window_days
+        self.log_all_similarities = agent_settings.dedup_log_all_similarities
+
+        logger.debug(
+            f"EventMatcher initialized: duplicate={self.duplicate_threshold}, "
+            f"potential={self.potential_threshold}, related={self.related_threshold}, "
+            f"time_window={self.time_window_days}d"
+        )
 
     async def find_match(
         self,
@@ -221,14 +234,11 @@ class EventMatcher:
         row = result.fetchone()
 
         if not row:
+            if self.log_all_similarities:
+                logger.debug("No semantic match found (below related threshold)")
             return None
 
         event_id, event_hash, canonical_title, matched_category, similarity = row
-
-        logger.info(
-            f"Semantic match found: event_id={event_id}, "
-            f"similarity={similarity:.3f}, title={canonical_title[:50]}"
-        )
 
         # Determine match type based on similarity
         if similarity >= self.duplicate_threshold:
@@ -237,6 +247,20 @@ class EventMatcher:
             match_type = MatchType.POTENTIAL
         else:
             match_type = MatchType.RELATED
+
+        # Enhanced logging for threshold tuning
+        if self.log_all_similarities:
+            logger.info(
+                f"Similarity: {similarity:.4f} | "
+                f"Thresholds: dup={self.duplicate_threshold}, pot={self.potential_threshold}, rel={self.related_threshold} | "
+                f"Result: {match_type.value} | "
+                f"Event: {canonical_title[:60]}..."
+            )
+        else:
+            logger.info(
+                f"Semantic match: event_id={event_id}, "
+                f"similarity={similarity:.3f}, type={match_type.value}"
+            )
 
         # Fetch full event object
         event_result = await self.db.execute(
