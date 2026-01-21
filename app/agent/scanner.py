@@ -21,7 +21,9 @@ from typing import Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from .checkworthiness import check_worthiness, RejectionReason
 from .config import agent_settings
+from .specificity import check_specificity
 from .triggers import TriggerEvent, TriggerManager
 from .significance import (
     calculate_significance,
@@ -135,11 +137,13 @@ class MultiSourceScanner:
 
     async def _classify_and_group(self, events: list[TriggerEvent]) -> list[dict]:
         """
-        이벤트 분류 및 그룹화 (v2: 결정론적 점수 + LLM)
+        이벤트 분류 및 그룹화 (v3: 필터링 게이트 + 결정론적 점수 + LLM)
 
-        1. 결정론적 점수 계산 (노이즈 필터링)
-        2. 선택적 LLM 검증 (높은 점수만)
-        3. 모든 결정 로깅
+        1. Gate 1: Check-worthiness (연예/추측 콘텐츠 거부)
+        2. Gate 2: Specificity (일반 배경 기사 거부)
+        3. 결정론적 점수 계산 (노이즈 필터링)
+        4. 선택적 LLM 검증 (높은 점수만)
+        5. 모든 결정 로깅
         """
         if not events:
             return []
@@ -158,14 +162,66 @@ class MultiSourceScanner:
             for e in events
         ]
 
+        # Gate-filtered events
+        gate_passed_events = []
+        gate_passed_triggers = []
+
+        for event_dict, trigger_event in zip(event_dicts, events):
+            text = f"{event_dict['title']} {event_dict.get('content', '')}"
+
+            # === GATE 1: Check-worthiness ===
+            if agent_settings.checkworthiness_enabled:
+                cw_result = check_worthiness(
+                    text,
+                    entertainment_threshold=agent_settings.entertainment_pattern_threshold,
+                    speculation_threshold=agent_settings.speculation_pattern_threshold,
+                    human_interest_threshold=agent_settings.human_interest_pattern_threshold,
+                )
+                if not cw_result.is_checkworthy:
+                    if agent_settings.log_gate_rejections:
+                        logger.info(
+                            f"[GATE1-REJECT] {cw_result.rejection_reason.value}: "
+                            f"{event_dict['title'][:50]}..."
+                        )
+                    continue
+
+            # === GATE 2: Specificity ===
+            if agent_settings.specificity_enabled:
+                spec_result = check_specificity(
+                    text,
+                    min_score=agent_settings.min_specificity_score,
+                )
+                if not spec_result.is_specific:
+                    if agent_settings.log_gate_rejections:
+                        logger.info(
+                            f"[GATE2-REJECT] Low specificity ({spec_result.score:.2f}): "
+                            f"{event_dict['title'][:50]}..."
+                        )
+                    continue
+
+            gate_passed_events.append(event_dict)
+            gate_passed_triggers.append(trigger_event)
+
+        logger.info(
+            f"Content gates: {len(gate_passed_events)}/{len(events)} events passed"
+        )
+
+        if not gate_passed_events:
+            return []
+
         # 1. 결정론적 점수 계산
         scored_events = []
-        for event_dict, trigger_event in zip(event_dicts, events):
+        for event_dict, trigger_event in zip(gate_passed_events, gate_passed_triggers):
+            # GDELT API pre-filters by keyword, so non-English articles
+            # that passed GDELT's filter should get base score
+            is_api_prefiltered = event_dict["source"] == "gdelt"
+
             score = calculate_significance(
                 title=event_dict["title"],
                 content=event_dict.get("content", ""),
                 source_domain=event_dict["source_name"],
                 language=event_dict.get("language", "en"),
+                api_prefiltered=is_api_prefiltered,
             )
 
             # 로깅 (설정에 따라)
