@@ -319,10 +319,27 @@ class QAVerifier:
             original_confidence, sources
         )
 
+        # Step 5: Enforce minimum 2 unique sources for SUPPORTED verdict
+        final_verdict = verdict_data.get("verdict", "NOT_ENOUGH_INFO")
+        if final_verdict == "SUPPORTED":
+            # Count unique high-credibility sources
+            unique_sources = set()
+            for source in sources:
+                if source.credibility_score >= 1.0:  # Only count standard+ sources
+                    unique_sources.add(source.source_name)
+
+            if len(unique_sources) < 2:
+                logger.info(
+                    f"Downgrading SUPPORTED to NOT_ENOUGH_INFO: "
+                    f"only {len(unique_sources)} unique source(s) found, need 2+"
+                )
+                final_verdict = "NOT_ENOUGH_INFO"
+                adjusted_confidence = min(adjusted_confidence, 2)
+
         verdict = ClaimVerdict(
             claim_id=claim_id,
             claim_text=claim_text,
-            verdict=verdict_data.get("verdict", "NOT_ENOUGH_INFO"),
+            verdict=final_verdict,
             confidence=adjusted_confidence,
             evidence_quotes=verdict_data.get("evidence_quotes", []),
             reasoning=verdict_data.get("reasoning", ""),
