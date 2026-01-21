@@ -273,7 +273,7 @@ class MultiSourceScanner:
 
             logger.info(
                 f"Specificity filter: {len(specificity_passed)}/{len(filtered)} events "
-                f"passed (min_score={agent_settings.specificity_min_score})"
+                f"passed (min_score={agent_settings.min_specificity_score})"
             )
             filtered = specificity_passed
 
