@@ -33,6 +33,78 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Source Credibility Configuration
+# =============================================================================
+
+# High credibility sources - major wire services and reputable outlets
+HIGH_CREDIBILITY_SOURCES: dict[str, float] = {
+    # Wire services (highest credibility)
+    "reuters.com": 1.5,
+    "apnews.com": 1.5,
+    "afp.com": 1.5,
+    # Major international broadcasters
+    "bbc.com": 1.4,
+    "bbc.co.uk": 1.4,
+    "aljazeera.com": 1.3,
+    "france24.com": 1.3,
+    "dw.com": 1.3,
+    # Quality newspapers
+    "theguardian.com": 1.3,
+    "nytimes.com": 1.3,
+    "washingtonpost.com": 1.3,
+    "economist.com": 1.3,
+    # Government/official sources
+    ".gov": 1.4,
+    ".mil": 1.3,
+    ".int": 1.3,
+}
+
+# Low credibility patterns - tabloids, unknown, or unreliable sources
+LOW_CREDIBILITY_PATTERNS: dict[str, float] = {
+    # Tabloid patterns
+    "tabloid": 0.5,
+    "daily-mail": 0.6,
+    "thesun.": 0.5,
+    "mirror.co.uk": 0.6,
+    # Content farms / aggregators
+    "buzzfeed": 0.7,
+    "huffpost": 0.7,
+    # Default for unknown sources
+    "unknown": 0.7,
+}
+
+
+def get_source_credibility(url: str, source_name: str = "") -> float:
+    """
+    Get credibility score for a source.
+
+    Args:
+        url: Source URL
+        source_name: Source name (optional)
+
+    Returns:
+        Credibility multiplier (0.5 - 1.5)
+    """
+    check_string = f"{url} {source_name}".lower()
+
+    # Check high credibility sources first
+    for pattern, score in HIGH_CREDIBILITY_SOURCES.items():
+        if pattern in check_string:
+            return score
+
+    # Check low credibility patterns
+    for pattern, score in LOW_CREDIBILITY_PATTERNS.items():
+        if pattern in check_string:
+            return score
+
+    # Default credibility for unknown but legitimate-looking sources
+    if url and "." in url:
+        return 1.0
+
+    return 0.7  # Unknown source
+
+
+# =============================================================================
 # Data Models
 # =============================================================================
 
@@ -48,6 +120,7 @@ class EvidenceSource(BaseModel):
     snippet: str = Field(default="")
     source_name: str = Field(default="unknown")
     relevance_score: float = Field(default=0.0)
+    credibility_score: float = Field(default=1.0, description="Source credibility multiplier")
 
 
 class ClaimVerdict(BaseModel):
@@ -220,11 +293,17 @@ class QAVerifier:
             claim_text, evidence_context, questions
         )
 
+        # Step 4: Adjust confidence based on source credibility
+        original_confidence = verdict_data.get("confidence", 3)
+        adjusted_confidence = self._adjust_confidence_by_credibility(
+            original_confidence, sources
+        )
+
         verdict = ClaimVerdict(
             claim_id=claim_id,
             claim_text=claim_text,
             verdict=verdict_data.get("verdict", "NOT_ENOUGH_INFO"),
-            confidence=verdict_data.get("confidence", 3),
+            confidence=adjusted_confidence,
             evidence_quotes=verdict_data.get("evidence_quotes", []),
             reasoning=verdict_data.get("reasoning", ""),
             questions_asked=questions,
@@ -341,7 +420,7 @@ class QAVerifier:
             return [f"Is the following claim true: {claim}?"]
 
     def _prepare_evidence_context(self, evidence_docs: list[dict]) -> str:
-        """Prepare evidence context within token limit."""
+        """Prepare evidence context within token limit, with credibility labels."""
         context_parts = []
         total_chars = 0
 
@@ -349,8 +428,18 @@ class QAVerifier:
             title = doc.get("title", "Untitled")
             content = doc.get("content", doc.get("snippet", ""))
             source = doc.get("source_name", doc.get("url", "unknown"))
+            url = doc.get("url", "")
 
-            doc_text = f"[Source: {source}]\nTitle: {title}\n{content}\n\n"
+            # Get credibility and label
+            credibility = get_source_credibility(url, source)
+            if credibility >= 1.3:
+                cred_label = "HIGH CREDIBILITY"
+            elif credibility >= 1.0:
+                cred_label = "STANDARD"
+            else:
+                cred_label = "LOW CREDIBILITY"
+
+            doc_text = f"[Source: {source}] [{cred_label}]\nTitle: {title}\n{content}\n\n"
 
             if total_chars + len(doc_text) > self.max_evidence_chars:
                 # Truncate this document
@@ -366,7 +455,7 @@ class QAVerifier:
         return "".join(context_parts) or "No evidence available."
 
     def _extract_sources(self, evidence_docs: list[dict]) -> list[EvidenceSource]:
-        """Extract source information from evidence documents."""
+        """Extract source information from evidence documents with credibility scores."""
         sources = []
         seen_urls = set()
 
@@ -376,12 +465,20 @@ class QAVerifier:
                 continue
             seen_urls.add(url)
 
+            source_name = doc.get("source_name", "unknown")
+            credibility = get_source_credibility(url, source_name)
+
             sources.append(EvidenceSource(
                 url=url,
                 title=doc.get("title", ""),
                 snippet=doc.get("content", doc.get("snippet", ""))[:200],
-                source_name=doc.get("source_name", "unknown"),
+                source_name=source_name,
+                credibility_score=credibility,
             ))
+
+            logger.debug(
+                f"Source credibility: {source_name} ({url[:50]}...) -> {credibility}"
+            )
 
         return sources
 
@@ -483,6 +580,53 @@ class QAVerifier:
 
         result["evidence_quotes"] = quotes[:5]  # Max 5 quotes
         return result
+
+    def _adjust_confidence_by_credibility(
+        self,
+        confidence: int,
+        sources: list[EvidenceSource],
+    ) -> int:
+        """
+        Adjust confidence based on source credibility.
+
+        Rules:
+        - 2+ high credibility sources confirm -> confidence +1 (max 5)
+        - Only low credibility sources -> confidence -1 (min 1)
+        - High and low credibility conflict -> favor high credibility
+
+        Args:
+            confidence: Original LLM confidence (1-5)
+            sources: List of evidence sources with credibility scores
+
+        Returns:
+            Adjusted confidence (1-5)
+        """
+        if not sources:
+            return confidence
+
+        high_cred_count = sum(1 for s in sources if s.credibility_score >= 1.3)
+        low_cred_count = sum(1 for s in sources if s.credibility_score < 1.0)
+        total_count = len(sources)
+
+        # All sources are high credibility
+        if high_cred_count >= 2:
+            adjusted = min(5, confidence + 1)
+            logger.debug(
+                f"Confidence boost: {confidence} -> {adjusted} "
+                f"({high_cred_count} high credibility sources)"
+            )
+            return adjusted
+
+        # Only low credibility sources
+        if low_cred_count == total_count and total_count > 0:
+            adjusted = max(1, confidence - 1)
+            logger.debug(
+                f"Confidence penalty: {confidence} -> {adjusted} "
+                f"(only low credibility sources)"
+            )
+            return adjusted
+
+        return confidence
 
 
 # =============================================================================
