@@ -95,7 +95,7 @@ async def run_scheduled_scan():
                     article_service = ArticleService(
                         db,
                         duplicate_threshold=agent_settings.dedup_duplicate_threshold,
-                        potential_threshold=agent_settings.dedup_similarity_threshold,
+                        potential_threshold=agent_settings.dedup_potential_threshold,
                         time_window_days=agent_settings.dedup_time_window_days,
                     )
                     match_result = await article_service.check_duplicate(

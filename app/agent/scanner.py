@@ -32,7 +32,6 @@ from .significance import (
     SignificanceScore,
     SignificanceConfig,
 )
-from .specificity import check_specificity
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +258,7 @@ class MultiSourceScanner:
             specificity_passed = []
             for e, s, t in filtered:
                 text = f"{e['title']} {e.get('content', '')}"
-                spec_result = check_specificity(text, agent_settings.specificity_min_score)
+                spec_result = check_specificity(text, agent_settings.min_specificity_score)
 
                 if spec_result.is_specific:
                     specificity_passed.append((e, s, t))
