@@ -132,6 +132,9 @@ class SignificanceScore(BaseModel):
     noise_penalty: int
     matched_keywords: list[str]
     reasoning: str
+    # Verification-adjusted fields (populated after verification)
+    verification_multiplier: float = 1.0
+    verified_score: int | None = None
 
 
 def calculate_significance(
@@ -330,6 +333,93 @@ def filter_significant_events(
     )
 
     return results
+
+
+# =============================================================================
+# Verification Score Integration
+# =============================================================================
+
+
+def calculate_verification_multiplier(verification_score: float) -> float:
+    """
+    Calculate multiplier based on verification score.
+
+    Args:
+        verification_score: Overall reliability from verification (0.0 - 1.0)
+
+    Returns:
+        Multiplier to apply to base significance score
+
+    Multiplier mapping:
+    - verification_score >= 0.8: 1.2x (high confidence)
+    - verification_score >= 0.5: 1.0x (moderate confidence)
+    - verification_score >= 0.3: 0.8x (low confidence)
+    - verification_score < 0.3: 0.5x (very low confidence)
+    """
+    if verification_score >= 0.8:
+        return 1.2
+    elif verification_score >= 0.5:
+        return 1.0
+    elif verification_score >= 0.3:
+        return 0.8
+    else:
+        return 0.5
+
+
+def apply_verification_score(
+    significance: SignificanceScore,
+    verification_score: float,
+) -> SignificanceScore:
+    """
+    Apply verification score to adjust significance.
+
+    This should be called AFTER verification is complete, not during initial scan.
+
+    Args:
+        significance: Original significance score
+        verification_score: Overall reliability from verification (0.0 - 1.0)
+
+    Returns:
+        Updated SignificanceScore with verification-adjusted values
+    """
+    multiplier = calculate_verification_multiplier(verification_score)
+    verified_total = int(significance.total_score * multiplier)
+    verified_total = max(0, min(100, verified_total))
+
+    # Determine new level based on verified score
+    if verified_total >= 80:
+        new_level = SignificanceLevel.CRITICAL
+    elif verified_total >= 60:
+        new_level = SignificanceLevel.HIGH
+    elif verified_total >= 40:
+        new_level = SignificanceLevel.MEDIUM
+    elif verified_total >= 20:
+        new_level = SignificanceLevel.LOW
+    else:
+        new_level = SignificanceLevel.NOISE
+
+    # Update reasoning
+    verification_note = f"Verification: {verification_score:.0%} -> {multiplier}x multiplier"
+    new_reasoning = f"{significance.reasoning}; {verification_note}"
+
+    logger.info(
+        f"Verification adjustment: {significance.total_score} * {multiplier} = {verified_total} "
+        f"(verification_score={verification_score:.2f})"
+    )
+
+    return SignificanceScore(
+        total_score=significance.total_score,  # Keep original
+        level=new_level,
+        keyword_score=significance.keyword_score,
+        source_score=significance.source_score,
+        engagement_score=significance.engagement_score,
+        recency_score=significance.recency_score,
+        noise_penalty=significance.noise_penalty,
+        matched_keywords=significance.matched_keywords,
+        reasoning=new_reasoning,
+        verification_multiplier=multiplier,
+        verified_score=verified_total,
+    )
 
 
 # LLM-based classification with structured output
