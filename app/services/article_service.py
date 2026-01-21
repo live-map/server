@@ -290,3 +290,114 @@ class ArticleService:
             await self.db.commit()
             return True
         return False
+
+    async def get_article(self, article_id: int) -> Article | None:
+        """Get article by ID."""
+        result = await self.db.execute(
+            select(Article).where(Article.id == article_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def correct_article(
+        self,
+        article_id: int,
+        correction_note: str,
+        updated_fields: dict[str, Any],
+    ) -> Article | None:
+        """
+        Correct a published article with original content preservation.
+
+        This creates a snapshot of the original content before applying corrections,
+        allowing for audit trail and transparency.
+
+        Args:
+            article_id: ID of article to correct
+            correction_note: Explanation of what was corrected and why
+            updated_fields: Dict of fields to update (headline_en, body_en, etc.)
+
+        Returns:
+            Updated Article or None if not found
+
+        Example:
+            article = await service.correct_article(
+                article_id=123,
+                correction_note="Corrected casualty count from 50 to 25",
+                updated_fields={
+                    "headline_en": "Corrected: Attack kills 25",
+                    "body_en": "Updated body text...",
+                }
+            )
+        """
+        article = await self.get_article(article_id)
+        if not article:
+            logger.warning(f"Article not found for correction: {article_id}")
+            return None
+
+        # Save original content snapshot (only on first correction)
+        if not article.original_content_snapshot:
+            original_snapshot = {
+                "headline_en": article.headline_en,
+                "lead_en": article.lead_en,
+                "nut_graph_en": article.nut_graph_en,
+                "body_en": article.body_en,
+                "full_text_en": article.full_text_en,
+                "headline_ko": article.headline_ko,
+                "lead_ko": article.lead_ko,
+                "nut_graph_ko": article.nut_graph_ko,
+                "body_ko": article.body_ko,
+                "full_text_ko": article.full_text_ko,
+                "verification_score": article.verification_score,
+                "snapshot_at": datetime.utcnow().isoformat(),
+            }
+            article.original_content_snapshot = json.dumps(original_snapshot)
+
+        # Apply corrections
+        allowed_fields = {
+            "headline_en", "lead_en", "nut_graph_en", "body_en", "full_text_en",
+            "headline_ko", "lead_ko", "nut_graph_ko", "body_ko", "full_text_ko",
+            "verification_score", "sources_json",
+        }
+
+        for field, value in updated_fields.items():
+            if field in allowed_fields:
+                setattr(article, field, value)
+            else:
+                logger.warning(f"Ignoring non-allowed field in correction: {field}")
+
+        # Update correction metadata
+        article.is_corrected = True
+        article.correction_note = correction_note
+        article.corrected_at = datetime.utcnow()
+
+        await self.db.commit()
+
+        logger.info(
+            f"Article corrected: id={article_id}, note={correction_note[:50]}..., "
+            f"updated_fields={list(updated_fields.keys())}"
+        )
+
+        return article
+
+    async def get_correction_history(self, article_id: int) -> dict | None:
+        """
+        Get correction history for an article.
+
+        Returns the original content snapshot and correction details.
+        """
+        article = await self.get_article(article_id)
+        if not article or not article.is_corrected:
+            return None
+
+        original = None
+        if article.original_content_snapshot:
+            original = json.loads(article.original_content_snapshot)
+
+        return {
+            "article_id": article_id,
+            "is_corrected": article.is_corrected,
+            "correction_note": article.correction_note,
+            "corrected_at": article.corrected_at.isoformat() if article.corrected_at else None,
+            "original_content": original,
+            "current_headline_en": article.headline_en,
+            "current_headline_ko": article.headline_ko,
+        }
