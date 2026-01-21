@@ -287,6 +287,7 @@ def calculate_significance(
     engagement: dict | None = None,
     language: str = "en",
     published_at: datetime | str | None = None,
+    api_prefiltered: bool = False,
     config: SignificanceConfig | None = None,
 ) -> SignificanceScore:
     """
@@ -299,6 +300,9 @@ def calculate_significance(
         engagement: Engagement metrics (likes, retweets, etc.)
         language: Article language code
         published_at: Publication timestamp for recency scoring
+        api_prefiltered: Whether the event was pre-filtered by API (e.g., GDELT).
+            If True and no keywords matched in title, gives base score since
+            the API already filtered by keyword (useful for non-English articles)
         config: Scoring configuration
 
     Returns:
@@ -373,14 +377,16 @@ def calculate_significance(
     # 5. Language bonus (English articles more reliably processed)
     language_bonus = 5 if language and language.lower() in ["en", "english"] else 0
 
-    # 6. GDELT fulltext match bonus
-    # If GDELT matched but we didn't find keywords in title,
-    # still give some base score since GDELT found it relevant
-    gdelt_base_score = 0
-    if keyword_score == 0 and source_score >= 20:
-        # No keywords in title, but trusted source + GDELT matched
-        gdelt_base_score = 15
-        reasons.append("GDELT fulltext match + trusted source")
+    # 6. API pre-filtered bonus
+    # If event came from API that already filtered by keyword (e.g., GDELT)
+    # but we didn't match keywords in title (e.g., non-English articles),
+    # give base score since the API's keyword filter matched the body
+    api_prefiltered_bonus = 0
+    if api_prefiltered and keyword_score == 0:
+        # GDELT/API pre-filtered by keyword, but title didn't match our keywords
+        # This is common for non-English articles where keywords are in body
+        api_prefiltered_bonus = 25
+        reasons.append("API pre-filtered (keyword in body)")
 
     # Calculate total
     total_score = (
@@ -389,7 +395,7 @@ def calculate_significance(
         + engagement_score
         + recency_score
         + language_bonus
-        + gdelt_base_score
+        + api_prefiltered_bonus
         - noise_penalty
     )
     total_score = max(0, min(100, total_score))

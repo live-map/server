@@ -33,6 +33,7 @@ class AgentSettings(BaseSettings):
     gdelt_enabled: bool = True
     gdelt_timespan: str = "2h"  # 검색 기간 (2시간, 프로덕션용)
 
+
     # X/Twitter (Twikit) - 개인계정 필요
     twitter_enabled: bool = False
     twitter_username: str = ""
@@ -62,6 +63,7 @@ class AgentSettings(BaseSettings):
     # 40: 중간 키워드 2개 또는 높은 키워드 1개
     # 60: 높은 키워드 여러 개 또는 신뢰 소스
     min_publish_score: int = 40  # 발행 최소 점수 (프로덕션: 품질 우선)
+
     min_investigate_score: int = 50  # 조사 시작 최소 점수
 
     # 점수 계산 방식
@@ -78,6 +80,12 @@ class AgentSettings(BaseSettings):
     max_investigation_iterations: int = 3
     min_sources_for_verification: int = 2
     max_tokens_per_investigation: int = 4000
+
+    # ===========================================
+    # 구체성 필터 설정 (Specificity Gate)
+    # ===========================================
+    specificity_enabled: bool = True  # 일반 배경기사 필터링
+    specificity_min_score: float = 0.3  # 최소 구체성 점수 (0-1)
 
     # ===========================================
     # 중복 제거 설정 (Deduplication)
@@ -107,6 +115,28 @@ class AgentSettings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     max_concurrent_llm_calls: int = 3
     investigation_timeout_seconds: float = 300.0  # 5 minutes
+
+    # ===========================================
+    # 콘텐츠 필터링 게이트 설정
+    # ===========================================
+
+    # Gate 1: Check-worthiness
+    checkworthiness_enabled: bool = True
+    entertainment_pattern_threshold: int = 2  # N개 이상 패턴 매칭 시 거부
+    speculation_pattern_threshold: int = 2
+    human_interest_pattern_threshold: int = 3  # 인물 특집/미담 기사 거부
+
+    # Gate 2: Specificity (TODO: 다국어 패턴 추가 필요)
+    specificity_enabled: bool = False  # 임시 비활성화 - 영어 패턴만 인식
+    min_specificity_score: float = 0.4  # 0-1, 이 점수 미만이면 거부
+
+    # Gate 3: Evidence Sufficiency
+    evidence_gate_enabled: bool = True
+    min_supported_claims: int = 1       # 최소 검증된 주장 수
+    min_evidence_ratio: float = 0.3     # 검증된 주장 비율 (0-1)
+
+    # 로깅
+    log_gate_rejections: bool = True    # 거부 사유 로깅
 
     # Pydantic v2 configuration
     model_config = ConfigDict(
