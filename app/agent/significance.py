@@ -6,12 +6,14 @@ Provides:
 2. LLM-based classification with structured output
 3. Configurable thresholds
 4. Detailed logging for debugging
+5. Word boundary matching to reduce false positives
 
 This replaces the vague "significant events" criteria with
 measurable, tunable parameters.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -19,6 +21,85 @@ from typing import Optional
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Keyword Matching Utilities
+# =============================================================================
+
+# Context words that indicate non-event usage (defense, prevention, etc.)
+NEGATION_CONTEXT_WORDS = frozenset({
+    "defense", "defence", "prevention", "prevention of",
+    "anti-", "counter-", "against", "prevent", "preventing",
+    "avoided", "averted", "stopped", "intercepted",
+    "simulation", "exercise", "drill", "training",
+    "history", "historical", "anniversary", "memorial",
+    "movie", "film", "game", "video game", "book",
+})
+
+
+def match_keyword_with_boundary(keyword: str, text: str) -> bool:
+    """
+    Match keyword with word boundaries to avoid false positives.
+
+    Args:
+        keyword: Keyword to match
+        text: Text to search in (should be lowercase)
+
+    Returns:
+        True if keyword matches with word boundaries
+
+    Examples:
+        - "airstrike" matches "airstrike on city" -> True
+        - "airstrike" matches "airstrike defense" -> False (negation context)
+        - "war" matches "the war began" -> True
+        - "war" matches "warning issued" -> False (no word boundary)
+    """
+    # Escape special regex characters in keyword
+    escaped_kw = re.escape(keyword.strip())
+
+    # Build pattern with word boundaries
+    # \b matches word boundary (between \w and \W)
+    pattern = rf'\b{escaped_kw}\b'
+
+    match = re.search(pattern, text, re.IGNORECASE)
+    if not match:
+        return False
+
+    # Check for negation context in surrounding words (±5 words)
+    start_pos = max(0, match.start() - 50)
+    end_pos = min(len(text), match.end() + 50)
+    context = text[start_pos:end_pos].lower()
+
+    for neg_word in NEGATION_CONTEXT_WORDS:
+        if neg_word in context:
+            logger.debug(
+                f"Keyword '{keyword}' matched but negated by context word '{neg_word}'"
+            )
+            return False
+
+    return True
+
+
+def match_any_keyword(keywords: set[str], text: str) -> list[str]:
+    """
+    Match any keywords from a set with word boundary checking.
+
+    Args:
+        keywords: Set of keywords to match
+        text: Text to search in
+
+    Returns:
+        List of matched keywords
+    """
+    text_lower = text.lower()
+    matched = []
+
+    for kw in keywords:
+        if match_keyword_with_boundary(kw, text_lower):
+            matched.append(kw)
+
+    return matched
 
 
 class SignificanceLevel(str, Enum):
@@ -161,37 +242,38 @@ def calculate_significance(
     matched_keywords = []
     reasons = []
 
-    # 1. Keyword scoring (0-60 points)
+    # 1. Keyword scoring (0-60 points) with word boundary matching
     keyword_score = 0
 
     # Check for noise keywords first (reduce false positives)
+    # Noise keywords use simple substring match (they're meant to be broad)
     noise_penalty = 0
     for noise in config.noise_keywords:
         if noise in text:
             noise_penalty += 15
             reasons.append(f"Noise: '{noise}'")
 
-    # Critical keywords (+30 each, max 60)
-    for kw in config.critical_keywords:
-        if kw in text:
-            keyword_score += 30
-            matched_keywords.append(f"[CRITICAL] {kw}")
+    # Critical keywords (+30 each, max 60) with word boundary matching
+    critical_matches = match_any_keyword(config.critical_keywords, text)
+    for kw in critical_matches:
+        keyword_score += 30
+        matched_keywords.append(f"[CRITICAL] {kw}")
     keyword_score = min(keyword_score, 60)
 
-    # High keywords (+15 each, max 45)
+    # High keywords (+15 each, max 45) with word boundary matching
     if keyword_score < 60:
-        for kw in config.high_keywords:
-            if kw in text:
-                keyword_score += 15
-                matched_keywords.append(f"[HIGH] {kw}")
+        high_matches = match_any_keyword(config.high_keywords, text)
+        for kw in high_matches:
+            keyword_score += 15
+            matched_keywords.append(f"[HIGH] {kw}")
         keyword_score = min(keyword_score, 60)
 
-    # Medium keywords (+8 each, max 30)
+    # Medium keywords (+8 each, max 30) with word boundary matching
     if keyword_score < 30:
-        for kw in config.medium_keywords:
-            if kw in text:
-                keyword_score += 8
-                matched_keywords.append(f"[MEDIUM] {kw}")
+        medium_matches = match_any_keyword(config.medium_keywords, text)
+        for kw in medium_matches:
+            keyword_score += 8
+            matched_keywords.append(f"[MEDIUM] {kw}")
         keyword_score = min(keyword_score, 30)
 
     # 2. Source credibility (0-25 points) - increased importance
