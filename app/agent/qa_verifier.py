@@ -111,7 +111,7 @@ Q1: [question]
 Q2: [question]
 ..."""
 
-VERIFICATION_PROMPT = """You are a professional fact-checker. Verify the following claim based on the evidence provided.
+VERIFICATION_PROMPT = """You are a professional fact-checker. Verify the following claim based STRICTLY on the evidence provided.
 
 CLAIM TO VERIFY:
 {claim}
@@ -122,27 +122,47 @@ EVIDENCE DOCUMENTS:
 VERIFICATION QUESTIONS:
 {questions}
 
+## CRITICAL GROUNDING RULES (MUST FOLLOW)
+
+1. **ONLY USE PROVIDED EVIDENCE**: You MUST only cite information that explicitly appears in the evidence documents above. Do NOT use any external knowledge or make assumptions.
+
+2. **EXPLICIT SOURCE ATTRIBUTION**: When citing information, ALWAYS specify the exact source by name:
+   - CORRECT: "According to Reuters, 50 people were injured..."
+   - CORRECT: "The BBC reports that the attack occurred at 3pm..."
+   - WRONG: "According to reports..." (too vague)
+   - WRONG: "Sources say..." (unspecified)
+   - WRONG: "It is reported that..." (no specific source)
+
+3. **NOT_ENOUGH_INFO BY DEFAULT**: If the evidence documents do NOT contain information to verify the claim, you MUST return NOT_ENOUGH_INFO. Do NOT guess or infer facts that are not explicitly stated.
+
+4. **NO HALLUCINATION**: If a specific detail (number, name, date, location) is not present in the evidence, do NOT include it. Only report what you can directly quote from the evidence.
+
 ## Instructions
 
-1. Read all evidence carefully
-2. For each question, find relevant information in the evidence
-3. Determine if the claim is SUPPORTED, REFUTED, or NOT_ENOUGH_INFO
-4. Provide specific quotes from the evidence
+1. Read all evidence documents carefully
+2. For each question, search for relevant information ONLY in the provided evidence
+3. If information is found, note the SPECIFIC SOURCE NAME
+4. If information is NOT found in the evidence, mark as NOT_ENOUGH_INFO
+5. Provide EXACT QUOTES from the evidence documents (with source attribution)
 
 ## Verdict Criteria
 
-- **SUPPORTED**: Multiple sources confirm the claim with consistent information
-- **REFUTED**: Evidence directly contradicts the claim
-- **NOT_ENOUGH_INFO**: Evidence is insufficient, conflicting, or irrelevant
+- **SUPPORTED**: Multiple sources IN THE PROVIDED EVIDENCE confirm the claim with consistent information
+- **REFUTED**: Evidence IN THE PROVIDED DOCUMENTS directly contradicts the claim
+- **NOT_ENOUGH_INFO**:
+  - Evidence does not address the claim
+  - Evidence is insufficient to verify
+  - Evidence is conflicting
+  - You cannot find the information in the provided documents
 
 ## Output Format
 
 VERDICT: SUPPORTED | REFUTED | NOT_ENOUGH_INFO
 CONFIDENCE: 1-5 (1=very uncertain, 5=very certain)
 EVIDENCE_QUOTES:
-- "quote 1 from source"
-- "quote 2 from source"
-REASONING: [Brief explanation of your verdict]
+- "[Source Name]: exact quote from the evidence"
+- "[Source Name]: another quote with source attribution"
+REASONING: [Brief explanation citing ONLY information from the provided evidence. Include source names.]
 
 Provide your analysis:"""
 
@@ -397,7 +417,12 @@ class QAVerifier:
         try:
             response = await asyncio.wait_for(
                 self.llm.ainvoke([
-                    SystemMessage(content="You are a professional fact-checker."),
+                    SystemMessage(content=(
+                        "You are a professional fact-checker. You MUST only use information "
+                        "from the provided evidence documents. Never use external knowledge. "
+                        "Always cite sources explicitly by name. If evidence is insufficient, "
+                        "return NOT_ENOUGH_INFO."
+                    )),
                     HumanMessage(content=VERIFICATION_PROMPT.format(
                         claim=claim,
                         evidence=evidence,
