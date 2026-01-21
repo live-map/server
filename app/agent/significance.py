@@ -7,6 +7,7 @@ Provides:
 3. Configurable thresholds
 4. Detailed logging for debugging
 5. Word boundary matching to reduce false positives
+6. Time-based recency scoring
 
 This replaces the vague "significant events" criteria with
 measurable, tunable parameters.
@@ -15,6 +16,7 @@ measurable, tunable parameters.
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -100,6 +102,66 @@ def match_any_keyword(keywords: set[str], text: str) -> list[str]:
             matched.append(kw)
 
     return matched
+
+
+# =============================================================================
+# Recency Scoring
+# =============================================================================
+
+
+def calculate_recency_score(published_at: datetime | str | None) -> int:
+    """
+    Calculate time-based recency score.
+
+    Args:
+        published_at: Publication timestamp (datetime or ISO string)
+
+    Returns:
+        Recency score (0-10):
+        - 1 hour or less: 10 points
+        - 6 hours or less: 8 points
+        - 24 hours or less: 5 points
+        - 3 days or less: 3 points
+        - 7 days or less: 1 point
+        - Older than 7 days: 0 points
+    """
+    if published_at is None:
+        return 5  # Default for unknown publication time
+
+    # Parse string to datetime if needed
+    if isinstance(published_at, str):
+        try:
+            # Handle various ISO formats
+            published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning(f"Could not parse published_at: {published_at}")
+            return 5  # Default
+
+    # Ensure timezone awareness
+    now = datetime.now(timezone.utc)
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=timezone.utc)
+
+    # Calculate hours since publication
+    delta = now - published_at
+    hours_ago = delta.total_seconds() / 3600
+
+    # Assign score based on recency
+    if hours_ago <= 1:
+        score = 10
+    elif hours_ago <= 6:
+        score = 8
+    elif hours_ago <= 24:
+        score = 5
+    elif hours_ago <= 72:  # 3 days
+        score = 3
+    elif hours_ago <= 168:  # 7 days
+        score = 1
+    else:
+        score = 0
+
+    logger.debug(f"Recency score: {score} (published {hours_ago:.1f}h ago)")
+    return score
 
 
 class SignificanceLevel(str, Enum):
@@ -224,6 +286,7 @@ def calculate_significance(
     source_domain: str = "",
     engagement: dict | None = None,
     language: str = "en",
+    published_at: datetime | str | None = None,
     config: SignificanceConfig | None = None,
 ) -> SignificanceScore:
     """
@@ -235,6 +298,7 @@ def calculate_significance(
         source_domain: Source domain (e.g., reuters.com)
         engagement: Engagement metrics (likes, retweets, etc.)
         language: Article language code
+        published_at: Publication timestamp for recency scoring
         config: Scoring configuration
 
     Returns:
@@ -303,8 +367,8 @@ def calculate_significance(
         elif total_engagement > 100:
             engagement_score = 2
 
-    # 4. Recency score (0-10 points) - placeholder
-    recency_score = 5
+    # 4. Recency score (0-10 points) - time-based decay
+    recency_score = calculate_recency_score(published_at)
 
     # 5. Language bonus (English articles more reliably processed)
     language_bonus = 5 if language and language.lower() in ["en", "english"] else 0
@@ -387,12 +451,14 @@ def filter_significant_events(
         content = event.get("content", "")
         source = event.get("source_name", event.get("source", ""))
         engagement = event.get("engagement", {})
+        published_at = event.get("published_at", event.get("seendate", None))
 
         score = calculate_significance(
             title=title,
             content=content,
             source_domain=source,
             engagement=engagement,
+            published_at=published_at,
             config=config,
         )
 
