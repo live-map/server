@@ -59,6 +59,9 @@ class Event(Base):
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
+    # Clustering (for story grouping)
+    cluster_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
