@@ -54,7 +54,7 @@ def setup_logging():
 
 async def run_scheduled_scan():
     """Run a single scan cycle and trigger investigations for significant events."""
-    from app.agent import InvestigationAgent, NewsScanner
+    from app.agent import ClaimVerificationAgent, NewsScanner
 
     print("\n" + "=" * 60)
     print("[SCANNER] Starting scheduled scan...")
@@ -78,8 +78,8 @@ async def run_scheduled_scan():
             print(f"  [{i+1}] [{cat.upper()}] {desc[:80]}")
             print(f"       Sources: {', '.join(sources[:3])}")
 
-        # Start investigation for each significant event
-        agent = InvestigationAgent()
+        # Start investigation for each significant event (using v3 Claim-Level Agent)
+        agent = ClaimVerificationAgent()
         for i, event in enumerate(events[:3]):  # Limit to 3 investigations per scan
             event_desc = event.get("description") or event.get("title", "Unknown event")
             category = event.get("category", "other")
@@ -88,7 +88,7 @@ async def run_scheduled_scan():
 
             try:
                 # Add timeout to investigation (5 minutes max)
-                report = await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     agent.investigate(
                         event=event_desc,
                         category=category,
@@ -96,43 +96,57 @@ async def run_scheduled_scan():
                     timeout=300.0,  # 5 minutes
                 )
 
-                # Output the investigation report
-                print("\n" + "=" * 70)
-                print(f"📰 REPORT [{i+1}] - {category.upper()}")
-                print("=" * 70)
+                # v3: Output the generated article (AP Style)
+                article = result.get("article")
+                if article and article.get("full_text"):
+                    print("\n" + article["full_text"])
+                else:
+                    # Fallback: Show raw results
+                    print("\n" + "=" * 70)
+                    print(f"📰 ARTICLE [{i+1}] - {category.upper()}")
+                    print("=" * 70)
 
-                print(f"\n📝 SUMMARY: {report.event_summary}")
+                    # Claims extracted
+                    claims = result.get("claims", [])
+                    print(f"\n📋 CLAIMS EXTRACTED: {len(claims)}")
+                    for c in claims[:5]:
+                        print(f"  • {c.get('text', '')[:100]}")
 
-                if report.location:
-                    print(f"📍 LOCATION: {report.location}")
+                    # Verdicts
+                    supported = result.get("supported_claims", [])
+                    refuted = result.get("refuted_claims", [])
+                    unverified = result.get("unverifiable_claims", [])
 
-                if report.timeline:
-                    print(f"\n⏱️ TIMELINE:")
-                    for item in report.timeline[:5]:
-                        print(f"  • {item}")
+                    if supported:
+                        print(f"\n✅ SUPPORTED ({len(supported)}):")
+                        for v in supported[:3]:
+                            print(f"  • {v.get('claim_text', '')[:100]}")
+                            print(f"    Confidence: {v.get('confidence', 0)}/5")
 
-                if report.verified_facts:
-                    print(f"\n✅ VERIFIED FACTS ({len(report.verified_facts)}):")
-                    for fact in report.verified_facts[:5]:
-                        claim = fact.get("claim", str(fact))
-                        confidence = fact.get("confidence", "N/A")
-                        print(f"  • {claim[:100]}")
-                        print(f"    Confidence: {confidence}")
+                    if refuted:
+                        print(f"\n❌ REFUTED ({len(refuted)}):")
+                        for v in refuted[:3]:
+                            print(f"  • {v.get('claim_text', '')[:100]}")
+                            print(f"    Reason: {v.get('reasoning', '')[:100]}")
 
-                if report.unverified_claims:
-                    print(f"\n⚠️ UNVERIFIED ({len(report.unverified_claims)}):")
-                    for claim in report.unverified_claims[:3]:
-                        print(f"  • {claim[:100]}")
+                    if unverified:
+                        print(f"\n❓ UNVERIFIED ({len(unverified)}):")
+                        for v in unverified[:3]:
+                            print(f"  • {v.get('claim_text', '')[:100]}")
 
-                if report.sources:
-                    print(f"\n📰 SOURCES ({len(report.sources)}):")
-                    for source in report.sources[:10]:
-                        print(f"  • {source}")
+                    reliability = result.get("overall_reliability", 0)
+                    print(f"\n📊 RELIABILITY: {reliability:.1%}")
 
-                if report.media:
-                    print(f"\n🎬 MEDIA: {len(report.media)} items")
+                    sources = result.get("evidence_docs", [])
+                    print(f"\n📰 SOURCES ({len(sources)}):")
+                    seen = set()
+                    for s in sources[:10]:
+                        name = s.get("source_name", s.get("source", "unknown"))
+                        if name not in seen:
+                            seen.add(name)
+                            print(f"  • {name}")
 
-                print("\n" + "=" * 70 + "\n")
+                    print("\n" + "=" * 70 + "\n")
 
             except asyncio.TimeoutError:
                 print(f"[SCANNER] [{i+1}] Investigation timed out after 5 minutes")

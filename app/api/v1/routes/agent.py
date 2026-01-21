@@ -14,8 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.agent import InvestigationAgent, NewsScanner
-from app.agent.graph import EventCategory, InvestigationReport
+from app.agent import ClaimVerificationAgent, NewsScanner
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -85,24 +84,24 @@ async def start_investigation(request: InvestigateRequest):
     # Run investigation in background using asyncio.create_task
     async def run_investigation():
         try:
-            print(f"[AGENT] Starting investigation: {investigation_id}")
-            agent = InvestigationAgent()
-            report = await agent.investigate(
+            logger.info(f"Starting investigation: {investigation_id}")
+            agent = ClaimVerificationAgent()
+            result = await agent.investigate(
                 event=request.topic,
                 category=request.category,
             )
             _investigations[investigation_id]["status"] = "completed"
-            _investigations[investigation_id]["report"] = report.model_dump()
+            _investigations[investigation_id]["result"] = result  # v3 returns dict
             _investigations[investigation_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
-            print(f"[AGENT] Investigation completed: {investigation_id}")
+            logger.info(f"Investigation completed: {investigation_id}")
         except Exception as e:
-            print(f"[AGENT] Investigation failed: {e}")
+            logger.error(f"Investigation failed: {e}")
             _investigations[investigation_id]["status"] = "failed"
             _investigations[investigation_id]["error"] = str(e)
 
     # Create async task (runs in background)
     task = asyncio.create_task(run_investigation())
-    print(f"[AGENT] Task created: {task}")
+    logger.info(f"Task created: {task}")
 
     return InvestigateResponse(
         investigation_id=investigation_id,
