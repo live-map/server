@@ -31,7 +31,7 @@ class AgentSettings(BaseSettings):
 
     # GDELT (뉴스) - 인증 불필요
     gdelt_enabled: bool = True
-    gdelt_timespan: str = "15m"  # 검색 기간 (15분, GDELT 업데이트 주기와 동일)
+    gdelt_timespan: str = "2h"  # 검색 기간 (2시간, 프로덕션용)
 
     # X/Twitter (Twikit) - 개인계정 필요
     twitter_enabled: bool = False
@@ -51,7 +51,7 @@ class AgentSettings(BaseSettings):
     # ===========================================
     # 스캐너 설정
     # ===========================================
-    scan_interval_minutes: int = 1  # 테스트용 1분 간격 (원래: 15분)
+    scan_interval_minutes: int = 60  # 프로덕션용 60분 간격
     max_news_per_scan: int = 100
 
     # ===========================================
@@ -61,7 +61,7 @@ class AgentSettings(BaseSettings):
     # 30: 중간 키워드 1개 + 일반 소스 + 영어 + 기본
     # 40: 중간 키워드 2개 또는 높은 키워드 1개
     # 60: 높은 키워드 여러 개 또는 신뢰 소스
-    min_publish_score: int = 30  # 발행 고려 최소 점수 (더 많은 뉴스 포함)
+    min_publish_score: int = 40  # 발행 최소 점수 (프로덕션: 품질 우선)
     min_investigate_score: int = 50  # 조사 시작 최소 점수
 
     # 점수 계산 방식
