@@ -3,10 +3,12 @@ Claim-Level Verification Agent v3.0 (2026 SOTA)
 
 Full pipeline for claim-level fact verification:
 1. CLAIM EXTRACTION - VeriScore style atomic claim extraction
+1.5. DEDUPLICATION CHECK - Hash + semantic deduplication (NEW)
 2. EVIDENCE RETRIEVAL - Document-level search with deduplication
 3. QA-BASED VERIFICATION - Per-claim LLM verification
 4. VERDICT AGGREGATION - Statistics and reliability scoring
-5. ARTICLE SYNTHESIS - AP Style article generation
+4.5. UPDATE DETECTION - Check for significant new information (NEW)
+5. ARTICLE SYNTHESIS - Bilingual AP Style article generation (EN + KO)
 
 Based on:
 - AIC CTU (FEVER 8 Winner): Simple RAG, AVeriTeC 0.50
@@ -40,6 +42,7 @@ from tenacity import (
 )
 
 from .article_generator import ArticleGenerator, GeneratedArticle
+from .bilingual_article_generator import BilingualArticleGenerator, BilingualArticle
 from .claim_extraction import ClaimExtractor, ExtractedClaim
 from .config import agent_settings
 from .qa_verifier import ClaimVerdict, QAVerifier, VerificationResult
@@ -94,6 +97,12 @@ class ClaimVerificationState(BaseModel):
     # === STAGE 1: EXTRACTION ===
     claims: list[dict] = Field(default_factory=list)
 
+    # === STAGE 1.5: DEDUPLICATION (NEW) ===
+    is_duplicate: bool = False
+    matched_event_id: int | None = None
+    similarity_score: float | None = None
+    skip_reason: str | None = None
+
     # === STAGE 2: EVIDENCE ===
     evidence_docs: list[dict] = Field(default_factory=list)
     seen_url_hashes: set[str] = Field(default_factory=set)
@@ -107,8 +116,15 @@ class ClaimVerificationState(BaseModel):
     unverifiable_claims: list[dict] = Field(default_factory=list)
     overall_reliability: float = 0.0
 
+    # === STAGE 4.5: UPDATE DETECTION (NEW) ===
+    is_update: bool = False
+    update_type: str | None = None
+    update_reason: str | None = None
+
     # === STAGE 5: SYNTHESIS ===
     article: dict | None = None
+    article_en: dict | None = None  # English article
+    article_ko: dict | None = None  # Korean article
 
     # === METADATA ===
     current_stage: str = "init"
@@ -165,6 +181,11 @@ class ClaimVerificationAgent:
         )
         self.article_generator = ArticleGenerator(
             llm_timeout=self.config.LLM_TIMEOUT
+        )
+
+        # Bilingual article generator (NEW)
+        self.bilingual_generator = BilingualArticleGenerator(
+            llm_timeout=self.config.LLM_TIMEOUT + 30.0  # Extra time for bilingual
         )
 
         # Build graph
@@ -508,12 +529,21 @@ class ClaimVerificationAgent:
         }
 
     # =========================================================================
-    # Stage 5: Article Synthesis
+    # Stage 5: Article Synthesis (Bilingual)
     # =========================================================================
 
     async def _synthesize_article_node(self, state: dict) -> dict:
-        """Generate AP Style article from verified claims."""
-        logger.info("Stage 5: Synthesizing article")
+        """Generate bilingual AP Style article from verified claims."""
+        logger.info("Stage 5: Synthesizing bilingual article (EN + KO)")
+
+        # Check if marked as duplicate - skip synthesis
+        if state.get("is_duplicate"):
+            logger.info("Skipping synthesis for duplicate event")
+            return {
+                **state,
+                "article": None,
+                "current_stage": "done",
+            }
 
         # Reconstruct VerificationResult
         verdicts = state.get("verdicts", [])
@@ -536,28 +566,79 @@ class ClaimVerificationAgent:
         })
 
         try:
-            article = await self.article_generator.generate(
-                event_summary=state.get("original_text", "")[:500],
-                verification_result=verification_result,
-                sources=sources,
-            )
+            # Generate bilingual article if Korean is enabled
+            if agent_settings.generate_korean:
+                bilingual_article = await self.bilingual_generator.generate(
+                    event_summary=state.get("original_text", "")[:500],
+                    verification_result=verification_result,
+                    sources=sources,
+                )
 
-            logger.info(
-                "Article generated",
-                extra={"word_count": article.metadata.word_count},
-            )
+                # Convert to dicts for storage
+                article_en = {
+                    "headline": bilingual_article.headline_en,
+                    "lead": bilingual_article.lead_en,
+                    "nut_graph": bilingual_article.nut_graph_en,
+                    "body": bilingual_article.body_en,
+                    "full_text": bilingual_article.full_text_en,
+                }
+                article_ko = {
+                    "headline": bilingual_article.headline_ko,
+                    "lead": bilingual_article.lead_ko,
+                    "nut_graph": bilingual_article.nut_graph_ko,
+                    "body": bilingual_article.body_ko,
+                    "full_text": bilingual_article.full_text_ko,
+                }
 
-            return {
-                **state,
-                "article": article.model_dump(),
-                "current_stage": "done",
-            }
+                logger.info(
+                    "Bilingual article generated",
+                    extra={
+                        "word_count_en": bilingual_article.word_count_en,
+                        "word_count_ko": bilingual_article.word_count_ko,
+                    },
+                )
+
+                return {
+                    **state,
+                    "article": bilingual_article.model_dump(),
+                    "article_en": article_en,
+                    "article_ko": article_ko,
+                    "current_stage": "done",
+                }
+            else:
+                # Fallback to English-only article
+                article = await self.article_generator.generate(
+                    event_summary=state.get("original_text", "")[:500],
+                    verification_result=verification_result,
+                    sources=sources,
+                )
+
+                logger.info(
+                    "Article generated (English only)",
+                    extra={"word_count": article.metadata.word_count},
+                )
+
+                return {
+                    **state,
+                    "article": article.model_dump(),
+                    "article_en": {
+                        "headline": article.headline,
+                        "lead": article.lead,
+                        "nut_graph": article.nut_graph,
+                        "body": article.body,
+                        "full_text": article.full_text,
+                    },
+                    "article_ko": None,
+                    "current_stage": "done",
+                }
 
         except Exception as e:
             logger.error(f"Article generation failed: {e}")
             return {
                 **state,
                 "article": None,
+                "article_en": None,
+                "article_ko": None,
                 "errors": state.get("errors", []) + [f"Synthesis: {e}"],
                 "current_stage": "done",
             }

@@ -21,6 +21,12 @@ from .claim_extraction import ClaimExtractor, ExtractedClaim, extract_claims
 from .qa_verifier import QAVerifier, ClaimVerdict, VerificationResult, verify_claim
 from .article_generator import ArticleGenerator, GeneratedArticle, generate_article
 
+# Bilingual article generation
+from .bilingual_article_generator import BilingualArticleGenerator, BilingualArticle, generate_bilingual_article
+
+# Deduplication
+from .deduplication import EventMatcher, MatchResult, MatchType, UpdateDetector, UpdateType, UpdateCheckResult
+
 __all__ = [
     # Primary Agent (v3)
     "ClaimVerificationAgent",
@@ -40,4 +46,15 @@ __all__ = [
     "ArticleGenerator",
     "GeneratedArticle",
     "generate_article",
+    # Bilingual article generation
+    "BilingualArticleGenerator",
+    "BilingualArticle",
+    "generate_bilingual_article",
+    # Deduplication
+    "EventMatcher",
+    "MatchResult",
+    "MatchType",
+    "UpdateDetector",
+    "UpdateType",
+    "UpdateCheckResult",
 ]

@@ -31,7 +31,7 @@ class AgentSettings(BaseSettings):
 
     # GDELT (뉴스) - 인증 불필요
     gdelt_enabled: bool = True
-    gdelt_timespan: str = "24h"  # 검색 기간 (24시간 = 하루)
+    gdelt_timespan: str = "15m"  # 검색 기간 (15분, GDELT 업데이트 주기와 동일)
 
     # X/Twitter (Twikit) - 개인계정 필요
     twitter_enabled: bool = False
@@ -51,8 +51,8 @@ class AgentSettings(BaseSettings):
     # ===========================================
     # 스캐너 설정
     # ===========================================
-    scan_interval_minutes: int = 15
-    max_news_per_scan: int = 50
+    scan_interval_minutes: int = 1  # 테스트용 1분 간격 (원래: 15분)
+    max_news_per_scan: int = 100
 
     # ===========================================
     # 유의성 점수 설정 (Significance Scoring)
@@ -78,6 +78,20 @@ class AgentSettings(BaseSettings):
     max_investigation_iterations: int = 3
     min_sources_for_verification: int = 2
     max_tokens_per_investigation: int = 4000
+
+    # ===========================================
+    # 중복 제거 설정 (Deduplication)
+    # ===========================================
+    dedup_enabled: bool = True
+    dedup_similarity_threshold: float = 0.85   # 잠재적 일치 (LLM 검증 필요)
+    dedup_duplicate_threshold: float = 0.95    # 확실한 중복 (스킵)
+    dedup_time_window_days: int = 7            # 조회 기간 (일)
+
+    # ===========================================
+    # 이중 언어 설정 (Bilingual)
+    # ===========================================
+    generate_korean: bool = True
+    korean_style: str = "formal"  # 합니다체 (formal) or 해요체 (informal)
 
     # ===========================================
     # LLM 타임아웃 및 동시성 설정

@@ -32,7 +32,7 @@ class GDELTTrigger(BaseTrigger):
         self,
         keywords: list[str] | None = None,
         timespan: str = "1h",
-        max_results: int = 50,
+        max_results: int = 100,
     ):
         super().__init__(keywords)
         self.timespan = timespan
