@@ -128,7 +128,7 @@ class AgentSettings(BaseSettings):
     human_interest_pattern_threshold: int = 3  # 인물 특집/미담 기사 거부
 
     # Gate 2: Specificity (TODO: 다국어 패턴 추가 필요)
-    specificity_enabled: bool = False  # 임시 비활성화 - 영어 패턴만 인식
+    specificity_enabled: bool = True   # Specificity Gate 활성화
     min_specificity_score: float = 0.4  # 0-1, 이 점수 미만이면 거부
 
     # Gate 3: Evidence Sufficiency
