@@ -10,6 +10,7 @@ GDELT 트리거 - 뉴스 기반 글로벌 검색
 
 import hashlib
 import logging
+import time
 from datetime import datetime
 
 import httpx
@@ -19,6 +20,9 @@ from .base import BaseTrigger, TriggerEvent, TriggerSource
 logger = logging.getLogger(__name__)
 
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
+
+# Time-based hash expiry (24 hours)
+HASH_EXPIRY_SECONDS = 86400
 
 
 class GDELTTrigger(BaseTrigger):
@@ -37,7 +41,8 @@ class GDELTTrigger(BaseTrigger):
         super().__init__(keywords)
         self.timespan = timespan
         self.max_results = max_results
-        self.seen_hashes: set[str] = set()
+        # Time-based deduplication: hash -> timestamp
+        self.seen_hashes: dict[str, float] = {}
 
     @property
     def source_type(self) -> TriggerSource:
@@ -90,15 +95,17 @@ class GDELTTrigger(BaseTrigger):
                 data = response.json()
                 articles = data.get("articles", [])
 
+                current_time = time.time()
+
                 for art in articles:
-                    # 중복 체크
+                    # 중복 체크 (time-based)
                     content_hash = hashlib.md5(
                         f"{art.get('title', '')}:{art.get('url', '')}".encode()
                     ).hexdigest()
 
                     if content_hash in self.seen_hashes:
                         continue
-                    self.seen_hashes.add(content_hash)
+                    self.seen_hashes[content_hash] = current_time
 
                     title = art.get("title", "")
 
@@ -119,11 +126,10 @@ class GDELTTrigger(BaseTrigger):
                         raw_data=art,
                     ))
 
-                # 메모리 관리
-                if len(self.seen_hashes) > 10000:
-                    self.seen_hashes.clear()
+                # 메모리 관리: 만료된 해시 정리
+                self._cleanup_expired_hashes(current_time)
 
-                logger.info(f"GDELT scan: {len(articles)} articles, {len(events)} matched")
+                logger.info(f"GDELT scan: {len(articles)} articles, {len(events)} new")
 
         except httpx.TimeoutException:
             logger.warning("GDELT API timeout")
@@ -131,6 +137,22 @@ class GDELTTrigger(BaseTrigger):
             logger.error(f"GDELT scan error: {e}")
 
         return events
+
+    def _cleanup_expired_hashes(self, current_time: float) -> None:
+        """Remove expired hashes older than HASH_EXPIRY_SECONDS."""
+        expired_hashes = [
+            h for h, ts in self.seen_hashes.items()
+            if current_time - ts > HASH_EXPIRY_SECONDS
+        ]
+
+        for h in expired_hashes:
+            del self.seen_hashes[h]
+
+        if expired_hashes:
+            logger.debug(
+                f"Cleaned up {len(expired_hashes)} expired hashes, "
+                f"{len(self.seen_hashes)} remaining"
+            )
 
     async def close(self):
         """정리 (GDELT는 특별한 정리 불필요)"""
