@@ -91,6 +91,12 @@ class Article(Base):
     is_ai_generated: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_human_reviewed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # === Correction Fields ===
+    is_corrected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    correction_note: Mapped[str | None] = mapped_column(Text, nullable=True)  # Reason for correction
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    original_content_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON backup
+
     # === Timestamps ===
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
