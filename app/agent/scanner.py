@@ -30,6 +30,7 @@ from .significance import (
     SignificanceScore,
     SignificanceConfig,
 )
+from .specificity import check_specificity
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,34 @@ class MultiSourceScanner:
                 f"Highest score: {max(s.total_score for _, s, _ in scored_events) if scored_events else 0}"
             )
             return []
+
+        # 2.5. Specificity Gate (구체성 필터)
+        if agent_settings.specificity_enabled:
+            specificity_passed = []
+            for e, s, t in filtered:
+                text = f"{e['title']} {e.get('content', '')}"
+                spec_result = check_specificity(text, agent_settings.specificity_min_score)
+
+                if spec_result.is_specific:
+                    specificity_passed.append((e, s, t))
+                else:
+                    logger.info(
+                        f"[SPECIFICITY REJECTED] score={spec_result.score:.2f} "
+                        f"| date={spec_result.has_recent_date} "
+                        f"| location={spec_result.has_specific_location} "
+                        f"| numbers={spec_result.has_specific_numbers} "
+                        f"| {e['title'][:50]}..."
+                    )
+
+            logger.info(
+                f"Specificity filter: {len(specificity_passed)}/{len(filtered)} events "
+                f"passed (min_score={agent_settings.specificity_min_score})"
+            )
+            filtered = specificity_passed
+
+            if not filtered:
+                logger.warning("All events filtered out by specificity gate")
+                return []
 
         # 3. LLM 검증 (선택적)
         if agent_settings.use_llm_scoring and self.llm:
