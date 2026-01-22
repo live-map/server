@@ -1,10 +1,10 @@
 """
-에이전트 설정 - 다중 트리거 시스템
+에이전트 설정 - 멀티소스 트리거 시스템
 
-트리거 소스:
-- GDELT: 뉴스 (무료, 15분 딜레이)
-- X/Twitter: 실시간 (Twikit, 개인계정)
-- Telegram: 실시간 (Telethon, 가입채널)
+트리거 소스 (Tier 기반):
+- Tier-1 (0.90-0.99): GDELT, USGS, NOAA, EMSC
+- Tier-2 (0.75-0.85): Currents API, World News API, ACLED
+- Tier-3 (0.30-0.40): Reddit, Bluesky, Telegram, Google Trends
 
 LLM:
 - GPT-4o-mini 기반 (입력 $0.15/1M, 출력 $0.60/1M)
@@ -50,9 +50,53 @@ class AgentSettings(BaseSettings):
     telegram_channels: str = ""  # 콤마 구분 채널 목록
 
     # ===========================================
+    # 멀티소스 트리거 설정 (Phase 1-4)
+    # ===========================================
+
+    # GDELT Anomaly Detection
+    gdelt_anomaly_enabled: bool = True
+    gdelt_use_gkg_themes: bool = True
+    gdelt_tone_threshold: float = -5.0  # Goldstein proxy
+
+    # Social Detection (Tier-3)
+    reddit_enabled: bool = True
+    reddit_subreddits: str = "worldnews,news,UkrainianConflict,geopolitics"
+    reddit_min_score: int = 50
+
+    bluesky_enabled: bool = True
+    bluesky_min_likes: int = 10
+
+    google_trends_enabled: bool = True
+    google_trends_geo: str = "US"
+
+    # News APIs (Tier-2)
+    currents_enabled: bool = False
+    currents_api_key: str = ""
+
+    worldnews_enabled: bool = False
+    worldnews_api_key: str = ""
+
+    # Specialized APIs (Tier-1/2)
+    usgs_enabled: bool = True
+    usgs_min_magnitude: float = 5.0
+
+    noaa_enabled: bool = True
+    noaa_severity: str = "Extreme,Severe"
+
+    acled_enabled: bool = False
+    acled_api_key: str = ""
+    acled_email: str = ""
+
+    # ===========================================
+    # 멀티소스 신뢰도 설정
+    # ===========================================
+    min_confidence_score: float = 0.70  # 발행 최소 신뢰도
+    cross_source_similarity_threshold: float = 0.70  # 소스간 매칭 임계값
+
+    # ===========================================
     # 스캐너 설정
     # ===========================================
-    scan_interval_minutes: int = 60  # 프로덕션용 60분 간격
+    scan_interval_minutes: int = 15  # 멀티소스용 15분 간격
     max_news_per_scan: int = 100
 
     # ===========================================
