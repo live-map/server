@@ -175,8 +175,8 @@ class GDELTAnomalyTrigger(BaseTrigger):
         """Scan GKG API for crisis-related themes"""
         events = []
 
-        # Query for crisis themes
-        theme_query = " OR ".join(f"theme:{theme}" for theme in CRISIS_THEMES[:10])
+        # Query for crisis themes (wrap OR terms in parentheses per GDELT API requirement)
+        theme_query = "(" + " OR ".join(f"theme:{theme}" for theme in CRISIS_THEMES[:5]) + ")"
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -230,8 +230,8 @@ class GDELTAnomalyTrigger(BaseTrigger):
         """Scan for high-intensity conflicts using Goldstein score"""
         events = []
 
-        # Query for conflict events with low Goldstein scores
-        conflict_query = " OR ".join(self.keywords[:10])
+        # Query for conflict events (wrap OR terms in parentheses per GDELT API requirement)
+        conflict_query = "(" + " OR ".join(self.keywords[:10]) + ")"
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
