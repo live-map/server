@@ -1,16 +1,16 @@
 """
 다중 소스 뉴스 스캐너
 
-트리거 소스:
-1. GDELT - 뉴스 (무료, 100,000+ 소스)
-2. X/Twitter - 실시간 (Twikit, 개인계정)
-3. Telegram - 실시간 (Telethon, 가입채널)
+트리거 소스 (Tier 기반):
+- Tier-1 (0.90-0.99): GDELT, GDELT Anomaly, USGS, NOAA
+- Tier-2 (0.75-0.85): Currents API, World News API, ACLED
+- Tier-3 (0.30-0.40): Reddit, Bluesky, Telegram, Google Trends
 
 특징:
-- 소스 하드코딩 없음
+- 멀티소스 교차 검증
+- Two-Source Rule (저널리즘 표준)
 - 키워드 기반 글로벌 검색
-- 에이전트가 소스를 결정하지 않음 - 모든 소스에서 자동 수집
-- 결정론적 유의성 점수 + LLM 검증 (v2)
+- 결정론적 유의성 점수 + LLM 검증
 """
 
 import asyncio
@@ -40,7 +40,9 @@ class MultiSourceScanner:
     """
     다중 소스 스캐너
 
-    GDELT + X/Twitter + Telegram에서 동시 모니터링
+    Tier-1: GDELT, GDELT Anomaly, USGS, NOAA
+    Tier-2: Currents API, World News API, ACLED
+    Tier-3: Reddit, Bluesky, Telegram, Google Trends
     """
 
     def __init__(self, on_event_detected: Callable | None = None):
@@ -63,7 +65,7 @@ class MultiSourceScanner:
             self.llm = None
 
     def _create_trigger_manager(self) -> TriggerManager:
-        """설정 기반 트리거 매니저 생성"""
+        """설정 기반 트리거 매니저 생성 (멀티소스)"""
         # NOTE: LLM API 키를 전달하지 않음 - TriggerManager의 LLM 분류 비활성화
         # 대신 Scanner의 significance scoring + LLM 검증 사용
         manager = TriggerManager(
@@ -71,10 +73,78 @@ class MultiSourceScanner:
             llm_model=agent_settings.llm_model,
         )
 
-        # GDELT (기본 활성화)
+        # ============================================
+        # Tier-1 Sources (0.90-0.99)
+        # ============================================
+
+        # GDELT DOC (기본 활성화)
         if agent_settings.gdelt_enabled:
             manager.add_gdelt(timespan=agent_settings.gdelt_timespan)
-            logger.info("GDELT trigger added")
+            logger.info("GDELT DOC trigger added (Tier-1)")
+
+        # GDELT Anomaly Detection
+        if agent_settings.gdelt_anomaly_enabled:
+            manager.add_gdelt_anomaly(
+                timespan="2h",  # GDELT requires minimum ~1h for GKG queries
+                goldstein_threshold=agent_settings.gdelt_tone_threshold,
+            )
+            logger.info("GDELT Anomaly trigger added (Tier-1)")
+
+        # USGS Earthquake API
+        if agent_settings.usgs_enabled:
+            manager.add_usgs(min_magnitude=agent_settings.usgs_min_magnitude)
+            logger.info(f"USGS trigger added (Tier-1, M{agent_settings.usgs_min_magnitude}+)")
+
+        # NOAA Weather Alerts
+        if agent_settings.noaa_enabled:
+            severity = agent_settings.noaa_severity.split(",") if agent_settings.noaa_severity else None
+            manager.add_noaa(severity=severity)
+            logger.info("NOAA trigger added (Tier-1)")
+
+        # ============================================
+        # Tier-2 Sources (0.75-0.85)
+        # ============================================
+
+        # Currents API
+        if agent_settings.currents_enabled and agent_settings.currents_api_key:
+            manager.add_currents(api_key=agent_settings.currents_api_key)
+            logger.info("Currents API trigger added (Tier-2)")
+
+        # World News API
+        if agent_settings.worldnews_enabled and agent_settings.worldnews_api_key:
+            manager.add_worldnews(api_key=agent_settings.worldnews_api_key)
+            logger.info("World News API trigger added (Tier-2)")
+
+        # ACLED Conflict Data
+        if agent_settings.acled_enabled and agent_settings.acled_api_key:
+            manager.add_acled(
+                api_key=agent_settings.acled_api_key,
+                email=agent_settings.acled_email,
+            )
+            logger.info("ACLED trigger added (Tier-2)")
+
+        # ============================================
+        # Tier-3 Sources (0.30-0.40)
+        # ============================================
+
+        # Reddit
+        if agent_settings.reddit_enabled:
+            subreddits = agent_settings.reddit_subreddits.split(",") if agent_settings.reddit_subreddits else None
+            manager.add_reddit(
+                subreddits=subreddits,
+                min_score=agent_settings.reddit_min_score,
+            )
+            logger.info(f"Reddit trigger added (Tier-3, {len(subreddits) if subreddits else 'default'} subreddits)")
+
+        # Bluesky
+        if agent_settings.bluesky_enabled:
+            manager.add_bluesky(min_likes=agent_settings.bluesky_min_likes)
+            logger.info("Bluesky trigger added (Tier-3)")
+
+        # Google Trends
+        if agent_settings.google_trends_enabled:
+            manager.add_google_trends(geo=agent_settings.google_trends_geo)
+            logger.info("Google Trends trigger added (Tier-3)")
 
         # X/Twitter (설정 시 활성화)
         if agent_settings.twitter_enabled and agent_settings.twitter_username:
@@ -84,7 +154,7 @@ class MultiSourceScanner:
                 password=agent_settings.twitter_password,
                 cookies_path=agent_settings.twitter_cookies_path,
             )
-            logger.info("X/Twitter trigger added")
+            logger.info("X/Twitter trigger added (Tier-3)")
 
         # Telegram (설정 시 활성화)
         if agent_settings.telegram_enabled and agent_settings.telegram_api_id:
@@ -95,7 +165,7 @@ class MultiSourceScanner:
                 phone=agent_settings.telegram_phone,
                 channels=channels if channels else None,
             )
-            logger.info(f"Telegram trigger added ({len(channels) if channels else 'default'} channels)")
+            logger.info(f"Telegram trigger added (Tier-3, {len(channels) if channels else 'default'} channels)")
 
         return manager
 
@@ -415,10 +485,13 @@ class MultiSourceScanner:
         keywords: list[str] | None = None,
     ) -> list[dict]:
         """
-        API용 스캔 메서드
+        API용 스캔 메서드 (멀티소스)
 
         Args:
-            sources: 스캔할 소스 목록 (gdelt, twitter, telegram). None이면 활성화된 모든 소스.
+            sources: 스캔할 소스 목록. None이면 활성화된 모든 소스.
+                     Tier-1: gdelt, gdelt_anomaly, usgs, noaa
+                     Tier-2: currents, worldnews, acled
+                     Tier-3: reddit, bluesky, google_trends, twitter, telegram
             keywords: 필터링할 키워드. None이면 모든 이벤트.
 
         Returns:
@@ -457,9 +530,11 @@ NewsScanner = MultiSourceScanner
 async def run_scanner_test():
     """테스트: 다중 소스 스캐너 실행"""
     print("\n" + "=" * 70)
-    print("🔔 MULTI-SOURCE SCANNER TEST")
+    print("MULTI-SOURCE SCANNER TEST")
     print("=" * 70)
-    print("Sources: GDELT (news) + X/Twitter + Telegram")
+    print("Tier-1: GDELT, GDELT Anomaly, USGS, NOAA")
+    print("Tier-2: Currents, WorldNews, ACLED")
+    print("Tier-3: Reddit, Bluesky, Google Trends, Twitter, Telegram")
     print("=" * 70 + "\n")
 
     detected_events = []

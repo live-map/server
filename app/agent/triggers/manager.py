@@ -31,6 +31,17 @@ from .twitter import TwitterTrigger
 from .anomaly import AnomalyDetector, AnomalySignal
 from .clustering import SemanticClusterer, ClusteringSignal
 
+# Multi-source triggers (Phase 1-4)
+from .gdelt_anomaly import GDELTAnomalyTrigger
+from .reddit import RedditTrigger
+from .bluesky import BlueskyTrigger
+from .google_trends import GoogleTrendsTrigger
+from .currents import CurrentsTrigger
+from .worldnews import WorldNewsTrigger
+from .usgs import USGSTrigger
+from .noaa import NOAATrigger
+from .acled import ACLEDTrigger
+
 logger = logging.getLogger(__name__)
 
 
@@ -155,6 +166,128 @@ class TriggerManager:
             api_hash=api_hash,
             phone=phone,
             channels=channels,
+            keywords=keywords,
+        ))
+        return self
+
+    # ============================================
+    # Multi-Source Triggers (Phase 1-4)
+    # ============================================
+
+    def add_gdelt_anomaly(
+        self,
+        keywords: list[str] | None = None,
+        timespan: str = "15min",
+        goldstein_threshold: float = -5.0,
+    ) -> "TriggerManager":
+        """GDELT Anomaly Detection 트리거 추가 (Tier-1)"""
+        self.add_trigger(GDELTAnomalyTrigger(
+            keywords=keywords,
+            timespan=timespan,
+            goldstein_threshold=goldstein_threshold,
+        ))
+        return self
+
+    def add_reddit(
+        self,
+        subreddits: list[str] | None = None,
+        min_score: int = 50,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """Reddit 트리거 추가 (Tier-3)"""
+        self.add_trigger(RedditTrigger(
+            subreddits=subreddits,
+            min_score=min_score,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_bluesky(
+        self,
+        min_likes: int = 10,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """Bluesky 트리거 추가 (Tier-3)"""
+        self.add_trigger(BlueskyTrigger(
+            min_likes=min_likes,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_google_trends(
+        self,
+        geo: str = "US",
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """Google Trends 트리거 추가 (Tier-3)"""
+        self.add_trigger(GoogleTrendsTrigger(
+            geo=geo,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_currents(
+        self,
+        api_key: str,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """Currents API 트리거 추가 (Tier-2)"""
+        self.add_trigger(CurrentsTrigger(
+            api_key=api_key,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_worldnews(
+        self,
+        api_key: str,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """World News API 트리거 추가 (Tier-2)"""
+        self.add_trigger(WorldNewsTrigger(
+            api_key=api_key,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_usgs(
+        self,
+        min_magnitude: float = 5.0,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """USGS Earthquake 트리거 추가 (Tier-1)"""
+        self.add_trigger(USGSTrigger(
+            min_magnitude=min_magnitude,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_noaa(
+        self,
+        severity: list[str] | None = None,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """NOAA Weather 트리거 추가 (Tier-1)"""
+        self.add_trigger(NOAATrigger(
+            severity=severity,
+            keywords=keywords,
+        ))
+        return self
+
+    def add_acled(
+        self,
+        api_key: str,
+        email: str,
+        event_types: list[str] | None = None,
+        min_fatalities: int = 0,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """ACLED Conflict 트리거 추가 (Tier-2)"""
+        self.add_trigger(ACLEDTrigger(
+            api_key=api_key,
+            email=email,
+            event_types=event_types,
+            min_fatalities=min_fatalities,
             keywords=keywords,
         ))
         return self
