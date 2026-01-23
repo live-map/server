@@ -12,7 +12,8 @@ Welcome to the LiveMap backend documentation. This directory contains comprehens
 ### System Design
 - **[Methodology](METHODOLOGY.md)** - Core methodology and principles
 - **[Scanner Pipeline](SCANNER_PIPELINE.md)** - 7-stage pipeline architecture
-- **[Event Verification](EVENT_VERIFICATION.md)** - Gate 0 hybrid verification
+- **[Event Verification](EVENT_VERIFICATION.md)** - Gate 0 3-stage hybrid verification
+- **[Zero-shot Classification](ZERO_SHOT_CLASSIFICATION.md)** - Stage 2 ML-based event classification
 - **[International Affairs Focus](INTERNATIONAL_AFFAIRS_FOCUS.md)** - Category definitions
 
 ### Architecture Decisions (ADRs)
@@ -45,7 +46,8 @@ docs/
 ├── CONFIG_REFERENCE.md         # Configuration options
 ├── METHODOLOGY.md              # Core methodology
 ├── SCANNER_PIPELINE.md         # Pipeline architecture
-├── EVENT_VERIFICATION.md       # Gate 0 verification
+├── EVENT_VERIFICATION.md       # Gate 0 3-stage verification
+├── ZERO_SHOT_CLASSIFICATION.md # Stage 2 ML classification
 ├── INTERNATIONAL_AFFAIRS_FOCUS.md  # Category focus
 ├── CODE.md                     # Code organization
 ├── adr/                        # Architecture Decision Records
@@ -95,10 +97,18 @@ docs/
 
 | Gate | Purpose | Method |
 |------|---------|--------|
-| Gate 0 | Real event? | Hybrid (rules + LLM) |
+| Gate 0 | Real event? | 3-stage hybrid (Rules → Zero-shot → LLM) |
 | Gate 1 | Newsworthy? | Pattern matching |
 | Gate 2 | Specific? | Pattern matching |
 | Gate 3 | Evidence? | Claim verification |
+
+#### Gate 0: 3-Stage Pipeline
+
+| Stage | Method | Cost | Filter Rate |
+|-------|--------|------|-------------|
+| Stage 1 | Rule-based patterns | $0 | ~70% |
+| Stage 2 | Zero-shot (BART-MNLI) | $0 | ~70% of remaining |
+| Stage 3 | LLM verification | $0.001/event | Edge cases only |
 
 ## Contributing to Documentation
 

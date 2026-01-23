@@ -280,13 +280,15 @@ Tier-1 정부 소스(USGS, NOAA)는 **Two-Source Rule 면제**:
 
 ---
 
-## Stage 3.5: 이벤트 검증 (Gate 0) - 신규
+## Stage 3.5: 이벤트 검증 (Gate 0) - 3단계 하이브리드
 
 ### 3.5.1 개요
 
 키워드 매칭으로 수집된 콘텐츠 중 **실제 이벤트**만 통과시킵니다.
 
 **파일**: `app/agent/event_verifier.py`
+
+**참고 문서**: [Zero-shot Classification](./ZERO_SHOT_CLASSIFICATION.md), [Event Verification](./EVENT_VERIFICATION.md)
 
 ### 3.5.2 문제 정의
 
@@ -299,20 +301,26 @@ Tier-1 정부 소스(USGS, NOAA)는 **Two-Source Rule 면제**:
 | "Call of Duty review" | war | X 게임 |
 | "In 1945, the war ended" | war | X 역사 |
 
-### 3.5.3 하이브리드 솔루션
+### 3.5.3 3단계 하이브리드 솔루션
 
 ```
 수집된 이벤트 (168개)
     ↓
-[Stage 1: 규칙 기반 필터]
+[Stage 1: 규칙 기반 필터] - $0, ~1ms
 - NOT_EVENT_PATTERNS 매칭
 - 영화/게임/역사/스포츠 제거
+- 다국어 스포츠 패턴 (한/아/중)
     ↓ (~50개 통과, 70% 제거)
-[Stage 2: LLM 검증]
-- "실제 발생한 이벤트인가?"
-- YES/NO + 사유
-    ↓ (~35개 통과)
-다음 단계로
+[Stage 2: Zero-shot 분류] - $0, ~50ms
+- BART-large-MNLI 로컬 모델
+- 확신도 ≥ 0.8 → 바로 결정
+- 확신도 < 0.8 → Stage 3으로
+    ↓ (~40개 통과 또는 LLM 전달)
+[Stage 3: LLM 검증] - $0.001/건, ~300ms
+- Edge cases만 처리
+- PASS/REJECT + REASON
+    ↓
+검증된 이벤트 (~35개)
 ```
 
 ### 3.5.4 Stage 1: 규칙 기반 필터
@@ -329,8 +337,12 @@ NOT_EVENT_PATTERNS = [
     r"\b(if .* would|could potentially|might happen|hypothetically)\b",
     # 리뷰/의견
     r"\b(review|opinion|editorial|analysis|commentary)\b",
-    # 스포츠
+    # 스포츠 (영어)
     r"\b(football|soccer|basketball|tennis|olympics|world cup)\b",
+    # 스포츠 (다국어)
+    r"(손흥민|토트넘|맨유|리버풀|챔피언스리그|월드컵)",  # 한국어
+    r"(كرة القدم|الدوري|ريال مدريد|برشلونة)",  # 아랍어
+    r"(足球|皇马|巴萨|世界杯|欧冠)",  # 중국어
 ]
 
 def is_likely_real_event(text: str) -> tuple[bool, str | None]:
@@ -341,7 +353,35 @@ def is_likely_real_event(text: str) -> tuple[bool, str | None]:
     return True, None
 ```
 
-### 3.5.5 Stage 2: LLM 검증
+### 3.5.5 Stage 2: Zero-shot 분류
+
+```python
+from app.agent.zero_shot_classifier import get_zero_shot_classifier
+
+# CAMEO/ACLED 기반 레이블
+INTERNATIONAL_AFFAIRS_LABELS = [
+    "military conflict", "diplomatic relations", "terrorism",
+    "humanitarian crisis", "international sanctions", "protest and civil unrest"
+]
+
+REJECT_LABELS = [
+    "sports", "entertainment", "local news", "opinion and analysis"
+]
+
+def classify_with_zero_shot(text: str) -> tuple[bool | None, float, str]:
+    classifier = get_zero_shot_classifier()
+    is_intl, confidence, label = classifier.classify(text)
+    return is_intl, confidence, label
+```
+
+**결정 기준**:
+| 분류 결과 | 확신도 | 결정 |
+|-----------|--------|------|
+| International | ≥ 0.8 | **PASS** 즉시 |
+| Rejection | ≥ 0.8 | **REJECT** 즉시 |
+| Any | < 0.8 | Stage 3 (LLM)으로 |
+
+### 3.5.6 Stage 3: LLM 검증
 
 ```python
 EVENT_VERIFY_PROMPT = """다음 텍스트가 실제로 발생한 국제 정세 이벤트를 보도하는지 판단하세요.
@@ -349,36 +389,43 @@ EVENT_VERIFY_PROMPT = """다음 텍스트가 실제로 발생한 국제 정세 �
 텍스트: {text}
 
 판단 기준:
-- YES: 실제 발생한 사건 (전쟁, 외교, 테러, 시위, 정상회담 등)
-- NO: 영화/게임/역사/추측/의견/스포츠/연예
+- PASS: 실제 발생한 사건 (전쟁, 외교, 테러, 시위, 정상회담 등)
+- REJECT: 영화/게임/역사/추측/의견/스포츠/연예
 
 답변 형식:
-VERDICT: YES 또는 NO
+VERDICT: PASS 또는 REJECT
 REASON: 한 줄 설명"""
 ```
 
-### 3.5.6 비용 분석
+### 3.5.7 비용 분석
 
-| 단계 | 처리량 | 비용 |
-|------|--------|------|
-| Stage 1 (규칙) | 168 → 50개 | $0 |
-| Stage 2 (LLM) | 50 → 35개 | $0.05/스캔 |
-| **하루 총 비용** | | **$4.80** |
+| 단계 | 처리량 | 비용 | 필터율 |
+|------|--------|------|--------|
+| Stage 1 (규칙) | 168 → 50개 | $0 | ~70% |
+| Stage 2 (Zero-shot) | 50 → 40개 | $0 | ~20% |
+| Stage 3 (LLM) | 15개 (불확실 케이스) | $0.015/스캔 | Edge cases |
+| **하루 총 비용** | | **$1.44** | |
 
-**비용 절감**: LLM만 사용 시 $16.13/일 → 하이브리드 사용 시 $4.80/일 (70% 절감)
+**비용 절감**:
+- LLM만 사용 시: $16.13/일
+- 2단계 하이브리드 (Rules + LLM): $4.80/일 (70% 절감)
+- 3단계 하이브리드 (Rules + Zero-shot + LLM): $1.44/일 (**91% 절감**)
 
-### 3.5.7 설정
+### 3.5.8 설정
 
 ```python
 # config.py
 event_verification_enabled: bool = True
-event_verification_use_llm: bool = True  # False면 규칙만 사용
+event_verification_use_zero_shot: bool = True  # Zero-shot 분류 활성화
+event_verification_use_llm: bool = True         # LLM 검증 활성화 (Stage 3)
 ```
 
 **로그 출력**:
 ```
 10:06:47 | INFO | [GATE0-REJECT] NOT_EVENT: matched pattern 'movie': New war movie...
-10:06:48 | INFO | [GATE0-REJECT] LLM: 가상 시나리오 (영화 줄거리)
+10:06:47 | INFO | [GATE0-REJECT] ZERO_SHOT: sports (0.92): World Cup final...
+10:06:48 | INFO | [GATE0-PASS] ZERO_SHOT: military conflict (0.89): Iran attacks...
+10:06:48 | INFO | [GATE0-REJECT] LLM_REJECT: 가상 시나리오 (영화 줄거리)
 10:06:48 | INFO | Event verification: 35/168 passed (79% filtered)
 ```
 
@@ -802,10 +849,11 @@ for event in events:
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Stage 3.5: Event Verification (Gate 0) - 신규                            │
-│ ─────────────────────────────────────────                               │
+│ Stage 3.5: Event Verification (Gate 0) - 3단계 하이브리드                │
+│ ─────────────────────────────────────────────────                       │
 │ Stage 1 (규칙): 영화/게임/역사/스포츠 패턴 제거 → 70% 필터                │
-│ Stage 2 (LLM): 실제 이벤트 여부 최종 판단                                 │
+│ Stage 2 (Zero-shot): BART-MNLI 분류, 확신도 ≥0.8 결정 → 20% 추가 필터    │
+│ Stage 3 (LLM): 불확실 케이스만 최종 판단                                  │
 │ → 109개 → 35개 통과 (74개 필터)                                          │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
@@ -858,6 +906,11 @@ class AgentSettings:
     # Confidence 설정
     min_confidence_score: float = 0.70
     cross_source_similarity_threshold: float = 0.70
+
+    # Event Verification (Gate 0) 설정
+    event_verification_enabled: bool = True
+    event_verification_use_zero_shot: bool = True  # Stage 2 Zero-shot
+    event_verification_use_llm: bool = True        # Stage 3 LLM
 
     # Gate 설정
     checkworthiness_enabled: bool = True

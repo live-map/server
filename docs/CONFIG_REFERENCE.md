@@ -100,10 +100,20 @@ All agent settings use the `AGENT_` prefix.
 
 ### Content Filtering Gates
 
+#### Gate 0: Event Verification (3-Stage Hybrid)
+
+See [Zero-shot Classification](./ZERO_SHOT_CLASSIFICATION.md) and [Event Verification](./EVENT_VERIFICATION.md) for details.
+
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `AGENT_EVENT_VERIFICATION_ENABLED` | bool | true | Enable Gate 0 |
-| `AGENT_EVENT_VERIFICATION_USE_LLM` | bool | true | Use LLM in Gate 0 |
+| `AGENT_EVENT_VERIFICATION_ENABLED` | bool | true | Enable Gate 0 (all stages) |
+| `AGENT_EVENT_VERIFICATION_USE_ZERO_SHOT` | bool | true | Stage 2: Zero-shot classification |
+| `AGENT_EVENT_VERIFICATION_USE_LLM` | bool | true | Stage 3: LLM verification |
+
+#### Gate 1-3: Content Quality
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
 | `AGENT_CHECKWORTHINESS_ENABLED` | bool | true | Enable Gate 1 |
 | `AGENT_ENTERTAINMENT_PATTERN_THRESHOLD` | int | 2 | Entertainment pattern count |
 | `AGENT_SPECULATION_PATTERN_THRESHOLD` | int | 2 | Speculation pattern count |
@@ -158,6 +168,8 @@ AGENT_REDDIT_SUBREDDITS=worldnews,news,UkrainianConflict
 AGENT_MIN_CONFIDENCE_SCORE=0.70
 AGENT_SCAN_INTERVAL_MINUTES=15
 AGENT_EVENT_VERIFICATION_ENABLED=true
+AGENT_EVENT_VERIFICATION_USE_ZERO_SHOT=true
+AGENT_EVENT_VERIFICATION_USE_LLM=true
 AGENT_FOCUS_INTERNATIONAL_AFFAIRS=true
 
 # Optional: Additional sources
