@@ -1,467 +1,315 @@
-# LiveMap News Verification Methodology
+# LiveMap 국제 정세 뉴스 에이전트 방법론
 
-> "Faster than anyone, verified, unbiased informational news"
-
-## Mission Statement
-
-LiveMap delivers **real-time, verified international news** by combining:
-- **Speed**: Social media monitoring detects breaking news 15-60 minutes before traditional outlets
-- **Accuracy**: Multi-source cross-verification eliminates rumors and fake news
-- **Objectivity**: Automated processing removes human editorial bias
+> "누구보다 빠르게, 검증된, 편향없는 국제 정세 뉴스"
 
 ---
 
-## Journalism Standards Compliance
+## 1. 미션
 
-### Two-Source Rule
+LiveMap은 **일반인이 세상 돌아가는 것을 파악할 수 있는** 국제 정세 뉴스를 제공합니다.
 
-The **Two-Source Rule** is a fundamental journalism principle requiring independent confirmation from at least two sources before publication.
+### 핵심 가치
+- **속도**: 소셜 미디어 모니터링으로 전통 언론보다 15-60분 빠른 감지
+- **정확도**: 다중 소스 교차 검증으로 루머와 가짜뉴스 필터링
+- **객관성**: 알고리즘 기반 처리로 편집 편향 제거
+- **집중**: 국제 정세(전쟁, 외교, 분쟁, 안보)에 특화
 
-| Source Type | Single Source Publishable? | Rationale |
-|-------------|---------------------------|-----------|
-| Government APIs (USGS, NOAA, EMSC) | Yes | Official authoritative data |
-| Tier-1 News (Reuters, AP, BBC via GDELT) | Yes (confidence ≥ 0.70) | Established editorial standards |
-| Tier-2 News (Currents, World News API) | No | Requires cross-verification |
-| Social Media (Reddit, Bluesky, Telegram) | No | Always requires news verification |
+### 현재 전략: 국제 정세 집중
 
-### IFCN (International Fact-Checking Network) 5 Principles
+품질과 리소스 효율을 위해 다음 카테고리에 집중합니다:
 
-We adhere to all five IFCN principles:
+| 카테고리 | 설명 | 예시 |
+|----------|------|------|
+| **war** | 전쟁, 무력 충돌, 침공 | 러시아-우크라이나, 가자 분쟁 |
+| **conflict** | 지역 분쟁, 교전 | 국경 충돌, 내전 |
+| **politics** | 정상회담, 외교, 제재 | 미중 정상회담, 대북 제재 |
+| **security** | 테러, 핵, 사이버 공격 | 이란 핵 협상, 북한 미사일 |
+| **military** | 군사 작전, 무기, 훈련 | NATO 확장, 군사 훈련 |
+| **terrorism** | 테러 공격, 테러 조직 | ISIS, 알카에다 관련 |
+| **diplomacy** | 외교 협상, 조약 | 평화 협정, 대사관 이슈 |
 
-| Principle | Our Implementation |
-|-----------|-------------------|
-| **1. Non-partisanship & Fairness** | All sources weighted equally by tier, no political bias |
-| **2. Source Transparency** | Every article lists all contributing sources |
-| **3. Funding Transparency** | No advertising or sponsorship influence |
-| **4. Methodology Transparency** | This document + open source code |
-| **5. Corrections Policy** | Immediate correction with notification on errors |
-
----
-
-## Source Credibility Matrix
-
-### Tier Classification
-
-Sources are classified into three tiers based on editorial standards, verification processes, and historical accuracy.
-
-#### Tier-1: Primary Sources (Confidence: 0.90-0.99)
-
-| Source | Type | Confidence | Justification |
-|--------|------|------------|---------------|
-| **USGS** | Government | 0.99 | Official US geological monitoring, peer-reviewed methodology |
-| **NOAA** | Government | 0.99 | Official US weather service, scientific standards |
-| **EMSC** | Government | 0.99 | European seismological authority |
-| **GDELT** (Reuters, AP, BBC) | News Aggregator | 0.90 | Global news monitoring, includes Tier-1 wire services |
-
-#### Tier-2: Secondary Sources (Confidence: 0.75-0.85)
-
-| Source | Type | Confidence | Justification |
-|--------|------|------------|---------------|
-| **ACLED** | Research | 0.85 | Academic research-based conflict data |
-| **Currents API** | News Aggregator | 0.75 | Aggregates multiple outlets, deduplication needed |
-| **World News API** | News Aggregator | 0.75 | Global news coverage, requires verification |
-
-#### Tier-3: Signal Sources (Confidence: 0.30-0.40)
-
-| Source | Type | Confidence | Justification |
-|--------|------|------------|---------------|
-| **Reddit** | Social | 0.40 | Early signals, community verification, needs confirmation |
-| **Bluesky** | Social | 0.40 | Real-time signals, decentralized, needs verification |
-| **Telegram** | Messaging | 0.35 | Critical for conflict zones, high noise ratio |
-| **Google Trends** | Analytics | 0.30 | Interest indicator, not direct news source |
+**제외 카테고리** (당분간):
+- `natural_disaster`: USGS/NOAA가 공식 채널로 충분
+- `economy`: 별도 전문성 필요
+- `society`: 범위가 넓어 품질 관리 어려움
 
 ---
 
-## Pipeline Architecture
+## 2. 저널리즘 원칙 준수
 
-### Overview
+### 2.1 Two-Source Rule (2개 소스 원칙)
+
+**정의**: 독립적인 2개 이상의 소스에서 확인되어야 보도
+
+| 소스 유형 | 단독 발행 가능? | 근거 |
+|-----------|----------------|------|
+| 정부 API (USGS, NOAA) | Yes | 공식 권위 있는 데이터 |
+| Tier-1 뉴스 (GDELT: Reuters, AP, BBC) | Yes (confidence ≥ 0.70) | 확립된 편집 기준 |
+| Tier-2 뉴스 (Currents, World News API) | No | 교차 검증 필요 |
+| 소셜 미디어 (Reddit, Telegram) | No | 항상 뉴스로 검증 필요 |
+
+### 2.2 IFCN (국제 팩트체킹 네트워크) 5대 원칙
+
+| 원칙 | 우리의 구현 |
+|------|------------|
+| **1. 비당파성/공정성** | 모든 소스 Tier별 동등 가중치, 정치 편향 없음 |
+| **2. 소스 투명성** | 모든 기사에 출처 명시 |
+| **3. 자금 투명성** | 광고/후원 영향 없음 |
+| **4. 방법론 투명성** | 이 문서 + 오픈소스 코드 |
+| **5. 정정 정책** | 오류 발견 시 즉시 정정 및 알림 |
+
+---
+
+## 3. 소스 신뢰도 매트릭스
+
+### 3.1 Tier 분류 기준
+
+소스는 편집 기준, 검증 프로세스, 역사적 정확도를 기반으로 3개 Tier로 분류됩니다.
+
+#### Tier-1: 주요 소스 (신뢰도: 0.90-0.99)
+
+| 소스 | 유형 | 신뢰도 | 근거 |
+|------|------|--------|------|
+| **USGS** | 정부 | 0.99 | 미국 지질조사국 공식 데이터 |
+| **NOAA** | 정부 | 0.99 | 미국 기상청 공식 데이터 |
+| **GDELT** (Reuters, AP, BBC) | 뉴스 집계 | 0.90 | 글로벌 뉴스 모니터링, Tier-1 통신사 포함 |
+
+#### Tier-2: 보조 소스 (신뢰도: 0.75-0.85)
+
+| 소스 | 유형 | 신뢰도 | 근거 |
+|------|------|--------|------|
+| **ACLED** | 연구 | 0.85 | 학술 연구 기반 분쟁 데이터 |
+| **Currents API** | 뉴스 집계 | 0.75 | 다중 매체 집계, 중복 제거 필요 |
+| **World News API** | 뉴스 집계 | 0.75 | 글로벌 뉴스 커버리지 |
+
+#### Tier-3: 신호 소스 (신뢰도: 0.30-0.40)
+
+| 소스 | 유형 | 신뢰도 | 근거 |
+|------|------|--------|------|
+| **Reddit** | 소셜 | 0.40 | 선행 신호, 커뮤니티 검증, 확인 필요 |
+| **Telegram** | 메시징 | 0.35 | 분쟁 지역에서 중요, 노이즈 높음 |
+
+### 3.2 신뢰도 근거
+
+각 소스의 신뢰도는 다음을 기반으로 결정됩니다:
+- **편집 기준**: 자체 팩트체크 프로세스 유무
+- **역사적 정확도**: 과거 보도의 정확성
+- **소스 유형**: 공식 기관 vs 집계 서비스 vs 개인 게시
+- **검증 가능성**: 주장의 출처 확인 용이성
+
+---
+
+## 4. 파이프라인 아키텍처
+
+### 4.1 7단계 스캐너 파이프라인
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      15-minute Scan Cycle                            │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────────────── STAGE 1: Parallel Detection ───────────────┐ │
-│  │                                                                 │ │
-│  │  ┌─────────────────────┐    ┌─────────────────────────────┐   │ │
-│  │  │   GDELT Anomaly     │    │     Social + Trends          │   │ │
-│  │  │   Detection         │    │                              │   │ │
-│  │  │  ┌───────────────┐  │    │  ┌─────────┐  ┌─────────┐   │   │ │
-│  │  │  │ timelinevolraw│  │    │  │ Bluesky │  │ Reddit  │   │   │ │
-│  │  │  │ (spike detect)│  │    │  │Firehose │  │  API    │   │   │ │
-│  │  │  └───────────────┘  │    │  └────┬────┘  └────┬────┘   │   │ │
-│  │  │  ┌───────────────┐  │    │       │            │        │   │ │
-│  │  │  │ GKG Themes    │  │    │  ┌─────────┐  ┌─────────┐   │   │ │
-│  │  │  │ (CRISISLEX)   │  │    │  │ Google  │  │Telegram │   │   │ │
-│  │  │  └───────────────┘  │    │  │ Trends  │  │Channels │   │   │ │
-│  │  │  ┌───────────────┐  │    │  └────┬────┘  └────┬────┘   │   │ │
-│  │  │  │ Goldstein<-5  │  │    │       │            │        │   │ │
-│  │  │  │ (conflict)    │  │    │       └────────────┘        │   │ │
-│  │  │  └───────────────┘  │    │              │               │   │ │
-│  │  └─────────┬───────────┘    │              ▼               │   │ │
-│  │            │                │    ┌───────────────────┐    │   │ │
-│  │            │                │    │ Social Velocity   │    │   │ │
-│  │            │                │    │ Score             │    │   │ │
-│  │            │                │    └─────────┬─────────┘    │   │ │
-│  │            │                └──────────────┼───────────────┘   │ │
-│  │            │                               │                   │ │
-│  │            └───────────────┬───────────────┘                   │ │
-│  │                            │                                   │ │
-│  │                            ▼                                   │ │
-│  │                 ┌───────────────────┐                         │ │
-│  │                 │ Candidate Events  │                         │ │
-│  │                 │ (GDELT anomaly OR │                         │ │
-│  │                 │  Social velocity) │                         │ │
-│  │                 └─────────┬─────────┘                         │ │
-│  └───────────────────────────┼────────────────────────────────────┘ │
-│                              │                                      │
-│  ┌───────────────────────────┼──── STAGE 2: Cross-Verification ───┐│
-│  │                           ▼                                     ││
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           ││
-│  │  │  GDELT  │  │Currents │  │ World   │  │ Expert  │           ││
-│  │  │   DOC   │  │  API    │  │News API │  │ APIs    │           ││
-│  │  │(detail) │  │         │  │         │  │USGS/NOAA│           ││
-│  │  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘           ││
-│  │       │            │            │            │                 ││
-│  │       └────────────┴────────────┴────────────┘                 ││
-│  │                         │                                       ││
-│  │                         ▼                                       ││
-│  │              ┌───────────────────┐                             ││
-│  │              │ Cross-Source      │                             ││
-│  │              │ Matcher           │                             ││
-│  │              │ (Embedding sim.)  │                             ││
-│  │              └─────────┬─────────┘                             ││
-│  │                        │                                        ││
-│  │                        ▼                                        ││
-│  │              ┌───────────────────┐                             ││
-│  │              │ Multi-Source      │                             ││
-│  │              │ Confidence Score  │                             ││
-│  │              │ (Tier weights)    │                             ││
-│  │              └─────────┬─────────┘                             ││
-│  └────────────────────────┼────────────────────────────────────────┘│
-│                           │                                         │
-│                  confidence >= 0.70?                                │
-│                           │                                         │
-│              Yes ─────────┴───────── No ──▶ (Archive/Wait)          │
-│                           │                                         │
-│                           ▼                                         │
-│                  ┌───────────────────┐                             │
-│                  │ Article Generation│                             │
-│                  │ (Source citation) │                             │
-│                  └───────────────────┘                             │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                           SCANNER PIPELINE                                  │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│   [Stage 1]        [Stage 2]        [Stage 3]        [Stage 3.5]          │
+│   Trigger    →    Clustering   →   Classification →  Event         →      │
+│   Collection      & Dedup          & Grouping        Verification         │
+│                                                      (Gate 0)             │
+│                                                                            │
+│   [Stage 4]        [Stage 5]        [Stage 6]        [Stage 7]            │
+│   Confidence  →   Content     →    Final        →   Output                │
+│   Scoring         Gates            Filtering        to Agent              │
+│                   (Gate 1-2)                                              │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### GDELT Dual Role
+### 4.2 이벤트 검증 (Gate 0) - 하이브리드 방식
 
-GDELT serves two distinct purposes in our pipeline:
+키워드 매칭으로 수집된 콘텐츠 중 **실제 이벤트**만 통과시킵니다.
 
-1. **Stage 1: Anomaly Detection API**
-   - `timelinevolraw`: Detects volume spikes indicating breaking news
-   - `GKG Themes`: Monitors crisis-related themes (CRISISLEX, PROTEST, etc.)
-   - `Goldstein Score < -5`: Identifies high-intensity conflict events
+#### Stage 1: 규칙 기반 필터 (70% 제거)
 
-2. **Stage 2: DOC API**
-   - Retrieves detailed article metadata
-   - Provides source URLs for verification
-   - Cross-references with other sources
+| 패턴 | 예시 | 처리 |
+|------|------|------|
+| 엔터테인먼트 | "new war movie releases" | 제거 |
+| 게임 | "Call of Duty: Modern Warfare" | 제거 |
+| 역사/과거 | "in 1945", "decades ago" | 제거 |
+| 추측/가정 | "might happen", "could potentially" | 제거 |
+| 스포츠 | "World Cup", "Olympics" | 제거 |
 
----
+#### Stage 2: LLM 검증 (30%만 검증)
 
-## Multi-Source Confidence Scoring
+규칙 필터를 통과한 콘텐츠에 대해 LLM이 최종 판단:
+- **YES**: 실제 발생한 사건 → 통과
+- **NO**: 영화/게임/역사/추측 → 제거
 
-### Algorithm
+**비용 효율**:
+- 규칙 필터: $0 (즉시 처리)
+- LLM 검증: 규칙 통과분만 → 70% 비용 절감
 
-```python
-TIER_WEIGHTS = {
-    "tier1_news": 0.90,    # GDELT (Reuters, AP, BBC)
-    "tier1_govt": 0.99,    # USGS, NOAA, EMSC
-    "tier2_news": 0.75,    # Currents, World News API
-    "tier2_data": 0.85,    # ACLED
-    "tier3_social": 0.40,  # Reddit, Bluesky
-    "tier3_trend": 0.30,   # Google Trends
-    "tier3_msg": 0.35,     # Telegram
-}
+### 4.3 Investigation 에이전트
 
-def calculate_confidence(sources: list[dict]) -> float:
-    """
-    Multi-source confidence scoring with tier weights.
+PLANNER → EXECUTOR 구조로 동적 소스 조사:
 
-    Args:
-        sources: [{"name": "GDELT", "tier": "tier1_news"}, ...]
-
-    Returns:
-        Confidence score 0.0 - 0.99
-    """
-    if not sources:
-        return 0.0
-
-    # 1. Base score from source count
-    source_count = len(set(s["name"] for s in sources))
-    if source_count == 1:
-        base = 0.50
-    elif source_count == 2:
-        base = 0.70
-    else:
-        base = 0.85
-
-    # 2. Weighted tier average
-    tier_scores = [TIER_WEIGHTS.get(s["tier"], 0.50) for s in sources]
-    tier_avg = sum(tier_scores) / len(tier_scores)
-
-    # 3. Source type diversity bonus
-    source_types = set(s["tier"].split("_")[0] for s in sources)
-    diversity_bonus = (len(source_types) - 1) * 0.03
-
-    # 4. Final score = 50% base + 50% tier average + diversity bonus
-    final = (base * 0.5) + (tier_avg * 0.5) + diversity_bonus
-
-    return min(final, 0.99)
+```
+1. PLANNER: 맥락 분석 → 검색 쿼리 생성
+2. EXECUTOR: 다중 소스 조사
+   - GDELT DOC API (상세 기사)
+   - Tavily Search (웹 검색)
+   - 정부 사이트 (백악관, 외교부 등)
+3. VERIFIER: 클레임별 증거 평가
+4. WRITER: 이중 언어 기사 생성 (한국어/영어)
 ```
 
-### Confidence Score Examples
+### 4.4 기사 생성 (이중 언어)
 
-| Source Combination | Calculation | Score | Action |
-|-------------------|-------------|-------|--------|
-| GDELT only | (0.50×0.5)+(0.90×0.5) | **0.70** | Review for publication |
-| GDELT + Currents | (0.70×0.5)+(0.825×0.5) | **0.76** | Publish |
-| GDELT + Social | (0.70×0.5)+(0.65×0.5)+0.03 | **0.71** | Review for publication |
-| GDELT + Currents + Social | (0.85×0.5)+(0.68×0.5)+0.06 | **0.83** | Publish |
-| GDELT + USGS (earthquake) | (0.70×0.5)+(0.945×0.5) | **0.82** | Immediate publish |
-| 3+ Tier-1 sources | (0.85×0.5)+(0.93×0.5)+0.03 | **0.92** | Immediate publish |
+모든 기사는 한국어와 영어로 동시 생성됩니다:
+
+| 필드 | 설명 |
+|------|------|
+| `title_ko` / `title_en` | 제목 |
+| `content_ko` / `content_en` | 본문 |
+| `summary_ko` / `summary_en` | 요약 |
+| `sources` | 출처 목록 |
+| `confidence_score` | 신뢰도 점수 |
 
 ---
 
-## Social Velocity Scoring
+## 5. 품질 게이트
 
-### Purpose
+### 5.1 Gate 0: 이벤트 검증 (신규)
 
-Social velocity measures the speed at which a topic spreads across social platforms, identifying potential breaking news before traditional media coverage.
+| 단계 | 방법 | 비용 |
+|------|------|------|
+| Stage 1 | 규칙 기반 패턴 매칭 | $0 |
+| Stage 2 | LLM 이벤트 판단 | $0.001/건 |
 
-### Calculation
+### 5.2 Gate 1: Check-worthiness (검증 가치)
 
-```python
-def calculate_social_velocity(topic: str) -> float:
-    scores = {
-        "reddit": {
-            "upvote_velocity": get_reddit_velocity(topic),  # upvotes/min
-            "cross_posts": count_cross_posts(topic),
-        },
-        "bluesky": {
-            "post_count": count_bluesky_posts(topic, window="15min"),
-            "repost_velocity": count_reposts(topic),
-        },
-        "google_trends": {
-            "breakout": is_breakout(topic),  # 100%+ surge
-            "interest": get_interest_score(topic),
-        },
-        "telegram": {
-            "channel_count": count_telegram_channels(topic),
-            "message_count": count_messages(topic),
-        },
-    }
+뉴스 가치가 없는 콘텐츠 필터링:
+- 엔터테인먼트 뉴스
+- 추측/의견
+- 프로모션 콘텐츠
 
-    weights = {
-        "reddit": 0.25,
-        "bluesky": 0.15,
-        "google_trends": 0.30,
-        "telegram": 0.30,
-    }
+### 5.3 Gate 2: Specificity (구체성)
 
-    return weighted_sum(scores, weights)
+구체적이고 검증 가능한 세부 정보 요구:
+- 최근 날짜 (7일 이내)
+- 구체적 위치
+- 정량화 가능한 데이터
+
+### 5.4 Gate 3: Evidence Sufficiency (증거 충분성)
+
+클레임 검증 후:
+- 최소 지지 클레임 2개
+- 증거 비율 60% 이상
+- 소스 다양성 요구
+
+---
+
+## 6. 투명성 정책
+
+### 6.1 AI 생성 표시
+
+모든 기사에 명시:
+```
+🤖 이 기사는 AI에 의해 자동 생성되었으며,
+다중 소스 교차 검증을 거쳤습니다.
 ```
 
-### Velocity Thresholds
+### 6.2 오류 정정 프로세스
 
-| Velocity Score | Status | Action |
-|---------------|--------|--------|
-| < 20 | Normal | Ignore |
-| 20-50 | Emerging | Monitor |
-| 50-80 | Trending | Start news verification |
-| > 80 | Viral | Immediate news verification |
+1. 오류 발견 즉시 기사 수정
+2. 수정 내역 기사 하단에 표시
+3. 심각한 오류 시 기사 철회 및 알림
 
----
+### 6.3 소스 명시 규칙
 
-## Content Filtering Gates
-
-### Gate 1: Check-Worthiness
-
-Rejects content that is not newsworthy:
-- Entertainment news
-- Speculation/opinion
-- Promotional content
-- Human interest stories without broader significance
-
-### Gate 2: Specificity
-
-Requires concrete, verifiable details:
-- Recent date (within 7 days)
-- Specific location
-- Quantifiable data (casualties, amounts, etc.)
-
-**Minimum Score**: 0.4 (40% of criteria met)
-
-### Gate 3: Evidence Sufficiency
-
-After claim verification:
-- Minimum supported claims required
-- Evidence ratio threshold
-- Source diversity requirement
+- 모든 기사에 사용된 소스 URL 나열
+- 신뢰도 점수 및 계산 근거 표시
+- Two-Source Rule 충족 여부 표시
 
 ---
 
-## Verification Process
+## 7. 한계 및 주의사항
 
-### Claim Extraction
+### 7.1 False Positive 가능성
 
-1. Parse article text
-2. Extract 3-10 specific factual claims
-3. Prioritize verifiable assertions (dates, numbers, locations, quotes)
+- 목표: < 5%
+- 완화: 다중 게이트, 교차 검증
 
-### Claim Verification (QA Approach)
+### 7.2 LLM 환각 리스크
 
-For each claim:
-1. Generate verification question
-2. Search multiple sources (Tavily, DuckDuckGo)
-3. LLM evaluates evidence
-4. Assign verdict: SUPPORTED / REFUTED / NEI (Not Enough Information)
-5. Calculate confidence (1-5 scale)
+- 클레임 검증으로 완화
+- 팩트만 기사화, 추측 배제
 
-### Evidence Requirements
+### 7.3 속도 vs 정확도 트레이드오프
 
-| Metric | Threshold | Rationale |
-|--------|-----------|-----------|
-| Min Supported Claims | 2 | Two-source rule |
-| Evidence Ratio | 0.60 | Majority of claims verified |
-| Source Count | 2+ | Cross-verification |
+| 선택 | 장점 | 단점 |
+|------|------|------|
+| 속도 우선 | 빠른 보도 | 오보 위험 |
+| 정확도 우선 | 신뢰성 | 늦은 보도 |
 
----
+**우리의 선택**: 정확도 우선 (Two-Source Rule 준수)
 
-## Category-Specific Sources
+### 7.4 GDELT 의존도
 
-### Conflict
-
-| Source | Role |
-|--------|------|
-| GDELT | Primary news detection |
-| ACLED | Research-backed conflict data |
-| Telegram | Real-time from conflict zones |
-
-**Keywords**: airstrike, missile, invasion, casualties, ceasefire
-
-### Disaster
-
-| Source | Role |
-|--------|------|
-| USGS | Authoritative earthquake data |
-| NOAA | Weather alerts and warnings |
-| EMSC | European seismic monitoring |
-| GDELT | News coverage |
-
-**Keywords**: earthquake, magnitude, tsunami, wildfire, hurricane
-
-### Politics
-
-| Source | Role |
-|--------|------|
-| GDELT | Global political news |
-| Currents API | Additional coverage |
-| Reddit | Public sentiment |
-
-**Keywords**: summit, sanctions, election, legislation, diplomatic
-
-### Economy
-
-| Source | Role |
-|--------|------|
-| GDELT | Financial news |
-| Google Trends | Public interest signals |
-
-**Keywords**: tariffs, recession, inflation, market, trade
+- GDELT 다운 시 전체 감지 능력 저하
+- 완화: Reddit 등 보조 소스 활용
 
 ---
 
-## Validation Methods
+## 8. 처리량 분석
 
-### Historical Backtesting
+### 현재 성능 (M1/M2 맥북)
 
-| Event | Date | Validation |
-|-------|------|------------|
-| Israel-Hamas Attack | 2023-10-07 | Social lead time, GDELT detection |
-| Turkey Earthquake | 2023-02-06 | USGS vs GDELT timing comparison |
-| SVB Collapse | 2023-03-10 | Social velocity → news verification flow |
-| Trump Indictment | 2023-03-30 | Multi-source confidence progression |
+| 단계 | 처리 시간 |
+|------|----------|
+| 수집 (Trigger Scan) | 8-10초 |
+| 임베딩 생성 (50개) | 1-3초 |
+| 유사도 매칭 | 0.1초 |
+| 이벤트 검증 (Gate 0) | 2-5초 |
+| **스캐너 총합** | ~15초 |
 
-### Real-Time Metrics
+### Investigation 처리량
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| False Positive Rate | < 5% | Rumors/fake news published |
-| False Negative Rate | < 10% | Real breaking news missed |
-| Latency | < 30 min | Event → publication time |
-
-### Source Accuracy Tracking
-
-| Source | Metric | Target |
-|--------|--------|--------|
-| GDELT Anomaly | Breaking news detection rate | > 80% |
-| Social Velocity | Valid early signal rate | > 60% |
-| USGS/NOAA | Official data match rate | > 99% |
+| 항목 | 현재 설정 |
+|------|----------|
+| 동시 LLM 호출 | 5개 |
+| 기사당 시간 | 60-120초 |
+| 15분당 기사 생성 | 최대 5개 |
+| 하루 최대 기사 | ~480개 |
 
 ---
 
-## Transparency Reporting
+## 9. 비용 구조
 
-### Monthly Report Contents
+### 소스 비용
 
-1. **Publication Statistics**
-   - Total articles published
-   - By category breakdown
-   - Confidence score distribution
-
-2. **Source Contribution**
-   - Articles per source
-   - Cross-verification rates
-   - Source accuracy metrics
-
-3. **Corrections**
-   - Number of corrections/retractions
-   - Correction reasons
-   - Time to correction
-
-4. **Performance Metrics**
-   - Detection latency
-   - Verification accuracy
-   - False positive/negative rates
-
----
-
-## Cost Structure
-
-| Component | Monthly Cost |
-|-----------|-------------|
+| 소스 | 월 비용 |
+|------|--------|
 | GDELT | $0 |
-| Currents API | $0 (1,000/day) |
-| World News API | $0 (500/day) |
-| USGS/NOAA/EMSC | $0 |
-| ACLED | $0 |
-| Reddit API | $0 (100 QPM) |
-| Bluesky Firehose | $0 |
-| Google Trends | $0 |
-| Telegram | $0 |
-| **Total Source Cost** | **$0/month** |
+| Reddit | $0 |
+| USGS/NOAA | $0 |
+| Currents API | $0 (1,000/일) |
+| World News API | $0 (500/일) |
+| **소스 총합** | **$0/월** |
 
-Server and LLM API costs are additional.
+### 운영 비용
 
----
-
-## Changelog
-
-| Date | Version | Changes |
-|------|---------|---------|
-| 2025-01-22 | 1.0.0 | Initial methodology documentation |
+| 항목 | 월 비용 |
+|------|--------|
+| LLM (gpt-4o-mini) | $50-100 |
+| 서버 (Cloud Run) | $50-100 |
+| **운영 총합** | **$100-200/월** |
 
 ---
 
-*This document is automatically updated and maintained as part of the LiveMap transparency commitment.*
+## 변경 이력
+
+| 날짜 | 버전 | 변경 내용 |
+|------|------|----------|
+| 2025-01-22 | 1.0.0 | 초기 방법론 문서 |
+| 2025-01-23 | 2.0.0 | 국제 정세 집중 전략, Gate 0 이벤트 검증 추가 |
+
+---
+
+*이 문서는 LiveMap 투명성 약속의 일환으로 지속적으로 업데이트됩니다.*

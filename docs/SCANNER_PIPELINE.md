@@ -5,19 +5,21 @@
 Scanner는 다중 소스에서 뉴스 이벤트를 수집하고, 신뢰도 기반으로 필터링하여 기사화할 이벤트를 선별하는 파이프라인입니다.
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                           SCANNER PIPELINE                                  │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│   [Stage 1]        [Stage 2]        [Stage 3]        [Stage 4]            │
-│   Trigger    →    Clustering   →   Classification →  Confidence  →        │
-│   Collection      & Dedup          & Grouping        Scoring              │
-│                                                                            │
-│                   [Stage 5]        [Stage 6]        [Stage 7]             │
-│               →   Content     →    Final        →   Output                │
-│                   Gates            Filtering        to Agent              │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                              SCANNER PIPELINE                                     │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   [Stage 1]        [Stage 2]        [Stage 3]        [Stage 3.5]                │
+│   Trigger    →    Clustering   →   Classification →  Event         →            │
+│   Collection      & Dedup          & Grouping        Verification               │
+│                                                      (Gate 0)                   │
+│                                                                                  │
+│   [Stage 4]        [Stage 5]        [Stage 6]        [Stage 7]                  │
+│   Confidence  →   Content     →    Final        →   Output                      │
+│   Scoring         Gates            Filtering        to Agent                    │
+│                   (Gate 1-2)                                                    │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -275,6 +277,110 @@ other_events: 63개 (GDELT 50개 + Reddit 13개)
 Tier-1 정부 소스(USGS, NOAA)는 **Two-Source Rule 면제**:
 - 공식 기관 발표이므로 추가 검증 없이 즉시 발행 가능
 - Confidence Score가 자동으로 0.74 부여
+
+---
+
+## Stage 3.5: 이벤트 검증 (Gate 0) - 신규
+
+### 3.5.1 개요
+
+키워드 매칭으로 수집된 콘텐츠 중 **실제 이벤트**만 통과시킵니다.
+
+**파일**: `app/agent/event_verifier.py`
+
+### 3.5.2 문제 정의
+
+키워드 매칭은 False Positive를 생성합니다:
+
+| 수집된 콘텐츠 | 키워드 | 실제 여부 |
+|--------------|--------|----------|
+| "Iran attacks US bases" | attack | O 실제 |
+| "New war movie releases" | war | X 영화 |
+| "Call of Duty review" | war | X 게임 |
+| "In 1945, the war ended" | war | X 역사 |
+
+### 3.5.3 하이브리드 솔루션
+
+```
+수집된 이벤트 (168개)
+    ↓
+[Stage 1: 규칙 기반 필터]
+- NOT_EVENT_PATTERNS 매칭
+- 영화/게임/역사/스포츠 제거
+    ↓ (~50개 통과, 70% 제거)
+[Stage 2: LLM 검증]
+- "실제 발생한 이벤트인가?"
+- YES/NO + 사유
+    ↓ (~35개 통과)
+다음 단계로
+```
+
+### 3.5.4 Stage 1: 규칙 기반 필터
+
+```python
+NOT_EVENT_PATTERNS = [
+    # 엔터테인먼트
+    r"\b(movie|film|tv show|series|drama|actor|actress|celebrity)\b",
+    # 게임
+    r"\b(game|gaming|esports|playstation|xbox|nintendo)\b",
+    # 역사/과거
+    r"\b(in \d{4}|years ago|historically|last century|decades ago)\b",
+    # 추측/가정
+    r"\b(if .* would|could potentially|might happen|hypothetically)\b",
+    # 리뷰/의견
+    r"\b(review|opinion|editorial|analysis|commentary)\b",
+    # 스포츠
+    r"\b(football|soccer|basketball|tennis|olympics|world cup)\b",
+]
+
+def is_likely_real_event(text: str) -> tuple[bool, str | None]:
+    text_lower = text.lower()
+    for pattern in NOT_EVENT_PATTERNS:
+        if re.search(pattern, text_lower):
+            return False, f"NOT_EVENT: matched pattern '{pattern}'"
+    return True, None
+```
+
+### 3.5.5 Stage 2: LLM 검증
+
+```python
+EVENT_VERIFY_PROMPT = """다음 텍스트가 실제로 발생한 국제 정세 이벤트를 보도하는지 판단하세요.
+
+텍스트: {text}
+
+판단 기준:
+- YES: 실제 발생한 사건 (전쟁, 외교, 테러, 시위, 정상회담 등)
+- NO: 영화/게임/역사/추측/의견/스포츠/연예
+
+답변 형식:
+VERDICT: YES 또는 NO
+REASON: 한 줄 설명"""
+```
+
+### 3.5.6 비용 분석
+
+| 단계 | 처리량 | 비용 |
+|------|--------|------|
+| Stage 1 (규칙) | 168 → 50개 | $0 |
+| Stage 2 (LLM) | 50 → 35개 | $0.05/스캔 |
+| **하루 총 비용** | | **$4.80** |
+
+**비용 절감**: LLM만 사용 시 $16.13/일 → 하이브리드 사용 시 $4.80/일 (70% 절감)
+
+### 3.5.7 설정
+
+```python
+# config.py
+event_verification_enabled: bool = True
+event_verification_use_llm: bool = True  # False면 규칙만 사용
+```
+
+**로그 출력**:
+```
+10:06:47 | INFO | [GATE0-REJECT] NOT_EVENT: matched pattern 'movie': New war movie...
+10:06:48 | INFO | [GATE0-REJECT] LLM: 가상 시나리오 (영화 줄거리)
+10:06:48 | INFO | Event verification: 35/168 passed (79% filtered)
+```
 
 ---
 
@@ -693,6 +799,14 @@ for event in events:
 │ ─────────────────────────────                                           │
 │ Tier-1 Govt: 46개 (USGS 3 + NOAA 43)                                    │
 │ Other: 63개 (GDELT 50 + Reddit 13)                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Stage 3.5: Event Verification (Gate 0) - 신규                            │
+│ ─────────────────────────────────────────                               │
+│ Stage 1 (규칙): 영화/게임/역사/스포츠 패턴 제거 → 70% 필터                │
+│ Stage 2 (LLM): 실제 이벤트 여부 최종 판단                                 │
+│ → 109개 → 35개 통과 (74개 필터)                                          │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
