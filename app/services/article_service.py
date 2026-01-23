@@ -131,6 +131,7 @@ class ArticleService:
         claims: list[dict] | None = None,
         verification_result: dict[str, Any] | None = None,
         sources: list[str] | None = None,
+        related_sources: list[dict] | None = None,
         is_update: bool = False,
         update_type: str | None = None,
         update_reason: str | None = None,
@@ -147,7 +148,8 @@ class ArticleService:
             category: Event category
             claims: Extracted claims
             verification_result: Verification results
-            sources: List of sources
+            sources: List of source URLs
+            related_sources: Structured related sources for "Related Sources" section
             is_update: Whether this is an update to existing event
             update_type: Type of update
             update_reason: Reason for update
@@ -237,6 +239,8 @@ class ArticleService:
             # Sources
             source_count=len(sources) if sources else 0,
             sources_json=json.dumps(sources) if sources else None,
+            # Related sources (structured for "Related Sources" section)
+            related_sources_json=json.dumps(related_sources) if related_sources else None,
             # Status
             status=ArticleStatus.PUBLISHED.value,
             is_ai_generated=True,

@@ -29,6 +29,16 @@ from .qa_verifier import ClaimVerdict, VerificationResult
 logger = logging.getLogger(__name__)
 
 
+class RelatedSource(BaseModel):
+    """Structured related source for legal compliance."""
+
+    url: str
+    title: str
+    source_name: str
+    snippet: str = ""  # 1-2 sentence factual summary
+    credibility_tier: str = "tier3"  # tier1, tier2, tier3
+
+
 # =============================================================================
 # Article Quality Validation Constants
 # =============================================================================
@@ -53,6 +63,9 @@ class BilingualArticle(BaseModel):
     nut_graph_ko: str = ""
     body_ko: str = ""
     full_text_ko: str = ""
+
+    # Related sources (structured for legal compliance)
+    related_sources: list[RelatedSource] = Field(default_factory=list)
 
     # Metadata
     word_count_en: int = 0
@@ -216,6 +229,7 @@ class BilingualArticleGenerator:
         event_summary: str,
         verification_result: VerificationResult,
         sources: list[str] | None = None,
+        related_sources: list[RelatedSource] | None = None,
     ) -> BilingualArticle:
         """
         Generate bilingual article from verification results.
@@ -224,6 +238,7 @@ class BilingualArticleGenerator:
             event_summary: Brief summary of the event
             verification_result: Result from claim verification
             sources: List of source URLs/names
+            related_sources: Structured sources for "Related Sources" section
 
         Returns:
             BilingualArticle with EN and KO content
@@ -275,7 +290,10 @@ class BilingualArticleGenerator:
                 body_ko=f"기사를 생성할 수 없습니다: {e}",
             )
 
-        # Generate full text for both languages
+        # Store related sources
+        article.related_sources = related_sources or []
+
+        # Generate full text for both languages (includes related sources section)
         article.full_text_en = self._format_full_article_en(article)
         article.full_text_ko = self._format_full_article_ko(article)
 
@@ -446,7 +464,7 @@ class BilingualArticleGenerator:
         return article
 
     def _format_full_article_en(self, article: BilingualArticle) -> str:
-        """Format complete English article."""
+        """Format complete English article with related sources section."""
         lines = [
             "=" * 70,
             article.headline_en.upper() if article.headline_en else "BREAKING NEWS",
@@ -458,15 +476,37 @@ class BilingualArticleGenerator:
             "",
             article.body_en,
             "",
+        ]
+
+        # Add related sources section if available
+        if article.related_sources:
+            lines.extend([
+                "-" * 70,
+                "Related Sources",
+                "-" * 70,
+            ])
+            for source in article.related_sources[:5]:  # Max 5 sources
+                lines.append(f"- {source.title} - {source.source_name}")
+                if source.snippet:
+                    lines.append(f'  "{source.snippet}"')
+                lines.append(f"  {source.url}")
+                lines.append("")
+            lines.extend([
+                "These sources provided additional context for this article.",
+                "For complete information, please visit the original articles.",
+                "",
+            ])
+
+        lines.extend([
             "-" * 70,
             "DISCLOSURE: This article was generated with AI assistance.",
             f"Generated at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
             "=" * 70,
-        ]
+        ])
         return "\n".join(lines)
 
     def _format_full_article_ko(self, article: BilingualArticle) -> str:
-        """Format complete Korean article."""
+        """Format complete Korean article with related sources section."""
         lines = [
             "=" * 70,
             article.headline_ko if article.headline_ko else "속보",
@@ -478,11 +518,33 @@ class BilingualArticleGenerator:
             "",
             article.body_ko,
             "",
+        ]
+
+        # Add related sources section if available
+        if article.related_sources:
+            lines.extend([
+                "-" * 70,
+                "관련 자료 (Related Sources)",
+                "-" * 70,
+            ])
+            for source in article.related_sources[:5]:  # Max 5 sources
+                lines.append(f"- {source.title} - {source.source_name}")
+                if source.snippet:
+                    lines.append(f'  "{source.snippet}"')
+                lines.append(f"  {source.url}")
+                lines.append("")
+            lines.extend([
+                "위 출처들은 이 기사의 추가 맥락을 제공합니다.",
+                "전체 내용은 각 원본 기사를 참조하세요.",
+                "",
+            ])
+
+        lines.extend([
             "-" * 70,
             "알림: 이 기사는 AI 지원을 통해 생성되었습니다.",
             f"생성 시각: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
             "=" * 70,
-        ]
+        ])
         return "\n".join(lines)
 
     def to_dict(self, article: BilingualArticle) -> dict[str, Any]:
@@ -502,6 +564,7 @@ class BilingualArticleGenerator:
                 "body": article.body_ko,
                 "full_text": article.full_text_ko,
             },
+            "related_sources": [s.model_dump() for s in article.related_sources],
             "metadata": {
                 "word_count_en": article.word_count_en,
                 "word_count_ko": article.word_count_ko,
@@ -521,7 +584,8 @@ async def generate_bilingual_article(
     event_summary: str,
     verification_result: VerificationResult,
     sources: list[str] | None = None,
+    related_sources: list[RelatedSource] | None = None,
 ) -> BilingualArticle:
     """Convenience function to generate bilingual article."""
     generator = BilingualArticleGenerator()
-    return await generator.generate(event_summary, verification_result, sources)
+    return await generator.generate(event_summary, verification_result, sources, related_sources)

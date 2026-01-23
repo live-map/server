@@ -42,11 +42,43 @@ from tenacity import (
 )
 
 from .article_generator import ArticleGenerator, GeneratedArticle
-from .bilingual_article_generator import BilingualArticleGenerator, BilingualArticle
+from .bilingual_article_generator import BilingualArticleGenerator, BilingualArticle, RelatedSource
 from .claim_extraction import ClaimExtractor, ExtractedClaim
 from .config import agent_settings
 from .qa_verifier import ClaimVerdict, QAVerifier, VerificationResult
 from .tools import ALL_TOOLS
+
+
+# =============================================================================
+# Source Credibility Tiers
+# =============================================================================
+
+# Tier-1: Major wire services, government sources
+# Using longer, more specific strings to avoid false positives
+TIER1_DOMAINS = {
+    "reuters.com", "apnews.com", "ap.org", "afp.com",
+    ".gov", "state.gov", "whitehouse.gov",
+    "un.org", "nato.int", "europa.eu",
+}
+TIER1_NAMES = {
+    "reuters", "associated press", "afp", "agence france-presse",
+    "united nations", "nato", "european union",
+}
+
+# Tier-2: Major established news organizations
+TIER2_DOMAINS = {
+    "bbc.com", "bbc.co.uk", "cnn.com", "nytimes.com", "washingtonpost.com",
+    "theguardian.com", "economist.com", "wsj.com",
+    "npr.org", "pbs.org", "abcnews.go.com", "cbsnews.com", "nbcnews.com",
+    "foxnews.com", "aljazeera.com", "kyodonews.net", "en.yna.co.kr",
+    "xinhuanet.com", "tass.com",
+}
+TIER2_NAMES = {
+    "bbc", "cnn", "new york times", "washington post",
+    "guardian", "economist", "wall street journal",
+    "npr", "pbs", "abc news", "cbs news", "nbc news",
+    "fox news", "al jazeera", "kyodo", "yonhap", "xinhua", "tass",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +476,128 @@ class ClaimVerificationAgent:
         except Exception:
             return hashlib.md5(url.encode()).hexdigest()[:12]
 
+    def _get_credibility_tier(self, source_name: str, url: str) -> str:
+        """Determine credibility tier for a source."""
+        source_lower = (source_name or "").lower()
+        url_lower = (url or "").lower()
+
+        # Check Tier-1 by domain
+        for domain in TIER1_DOMAINS:
+            if domain in url_lower:
+                return "tier1"
+
+        # Check Tier-1 by name (exact word match for short names)
+        for name in TIER1_NAMES:
+            if name in source_lower:
+                return "tier1"
+
+        # Check Tier-2 by domain
+        for domain in TIER2_DOMAINS:
+            if domain in url_lower:
+                return "tier2"
+
+        # Check Tier-2 by name
+        for name in TIER2_NAMES:
+            if name in source_lower:
+                return "tier2"
+
+        return "tier3"
+
+    def _select_related_sources(
+        self,
+        evidence_docs: list[dict],
+        max_count: int = 5,
+    ) -> list[RelatedSource]:
+        """
+        Select best sources for "Related Sources" section.
+
+        Prioritizes:
+        1. Tier-1 sources (Reuters, AP, government)
+        2. Tier-2 sources (major news orgs)
+        3. Higher relevance scores
+        """
+        if not evidence_docs:
+            return []
+
+        # Score and categorize each source
+        scored_sources = []
+        seen_urls = set()
+
+        for doc in evidence_docs:
+            url = doc.get("url", "")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            source_name = doc.get("source_name", "")
+            title = doc.get("title", "")
+            snippet = doc.get("snippet", "")
+
+            # Skip if missing essential info
+            if not title and not snippet:
+                continue
+
+            tier = self._get_credibility_tier(source_name, url)
+
+            # Calculate score (tier1=100, tier2=50, tier3=10)
+            tier_score = {"tier1": 100, "tier2": 50, "tier3": 10}.get(tier, 10)
+
+            # Add relevance/credibility bonus from evidence
+            relevance = doc.get("relevance_score", 0.5)
+            credibility = doc.get("credibility_score", 0.5)
+            bonus = (relevance + credibility) * 20
+
+            total_score = tier_score + bonus
+
+            scored_sources.append({
+                "url": url,
+                "title": title or source_name or url,
+                "source_name": source_name or self._extract_domain(url),
+                "snippet": self._truncate_snippet(snippet),
+                "credibility_tier": tier,
+                "score": total_score,
+            })
+
+        # Sort by score descending
+        scored_sources.sort(key=lambda x: x["score"], reverse=True)
+
+        # Convert to RelatedSource objects
+        return [
+            RelatedSource(
+                url=s["url"],
+                title=s["title"],
+                source_name=s["source_name"],
+                snippet=s["snippet"],
+                credibility_tier=s["credibility_tier"],
+            )
+            for s in scored_sources[:max_count]
+        ]
+
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain name from URL."""
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc.replace("www.", "")
+            return domain.split(".")[0].capitalize() if domain else "Unknown"
+        except Exception:
+            return "Unknown"
+
+    def _truncate_snippet(self, snippet: str, max_length: int = 150) -> str:
+        """Truncate snippet to 1-2 sentences for legal compliance."""
+        if not snippet:
+            return ""
+        # Take first sentence or max_length characters
+        snippet = snippet.strip()
+        # Find first sentence ending
+        for punct in [".", "!", "?"]:
+            idx = snippet.find(punct)
+            if 20 < idx < max_length:
+                return snippet[:idx + 1]
+        # Fallback: truncate at max_length
+        if len(snippet) > max_length:
+            return snippet[:max_length].rsplit(" ", 1)[0] + "..."
+        return snippet
+
     # =========================================================================
     # Stage 3: Claim Verification
     # =========================================================================
@@ -603,6 +757,10 @@ class ClaimVerificationAgent:
             if doc.get("url") or doc.get("source_name")
         })
 
+        # Select related sources for "Related Sources" section
+        related_sources = self._select_related_sources(evidence_docs, max_count=5)
+        logger.info(f"Selected {len(related_sources)} related sources")
+
         try:
             # Generate bilingual article if Korean is enabled
             if agent_settings.generate_korean:
@@ -610,6 +768,7 @@ class ClaimVerificationAgent:
                     event_summary=state.get("original_text", "")[:500],
                     verification_result=verification_result,
                     sources=sources,
+                    related_sources=related_sources,
                 )
 
                 # Convert to dicts for storage
@@ -633,6 +792,7 @@ class ClaimVerificationAgent:
                     extra={
                         "word_count_en": bilingual_article.word_count_en,
                         "word_count_ko": bilingual_article.word_count_ko,
+                        "related_sources_count": len(related_sources),
                     },
                 )
 
@@ -641,6 +801,7 @@ class ClaimVerificationAgent:
                     "article": bilingual_article.model_dump(),
                     "article_en": article_en,
                     "article_ko": article_ko,
+                    "related_sources": [s.model_dump() for s in related_sources],
                     "current_stage": "done",
                 }
             else:
@@ -653,7 +814,10 @@ class ClaimVerificationAgent:
 
                 logger.info(
                     "Article generated (English only)",
-                    extra={"word_count": article.metadata.word_count},
+                    extra={
+                        "word_count": article.metadata.word_count,
+                        "related_sources_count": len(related_sources),
+                    },
                 )
 
                 return {
@@ -667,6 +831,7 @@ class ClaimVerificationAgent:
                         "full_text": article.full_text,
                     },
                     "article_ko": None,
+                    "related_sources": [s.model_dump() for s in related_sources],
                     "current_stage": "done",
                 }
 

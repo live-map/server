@@ -82,7 +82,11 @@ class Article(Base):
 
     # Source tracking
     source_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of sources
+    sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of source URLs
+
+    # Related sources (structured data for "더 읽을거리" section)
+    # Format: [{"url": str, "title": str, "source_name": str, "snippet": str, "credibility_tier": str}]
+    related_sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # === Status ===
     status: Mapped[str] = mapped_column(
