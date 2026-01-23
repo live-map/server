@@ -2,7 +2,8 @@
 이벤트 검증기 - 하이브리드 방식
 
 Stage 1: 규칙 기반 필터 (70% 제거, $0)
-Stage 2: LLM 기반 검증 (30%만 검증, $0.001/건)
+Stage 2: Zero-shot 분류 (local model, 확신도 높으면 결정)
+Stage 3: LLM 기반 검증 (edge cases만, $0.001/건)
 
 목적:
 - 키워드 매칭으로 수집된 콘텐츠 중 실제 이벤트만 통과
@@ -11,6 +12,7 @@ Stage 2: LLM 기반 검증 (30%만 검증, $0.001/건)
 
 import re
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -46,19 +48,34 @@ NOT_EVENT_PATTERNS = [
     r"\b(what if|scenario|simulation|thought experiment)\b",
     r"\b(prediction|forecast|speculation)\b",
 
-    # 리뷰/의견/분석
-    r"\b(review|opinion|editorial|analysis|commentary)\b",
+    # 리뷰/의견/분석 (개선)
+    r"\b(review|opinion|editorial|commentary)\b",
     r"\b(my thoughts on|i think|in my opinion)\b",
+    r"\bwhy .{1,50} (is|are|isn't|not)\b",
+    r"\bhow .{1,50} (can|could|should|will)\b",
+    r"\bwhat .{1,50} (means|tells|shows)\b",
+    r"\b(explained|breakdown|deep dive|explainer)\b",
 
-    # 스포츠
+    # 스포츠 (영어)
     r"\b(football|soccer|basketball|baseball|tennis|golf|cricket|rugby)\b",
     r"\b(olympics|world cup|championship|tournament|league|playoffs)\b",
     r"\b(match|game score|win|lose|defeat|victory)\s+(?!military|war)",
     r"\b(nba|nfl|mlb|nhl|fifa|uefa)\b",
 
-    # 광고/프로모션
+    # 스포츠 (다국어 - 한국어)
+    r"(레알 마드리드|바르셀로나|맨체스터|리버풀|첼시|아스널|토트넘)",
+    r"(손흥민|황희찬|이강인|김민재)",
+    r"(프리미어리그|라리가|분데스리가|세리에A|K리그)",
+
+    # 스포츠 (다국어 - 아랍어)
+    r"(ريال مدريد|برشلونة|مانشستر|ليفربول)",
+
+    # 스포츠 (다국어 - 중국어)
+    r"(皇马|巴萨|曼联|利物浦|拜仁|切尔西)",
+
+    # 광고/프로모션 (수정됨 - "deal" 제거)
     r"\b(sale|discount|buy now|limited time|sponsored|ad)\b",
-    r"\b(promo code|coupon|deal|offer expires)\b",
+    r"\b(promo code|coupon|offer expires|flash sale|limited offer)\b",
 
     # 소설/픽션
     r"\b(novel|fiction|story|tale|book review)\b",
@@ -90,34 +107,81 @@ def is_likely_real_event(text: str) -> tuple[bool, str | None]:
 
 
 # ============================================
-# Stage 2: LLM 기반 검증
+# Stage 2: Zero-shot 분류
 # ============================================
 
-EVENT_VERIFY_PROMPT = """다음 텍스트가 실제로 발생한 국제 정세 이벤트를 보도하는지 판단하세요.
+def classify_with_zero_shot(text: str) -> tuple[bool | None, float, str]:
+    """
+    Zero-shot 분류기로 텍스트 분류
 
-텍스트: {text}
+    Args:
+        text: 분류할 텍스트
 
-판단 기준:
-- YES: 실제 발생한 사건
-  - 전쟁, 군사 충돌, 테러 공격
-  - 외교 활동, 정상회담, 제재
-  - 시위, 폭동, 쿠데타
-  - 자연재해 (지진, 태풍 등)
-  - 현재 또는 최근에 발생한 사건
-  - 구체적인 날짜, 장소, 행위자 언급
+    Returns:
+        (is_international, confidence, label)
+        - is_international: 국제 정세 여부 (None이면 불확실)
+        - confidence: 신뢰도
+        - label: 분류 레이블
+    """
+    try:
+        from app.agent.zero_shot_classifier import get_zero_shot_classifier
+        classifier = get_zero_shot_classifier()
+        return classifier.classify(text)
+    except ImportError:
+        logger.warning("Zero-shot classifier not available, skipping")
+        return None, 0.0, "UNAVAILABLE"
+    except Exception as e:
+        logger.warning(f"Zero-shot classification error: {e}")
+        return None, 0.0, f"ERROR: {e}"
 
-- NO: 다음 중 하나에 해당
-  - 영화, 드라마, 게임 콘텐츠
-  - 역사적 사건 (과거 회고)
-  - 추측, 가정, 시나리오
-  - 의견, 분석, 사설
-  - 스포츠 경기 결과
-  - 광고, 프로모션
-  - 픽션, 소설
 
-답변 형식 (정확히 지켜주세요):
-VERDICT: YES 또는 NO
-REASON: 한 줄 설명"""
+# ============================================
+# Stage 3: LLM 기반 검증
+# ============================================
+
+EVENT_VERIFY_PROMPT = """Today's date: {today}
+
+## Task
+Determine if this text reports an INTERNATIONAL AFFAIRS event.
+
+## Definition
+International affairs = events involving 2+ countries OR global security implications.
+
+## Classification
+
+PASS if ANY of these:
+- Military conflict between nations
+- Diplomatic meeting/negotiation between countries
+- International sanctions, treaties, agreements
+- UN/NATO/international organization actions
+- Cross-border humanitarian crisis
+- Terrorism with international implications
+- Protests with international significance
+
+REJECT if ANY of these:
+- Single country domestic politics (US immigration court, local elections)
+- Sports (any language)
+- Entertainment, celebrities
+- Opinion/analysis articles
+- Local crime, accidents
+
+## Examples
+
+Input: "Putin meets Trump envoys as Kremlin says Ukraine settlement hinges on territory"
+Output: PASS - Russia-US diplomatic meeting about Ukraine - 3 countries involved
+
+Input: "Judge warns Trump administration on immigration status"
+Output: REJECT - US domestic legal matter - single country
+
+Input: "TikTok deal between China and White House finalized"
+Output: PASS - US-China trade/tech deal - 2 countries
+
+## Input
+Text: {text}
+
+## Output (exactly this format)
+VERDICT: PASS or REJECT
+REASON: brief explanation"""
 
 
 async def verify_event_with_llm(
@@ -125,7 +189,7 @@ async def verify_event_with_llm(
     llm: "ChatOpenAI"
 ) -> tuple[bool, str]:
     """
-    LLM 기반 2차 검증
+    LLM 기반 검증
 
     Args:
         text: 검증할 텍스트
@@ -136,7 +200,8 @@ async def verify_event_with_llm(
     """
     # 텍스트 길이 제한 (토큰 절약)
     truncated_text = text[:500]
-    prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text)
+    today = datetime.now().strftime("%Y-%m-%d")
+    prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text, today=today)
 
     try:
         response = await llm.ainvoke(prompt)
@@ -144,9 +209,14 @@ async def verify_event_with_llm(
 
         # 응답 파싱
         lines = content.split("\n")
-        verdict_line = lines[0] if lines else ""
+        verdict_line = ""
+        for line in lines:
+            if "VERDICT:" in line.upper():
+                verdict_line = line
+                break
 
-        is_event = "YES" in verdict_line.upper()
+        # PASS = 통과, REJECT = 거부
+        is_event = "PASS" in verdict_line.upper()
 
         # REASON 추출
         reason = "N/A"
@@ -163,21 +233,33 @@ async def verify_event_with_llm(
         return True, f"LLM_ERROR: {str(e)[:50]}"
 
 
+# ============================================
+# 하이브리드 검증 파이프라인
+# ============================================
+
+# Zero-shot 신뢰도 임계값
+ZERO_SHOT_HIGH_CONFIDENCE = 0.8  # 이 이상이면 바로 결정
+ZERO_SHOT_LOW_CONFIDENCE = 0.5   # 이 이하면 LLM 검증
+
+
 async def verify_event_hybrid(
     text: str,
     llm: "ChatOpenAI | None" = None,
-    use_llm: bool = True
+    use_llm: bool = True,
+    use_zero_shot: bool = True
 ) -> tuple[bool, str]:
     """
-    하이브리드 이벤트 검증
+    하이브리드 이벤트 검증 (4단계)
 
     1단계: 규칙 기반 (빠름, 무료)
-    2단계: LLM (정밀, 비용) - 선택적
+    2단계: Zero-shot 분류 (로컬 모델, 확신도 높으면 결정)
+    3단계: LLM (정밀, 비용) - 불확실한 경우만
 
     Args:
         text: 검증할 텍스트 (title + content)
         llm: LangChain ChatOpenAI 인스턴스 (None이면 규칙만 적용)
         use_llm: LLM 검증 활성화 여부
+        use_zero_shot: Zero-shot 분류 활성화 여부
 
     Returns:
         (이벤트 여부, 사유)
@@ -189,13 +271,30 @@ async def verify_event_hybrid(
         logger.debug(f"[GATE0-RULES] Rejected: {rejection_reason}")
         return False, rejection_reason
 
-    # Stage 2: LLM 검증 (규칙 통과한 것만)
+    # Stage 2: Zero-shot 분류 (선택적)
+    if use_zero_shot:
+        is_intl, confidence, label = classify_with_zero_shot(text)
+
+        if is_intl is not None and confidence >= ZERO_SHOT_HIGH_CONFIDENCE:
+            # 확신도 높으면 바로 결정
+            if is_intl:
+                logger.debug(f"[GATE0-ZEROSHOT] Passed: {label} ({confidence:.2f})")
+                return True, f"ZERO_SHOT: {label} ({confidence:.2f})"
+            else:
+                logger.debug(f"[GATE0-ZEROSHOT] Rejected: {label} ({confidence:.2f})")
+                return False, f"ZERO_SHOT_REJECT: {label} ({confidence:.2f})"
+
+        # 중간 확신도는 LLM으로 넘김
+        if is_intl is not None:
+            logger.debug(f"[GATE0-ZEROSHOT] Uncertain: {label} ({confidence:.2f}), forwarding to LLM")
+
+    # Stage 3: LLM 검증 (불확실한 경우만)
     if use_llm and llm:
         is_event, reason = await verify_event_with_llm(text, llm)
         if not is_event:
             logger.debug(f"[GATE0-LLM] Rejected: {reason}")
             return False, f"LLM: {reason}"
-        return True, f"PASSED: {reason}"
+        return True, f"LLM_PASSED: {reason}"
 
     return True, "PASSED_RULES_ONLY"
 
@@ -212,6 +311,8 @@ TEST_CASES = [
     ("Putin and Xi meet in Beijing for summit talks", True),
     ("M6.2 earthquake hits Turkey, 15 dead", True),
     ("Israeli forces conduct airstrike on Gaza", True),
+    ("TikTok deal between China and White House finalized", True),  # "deal" 패턴 수정 테스트
+    ("Anti-ICE protest erupts at federal building", True),  # protest 테스트
 
     # 거부해야 함 (이벤트 아님)
     ("New war movie 'Invasion' releases this Friday", False),
@@ -222,20 +323,25 @@ TEST_CASES = [
     ("My review of the new documentary about war", False),
     ("Game of Thrones season 8 episode 3 battle scene", False),
     ("50% off sale on military-style jackets", False),
+    ("손흥민이 토트넘에서 해트트릭 기록", False),  # 한국어 스포츠 테스트
+    ("Why the Ukraine war is changing global politics", False),  # 분석 기사 테스트
 ]
 
 
-async def run_tests(llm: "ChatOpenAI | None" = None):
+async def run_tests(llm: "ChatOpenAI | None" = None, use_zero_shot: bool = False):
     """테스트 케이스 실행"""
     print("\n" + "=" * 70)
     print("EVENT VERIFIER TEST")
+    print(f"Zero-shot: {'ON' if use_zero_shot else 'OFF'}, LLM: {'ON' if llm else 'OFF'}")
     print("=" * 70)
 
     passed = 0
     failed = 0
 
     for text, expected in TEST_CASES:
-        is_event, reason = await verify_event_hybrid(text, llm, use_llm=llm is not None)
+        is_event, reason = await verify_event_hybrid(
+            text, llm, use_llm=llm is not None, use_zero_shot=use_zero_shot
+        )
 
         if is_event == expected:
             status = "PASS"
@@ -255,4 +361,4 @@ async def run_tests(llm: "ChatOpenAI | None" = None):
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(run_tests())
+    asyncio.run(run_tests(use_zero_shot=False))

@@ -108,7 +108,7 @@ class AgentSettings(BaseSettings):
     # 국제 정세 집중 전략
     # ===========================================
     focus_international_affairs: bool = True  # 국제 정세 카테고리만 처리
-    international_affairs_categories: str = "war,conflict,politics,security,military,terrorism,diplomacy"
+    international_affairs_categories: str = "war,conflict,politics,security,military,terrorism,diplomacy,protest"
 
     # ===========================================
     # 유의성 점수 설정 (Significance Scoring)
@@ -179,6 +179,9 @@ class AgentSettings(BaseSettings):
     # Gate 0: Event Verification (이벤트 검증)
     event_verification_enabled: bool = True   # 이벤트 검증 활성화
     event_verification_use_llm: bool = True   # LLM 검증 사용 (False면 규칙만)
+    event_verification_use_zero_shot: bool = False  # Zero-shot 분류 사용 (transformers 필요)
+    zero_shot_high_confidence: float = 0.8    # 이 이상이면 바로 결정
+    zero_shot_model: str = "facebook/bart-large-mnli"  # Zero-shot 모델
 
     # Gate 1: Check-worthiness
     checkworthiness_enabled: bool = True
@@ -214,7 +217,7 @@ class AgentSettings(BaseSettings):
     def get_international_affairs_categories(self) -> list[str]:
         """국제 정세 카테고리 목록 파싱"""
         if not self.international_affairs_categories:
-            return ["war", "conflict", "politics", "security", "military", "terrorism", "diplomacy"]
+            return ["war", "conflict", "politics", "security", "military", "terrorism", "diplomacy", "protest"]
         return [cat.strip() for cat in self.international_affairs_categories.split(",") if cat.strip()]
 
 
