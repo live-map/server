@@ -286,11 +286,11 @@ class TestLLMVerification:
 
     @pytest.mark.asyncio
     async def test_llm_returns_yes(self, mock_llm_yes):
-        """LLM returning YES should pass verification."""
+        """LLM returning PASS should pass verification."""
         text = "Russian forces shell Kharkiv residential area"
         is_event, reason = await verify_event_with_llm(text, mock_llm_yes)
         assert is_event
-        assert "real event" in reason.lower()
+        assert "international" in reason.lower() or "military" in reason.lower()
 
     @pytest.mark.asyncio
     async def test_llm_returns_no(self, mock_llm_no):
@@ -343,7 +343,7 @@ class TestHybridVerification:
         """Rule rejection should prevent LLM call."""
         text = "New war movie releases this Friday"
 
-        is_event, reason = await verify_event_hybrid(text, mock_llm_yes, use_llm=True)
+        is_event, reason = await verify_event_hybrid(text, mock_llm_yes, use_llm=True, use_zero_shot=False)
 
         assert not is_event
         assert "NOT_EVENT" in reason
@@ -355,10 +355,11 @@ class TestHybridVerification:
         """LLM should be called when rules pass."""
         text = "Iran attacks US bases in Iraq"
 
-        is_event, reason = await verify_event_hybrid(text, mock_llm_yes, use_llm=True)
+        # Disable zero_shot to ensure LLM is called
+        is_event, reason = await verify_event_hybrid(text, mock_llm_yes, use_llm=True, use_zero_shot=False)
 
         assert is_event
-        assert "PASSED" in reason
+        assert "LLM_PASSED" in reason or "PASSED" in reason
         # LLM should be called
         mock_llm_yes.ainvoke.assert_called_once()
 
@@ -367,7 +368,7 @@ class TestHybridVerification:
         """LLM can still reject after rules pass."""
         text = "Iran attacks US bases in Iraq"
 
-        is_event, reason = await verify_event_hybrid(text, mock_llm_no, use_llm=True)
+        is_event, reason = await verify_event_hybrid(text, mock_llm_no, use_llm=True, use_zero_shot=False)
 
         assert not is_event
         assert "LLM" in reason

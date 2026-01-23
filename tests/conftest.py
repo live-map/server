@@ -166,14 +166,14 @@ def mock_llm_response():
 
 @pytest.fixture
 def mock_llm_yes(mock_llm_response):
-    """Mock LLM that always returns YES (real event)."""
-    return mock_llm_response("VERDICT: YES\nREASON: This is a real event with concrete details.")
+    """Mock LLM that always returns PASS (international affairs event)."""
+    return mock_llm_response("VERDICT: PASS\nREASON: Military conflict between nations - international affairs")
 
 
 @pytest.fixture
 def mock_llm_no(mock_llm_response):
-    """Mock LLM that always returns NO (not an event)."""
-    return mock_llm_response("VERDICT: NO\nREASON: This is entertainment content.")
+    """Mock LLM that always returns REJECT (not international affairs)."""
+    return mock_llm_response("VERDICT: REJECT\nREASON: This is entertainment content.")
 
 
 @pytest.fixture
