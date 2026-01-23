@@ -65,6 +65,9 @@ async def run_scheduled_scan():
 
     try:
         scanner = NewsScanner()
+        # Initialize scanner (loads CrossSourceMatcher for multi-source verification)
+        init_results = await scanner.initialize()
+        logger.debug(f"Scanner initialized: {init_results}")
         events = await scanner.scan_all_sources()
 
         if not events:
@@ -83,7 +86,13 @@ async def run_scheduled_scan():
 
         # Start investigation for each significant event (using v3 Claim-Level Agent)
         agent = ClaimVerificationAgent()
-        for i, event in enumerate(events[:3]):  # Limit to 3 investigations per scan
+        max_investigations = 3  # Limit per scan
+        investigation_count = 0
+
+        for i, event in enumerate(events):
+            if investigation_count >= max_investigations:
+                break
+
             event_desc = event.get("description") or event.get("title", "Unknown event")
             category = event.get("category", "other")
 
@@ -183,6 +192,7 @@ async def run_scheduled_scan():
                             existing_event_id=result.get("matched_event_id"),
                         )
                         print(f"[SCANNER] [{i+1}] SAVED: event_id={saved_event.id}, article_id={saved_article.id}")
+                        investigation_count += 1
 
                 # Output the generated article
                 article = result.get("article")

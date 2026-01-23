@@ -24,7 +24,8 @@ from langchain_openai import ChatOpenAI
 from .checkworthiness import check_worthiness, RejectionReason
 from .config import agent_settings
 from .specificity import check_specificity
-from .triggers import TriggerEvent, TriggerManager
+from .triggers import TriggerEvent, TriggerManager, TriggerSource
+from .triggers.base import SourceTier, SOURCE_TIER_MAP
 from .significance import (
     calculate_significance,
     filter_significant_events,
@@ -32,6 +33,8 @@ from .significance import (
     SignificanceScore,
     SignificanceConfig,
 )
+from .cross_source_matcher import CrossSourceMatcher, MatchedEvent
+from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult, PublishRecommendation
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,15 @@ class MultiSourceScanner:
         self.on_event_detected = on_event_detected
         self.trigger_manager = self._create_trigger_manager()
         self.last_scan: datetime | None = None
+
+        # Multi-source verification components
+        self.cross_source_matcher = CrossSourceMatcher(
+            similarity_threshold=agent_settings.cross_source_similarity_threshold,
+        )
+        self.confidence_scorer = MultiSourceConfidenceScorer(
+            min_publish_confidence=agent_settings.min_confidence_score,
+        )
+        self._matcher_initialized = False
 
         # LLM (최종 분류용)
         if agent_settings.openai_api_key:
@@ -170,8 +182,15 @@ class MultiSourceScanner:
         return manager
 
     async def initialize(self) -> dict[str, bool]:
-        """모든 트리거 초기화"""
-        return await self.trigger_manager.initialize_all()
+        """모든 트리거 및 검증 컴포넌트 초기화"""
+        results = await self.trigger_manager.initialize_all()
+
+        # CrossSourceMatcher 초기화
+        if not self._matcher_initialized:
+            self._matcher_initialized = await self.cross_source_matcher.initialize()
+            results["cross_source_matcher"] = self._matcher_initialized
+
+        return results
 
     async def scan(self) -> list[dict]:
         """
@@ -206,157 +225,280 @@ class MultiSourceScanner:
 
     async def _classify_and_group(self, events: list[TriggerEvent]) -> list[dict]:
         """
-        이벤트 분류 및 그룹화 (v3: 필터링 게이트 + 결정론적 점수 + LLM)
+        이벤트 분류 및 그룹화 (v4: 멀티소스 교차검증 + Two-Source Rule)
 
-        1. Gate 1: Check-worthiness (연예/추측 콘텐츠 거부)
-        2. Gate 2: Specificity (일반 배경 기사 거부)
-        3. 결정론적 점수 계산 (노이즈 필터링)
-        4. 선택적 LLM 검증 (높은 점수만)
-        5. 모든 결정 로깅
+        1. Tier-1 정부 소스 (USGS, NOAA) 분리 - 즉시 발행 가능
+        2. CrossSourceMatcher로 유사 이벤트 그룹화
+        3. ConfidenceScorer로 신뢰도 계산 + Two-Source Rule 적용
+        4. 발행 가능 이벤트에 대해 Content Gates 적용
+        5. 최종 significance 점수 계산
         """
         if not events:
             return []
 
-        # 이벤트를 dict로 변환
-        event_dicts = [
-            {
-                "title": e.title,
-                "content": e.content,
-                "source_name": e.source_name,
-                "source": e.source.value,
-                "url": e.url,
-                "keywords_matched": e.keywords_matched,
-                "language": e.language,
-            }
-            for e in events
-        ]
+        # ============================================
+        # Step 1: Tier-1 정부 소스 분리 (USGS, NOAA는 신뢰도 0.99)
+        # ============================================
+        tier1_govt_events = []
+        other_events = []
 
-        # Gate-filtered events
-        gate_passed_events = []
-        gate_passed_triggers = []
+        for event in events:
+            source_tier = SOURCE_TIER_MAP.get(event.source, SourceTier.TIER2_NEWS)
+            if source_tier == SourceTier.TIER1_GOVT:
+                tier1_govt_events.append(event)
+                logger.info(f"[TIER1-GOVT] {event.source.value}: {event.title[:50]}...")
+            else:
+                other_events.append(event)
 
-        for event_dict, trigger_event in zip(event_dicts, events):
-            text = f"{event_dict['title']} {event_dict.get('content', '')}"
+        logger.info(
+            f"Source classification: {len(tier1_govt_events)} Tier-1 govt, "
+            f"{len(other_events)} other sources"
+        )
 
-            # === GATE 1: Check-worthiness ===
-            if agent_settings.checkworthiness_enabled:
-                cw_result = check_worthiness(
-                    text,
-                    entertainment_threshold=agent_settings.entertainment_pattern_threshold,
-                    speculation_threshold=agent_settings.speculation_pattern_threshold,
-                    human_interest_threshold=agent_settings.human_interest_pattern_threshold,
-                )
-                if not cw_result.is_checkworthy:
-                    if agent_settings.log_gate_rejections:
-                        logger.info(
-                            f"[GATE1-REJECT] {cw_result.rejection_reason.value}: "
-                            f"{event_dict['title'][:50]}..."
-                        )
-                    continue
+        # ============================================
+        # Step 2: CrossSourceMatcher로 이벤트 그룹화
+        # ============================================
+        matched_clusters: list[MatchedEvent] = []
+        if other_events and self._matcher_initialized:
+            matched_clusters = self.cross_source_matcher.match_events(other_events)
+            logger.info(f"Cross-source matching: {len(matched_clusters)} clusters found")
 
-            # === GATE 2: Specificity ===
-            if agent_settings.specificity_enabled:
-                spec_result = check_specificity(
-                    text,
-                    min_score=agent_settings.min_specificity_score,
-                )
+        # ============================================
+        # Step 3: 각 클러스터에 대해 신뢰도 계산
+        # ============================================
+        publishable_events: list[dict] = []
+
+        # Tier-1 정부 소스는 즉시 발행 가능 (Two-Source Rule 면제)
+        for event in tier1_govt_events:
+            confidence = self.confidence_scorer.calculate_confidence([{
+                "name": event.source.value,
+                "tier": SourceTier.TIER1_GOVT.value,
+            }])
+
+            logger.info(
+                f"[CONFIDENCE] {event.source.value}: {confidence.score:.2f} "
+                f"({confidence.recommendation.value})"
+            )
+
+            if confidence.score >= agent_settings.min_confidence_score:
+                publishable_events.append({
+                    "event": event,
+                    "confidence": confidence,
+                    "cluster_size": 1,
+                    "is_tier1_govt": True,
+                })
+
+        # 다른 이벤트는 클러스터 기반 신뢰도 계산
+        for cluster in matched_clusters:
+            sources = cluster.sources
+            confidence = self.confidence_scorer.calculate_confidence(sources)
+
+            logger.info(
+                f"[CONFIDENCE] Cluster ({cluster.source_count} sources): "
+                f"{confidence.score:.2f} ({confidence.recommendation.value}) "
+                f"| Two-Source: {confidence.two_source_satisfied} "
+                f"| {cluster.primary_event.title[:40]}..."
+            )
+
+            # Two-Source Rule 또는 높은 신뢰도 필요
+            if (confidence.two_source_satisfied or
+                confidence.score >= agent_settings.min_confidence_score):
+                publishable_events.append({
+                    "event": cluster.primary_event,
+                    "confidence": confidence,
+                    "cluster_size": cluster.source_count,
+                    "matching_events": cluster.matching_events,
+                    "is_tier1_govt": False,
+                })
+
+        logger.info(
+            f"Confidence filter: {len(publishable_events)} events passed "
+            f"(threshold={agent_settings.min_confidence_score})"
+        )
+
+        if not publishable_events:
+            logger.warning("No events passed confidence threshold")
+            return []
+
+        # ============================================
+        # Step 4: Content Gates 적용 (Tier-1 govt는 일부 면제)
+        # ============================================
+        gate_passed = []
+
+        for item in publishable_events:
+            event = item["event"]
+            text = f"{event.title} {event.content}"
+
+            # Tier-1 정부 소스는 checkworthiness 면제 (공식 발표)
+            if not item["is_tier1_govt"]:
+                # Gate 1: Check-worthiness
+                if agent_settings.checkworthiness_enabled:
+                    cw_result = check_worthiness(
+                        text,
+                        entertainment_threshold=agent_settings.entertainment_pattern_threshold,
+                        speculation_threshold=agent_settings.speculation_pattern_threshold,
+                        human_interest_threshold=agent_settings.human_interest_pattern_threshold,
+                    )
+                    if not cw_result.is_checkworthy:
+                        if agent_settings.log_gate_rejections:
+                            logger.info(
+                                f"[GATE1-REJECT] {cw_result.rejection_reason.value}: "
+                                f"{event.title[:50]}..."
+                            )
+                        continue
+
+            # Gate 2: Specificity (영어 기사만 적용 - 패턴이 영어 전용)
+            # Tier-1 govt 또는 비영어 기사는 스킵
+            is_english = getattr(event, 'language', 'en') in ['en', 'english', '']
+            if agent_settings.specificity_enabled and is_english and not item["is_tier1_govt"]:
+                spec_result = check_specificity(text, min_score=agent_settings.min_specificity_score)
                 if not spec_result.is_specific:
                     if agent_settings.log_gate_rejections:
                         logger.info(
                             f"[GATE2-REJECT] Low specificity ({spec_result.score:.2f}): "
-                            f"{event_dict['title'][:50]}..."
+                            f"{event.title[:50]}..."
                         )
                     continue
 
-            gate_passed_events.append(event_dict)
-            gate_passed_triggers.append(trigger_event)
+            gate_passed.append(item)
 
-        logger.info(
-            f"Content gates: {len(gate_passed_events)}/{len(events)} events passed"
-        )
+        logger.info(f"Content gates: {len(gate_passed)}/{len(publishable_events)} passed")
 
-        if not gate_passed_events:
+        if not gate_passed:
             return []
 
-        # 1. 결정론적 점수 계산
-        scored_events = []
-        for event_dict, trigger_event in zip(gate_passed_events, gate_passed_triggers):
-            # GDELT API pre-filters by keyword, so non-English articles
-            # that passed GDELT's filter should get base score
-            is_api_prefiltered = event_dict["source"] == "gdelt"
+        # ============================================
+        # Step 5: 카테고리별 이벤트 제한 및 다양성 보장
+        # ============================================
+        max_per_category = agent_settings.max_events_per_category
+        category_counts: dict[str, int] = {}  # 카테고리별 카운터
+        limited_events = []
 
-            score = calculate_significance(
-                title=event_dict["title"],
-                content=event_dict.get("content", ""),
-                source_domain=event_dict["source_name"],
-                language=event_dict.get("language", "en"),
-                api_prefiltered=is_api_prefiltered,
-            )
+        for item in gate_passed:
+            event = item["event"]
+            category = self._infer_category_from_event(event)
 
-            # 로깅 (설정에 따라)
-            if agent_settings.log_all_scores:
-                logger.info(
-                    f"[SCORE] {score.total_score:3d} [{score.level.value:8s}] "
-                    f"{event_dict['title'][:60]}... "
-                    f"| {score.reasoning}"
+            # 카테고리별 제한 적용
+            current_count = category_counts.get(category, 0)
+            if current_count >= max_per_category:
+                logger.debug(
+                    f"[LIMIT] Skipping {category} event (max {max_per_category} reached): "
+                    f"{event.title[:40]}..."
                 )
+                continue
 
-            scored_events.append((event_dict, score, trigger_event))
-
-        # 2. 임계값 필터링
-        min_score = agent_settings.min_publish_score
-        filtered = [
-            (e, s, t) for e, s, t in scored_events
-            if s.total_score >= min_score
-        ]
+            category_counts[category] = current_count + 1
+            item["_category"] = category  # 캐싱
+            limited_events.append(item)
 
         logger.info(
-            f"Significance filter: {len(filtered)}/{len(scored_events)} events "
-            f"passed (threshold={min_score})"
+            f"Category limiting: {len(limited_events)}/{len(gate_passed)} events "
+            f"(max {max_per_category} per category)"
         )
 
-        if not filtered:
-            # 모든 이벤트가 필터링됨 - 상세 로그
-            logger.warning(
-                f"All {len(events)} events filtered out. "
-                f"Highest score: {max(s.total_score for _, s, _ in scored_events) if scored_events else 0}"
-            )
-            return []
+        # 로그로 카테고리별 분포 출력
+        for cat, count in sorted(category_counts.items()):
+            logger.info(f"  {cat}: {count} events")
 
-        # 2.5. Specificity Gate (구체성 필터)
-        if agent_settings.specificity_enabled:
-            specificity_passed = []
-            for e, s, t in filtered:
-                text = f"{e['title']} {e.get('content', '')}"
-                spec_result = check_specificity(text, agent_settings.min_specificity_score)
+        # ============================================
+        # Step 6: 다양성을 위한 인터리빙 (뉴스 카테고리 우선)
+        # ============================================
+        if agent_settings.ensure_category_diversity:
+            # 자연재해와 기타 카테고리 분리
+            disaster_events = []
+            news_events = []
 
-                if spec_result.is_specific:
-                    specificity_passed.append((e, s, t))
+            for item in limited_events:
+                category = item.get("_category", "other")
+                if category == "natural_disaster":
+                    disaster_events.append(item)
                 else:
-                    logger.info(
-                        f"[SPECIFICITY REJECTED] score={spec_result.score:.2f} "
-                        f"| date={spec_result.has_recent_date} "
-                        f"| location={spec_result.has_specific_location} "
-                        f"| numbers={spec_result.has_specific_numbers} "
-                        f"| {e['title'][:50]}..."
-                    )
+                    news_events.append(item)
+
+            # 뉴스를 먼저, 자연재해를 나중에 (인터리빙)
+            # 뉴스 2개당 재해 1개 비율로 섞기
+            interleaved = []
+            news_idx, disaster_idx = 0, 0
+
+            while news_idx < len(news_events) or disaster_idx < len(disaster_events):
+                # 뉴스 2개 추가
+                for _ in range(2):
+                    if news_idx < len(news_events):
+                        interleaved.append(news_events[news_idx])
+                        news_idx += 1
+                # 자연재해 1개 추가
+                if disaster_idx < len(disaster_events):
+                    interleaved.append(disaster_events[disaster_idx])
+                    disaster_idx += 1
+
+            limited_events = interleaved
+            logger.info(
+                f"Category diversity: {len(news_events)} news, {len(disaster_events)} disasters "
+                f"(interleaved 2:1 ratio)"
+            )
+
+        # ============================================
+        # Step 7: 최종 결과 포맷팅
+        # ============================================
+        results = []
+        for item in limited_events:
+            event = item["event"]
+            confidence = item["confidence"]
+
+            # 캐싱된 카테고리 사용 (없으면 추론)
+            category = item.get("_category") or self._infer_category_from_event(event)
+
+            # 소스 목록 구성
+            sources = [event.source_name]
+            if "matching_events" in item:
+                sources.extend([e.source_name for e in item["matching_events"]])
+
+            results.append({
+                "description": event.title,
+                "category": category,
+                "sources": sources,
+                "source_count": item["cluster_size"],
+                "trigger_source": event.source.value,
+                "keywords": event.keywords_matched,
+                "url": event.url,
+                "confidence_score": round(confidence.score, 3),
+                "confidence_level": confidence.level.value,
+                "two_source_satisfied": confidence.two_source_satisfied,
+                "recommendation": confidence.recommendation.value,
+                "is_tier1_govt": item["is_tier1_govt"],
+            })
 
             logger.info(
-                f"Specificity filter: {len(specificity_passed)}/{len(filtered)} events "
-                f"passed (min_score={agent_settings.min_specificity_score})"
+                f"[PUBLISH] {confidence.score:.2f} | {category} | "
+                f"{item['cluster_size']} sources | {event.title[:50]}..."
             )
-            filtered = specificity_passed
 
-            if not filtered:
-                logger.warning("All events filtered out by specificity gate")
-                return []
+        return results
 
-        # 3. LLM 검증 (선택적)
-        if agent_settings.use_llm_scoring and self.llm:
-            return await self._llm_validate_and_format(filtered)
+    def _infer_category_from_event(self, event: TriggerEvent) -> str:
+        """TriggerEvent에서 카테고리 추론"""
+        text = f"{event.title} {event.content}".lower()
 
-        # LLM 없으면 결정론적 결과만 반환
-        return self._format_results(filtered)
+        # 소스 기반 카테고리
+        if event.source == TriggerSource.USGS:
+            return "natural_disaster"
+        if event.source == TriggerSource.NOAA:
+            return "natural_disaster"
+
+        # 키워드 기반 카테고리
+        if any(kw in text for kw in ["earthquake", "tsunami", "flood", "hurricane"]):
+            return "natural_disaster"
+        if any(kw in text for kw in ["war", "invasion", "airstrike", "troops"]):
+            return "war"
+        if any(kw in text for kw in ["terrorist", "bombing", "hostage"]):
+            return "terrorism"
+        if any(kw in text for kw in ["protest", "demonstration", "riot"]):
+            return "protest"
+        if any(kw in text for kw in ["military", "army", "navy", "air force"]):
+            return "military"
+        if any(kw in text for kw in ["violence", "killed", "casualties"]):
+            return "violence"
+        return "other"
 
     async def _llm_validate_and_format(
         self,
@@ -442,10 +584,12 @@ class MultiSourceScanner:
 
         return results
 
-    def _infer_category(self, event_dict: dict, score: SignificanceScore) -> str:
-        """키워드 기반 카테고리 추론"""
+    def _infer_category(self, event_dict: dict, score: SignificanceScore = None) -> str:
+        """키워드 기반 카테고리 추론 (dict용)"""
         text = f"{event_dict['title']} {event_dict.get('content', '')}".lower()
 
+        if any(kw in text for kw in ["earthquake", "tsunami", "flood", "hurricane"]):
+            return "natural_disaster"
         if any(kw in text for kw in ["war", "invasion", "airstrike", "troops"]):
             return "war"
         if any(kw in text for kw in ["terrorist", "bombing", "hostage"]):

@@ -63,10 +63,10 @@ class AgentSettings(BaseSettings):
     reddit_subreddits: str = "worldnews,news,UkrainianConflict,geopolitics"
     reddit_min_score: int = 50
 
-    bluesky_enabled: bool = True
+    bluesky_enabled: bool = False  # 403 인증 필요 - 비활성화
     bluesky_min_likes: int = 10
 
-    google_trends_enabled: bool = True
+    google_trends_enabled: bool = False  # 429 rate limit 심함 - 비활성화
     google_trends_geo: str = "US"
 
     # News APIs (Tier-2)
@@ -98,6 +98,10 @@ class AgentSettings(BaseSettings):
     # ===========================================
     scan_interval_minutes: int = 15  # 멀티소스용 15분 간격
     max_news_per_scan: int = 100
+
+    # 카테고리별 이벤트 제한 (큐 다양성 보장)
+    max_events_per_category: int = 5  # 각 카테고리당 최대 이벤트 수
+    ensure_category_diversity: bool = True  # 다양한 카테고리 우선
 
     # ===========================================
     # 유의성 점수 설정 (Significance Scoring)
