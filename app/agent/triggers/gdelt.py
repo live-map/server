@@ -21,6 +21,7 @@ from datetime import datetime
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
+from .date_extractor import extract_date_from_url, validate_article_recency
 
 logger = logging.getLogger(__name__)
 
@@ -157,17 +158,35 @@ class GDELTTrigger(BaseTrigger):
                     if self.tone_threshold is not None:
                         source_marker = "[tone-filtered]"
 
-                    # Extract publication date from GDELT response
-                    # GDELT uses "seendate" field in format "YYYYMMDDHHmmss"
-                    pub_date_str = art.get("seendate", "") or art.get("pubdate", "")
+                    # Extract seendate from GDELT response
+                    # GDELT uses "seendate" field in format "YYYYMMDDTHHmmssZ"
+                    pub_date_str = art.get("seendate", "")
                     try:
-                        detected_at = (
-                            datetime.strptime(pub_date_str[:14], "%Y%m%d%H%M%S")
-                            if pub_date_str and len(pub_date_str) >= 14
+                        # Handle format: "20260123T104500Z"
+                        clean_date = pub_date_str.replace("T", "").replace("Z", "")
+                        seendate = (
+                            datetime.strptime(clean_date[:14], "%Y%m%d%H%M%S")
+                            if clean_date and len(clean_date) >= 14
                             else datetime.utcnow()
                         )
                     except (ValueError, TypeError):
-                        detected_at = datetime.utcnow()
+                        seendate = datetime.utcnow()
+
+                    # Validate article recency using URL date
+                    url = art.get("url", "")
+                    is_recent, reason, url_date = validate_article_recency(
+                        url=url,
+                        seendate=seendate,
+                        max_age_hours=48,
+                        max_discrepancy_hours=72,
+                    )
+
+                    if not is_recent:
+                        logger.info(f"[GDELT-RECENCY] Rejected: {reason} | {title[:50]}...")
+                        continue
+
+                    # Use URL date if available, otherwise seendate
+                    detected_at = url_date if url_date else seendate
 
                     # GDELT가 이미 키워드로 필터링했으므로 모든 기사 포함
                     # 최종 필터링은 significance scoring에서 수행
@@ -184,6 +203,9 @@ class GDELTTrigger(BaseTrigger):
                             **art,
                             "gkg_themes_enabled": self.use_gkg_themes,
                             "tone_threshold": self.tone_threshold,
+                            "url_date": url_date.isoformat() if url_date else None,
+                            "seendate_parsed": seendate.isoformat(),
+                            "recency_reason": reason,
                         },
                     ))
 
