@@ -92,7 +92,7 @@ async def create_post(
     description="게시글 목록을 페이지네이션으로 조회합니다.",
 )
 async def list_posts(
-    service: PostServiceDep,
+    postService: Annotated[PostService, Depends(get_post_service)],
     limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 20,
     offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
 ) -> PostListResponse:
@@ -102,8 +102,8 @@ async def list_posts(
     - **limit**: 최대 조회 수 (기본 20, 최대 100)
     - **offset**: 건너뛸 수 (기본 0)
     """
-    posts = await service.list_posts(limit=limit, offset=offset)
-    total = await service.post_repo.count()
+    posts = await postService.list_posts(limit=limit, offset=offset)
+    total = await postService.post_repo.count()
 
     items = [
         PostResponse(
@@ -225,7 +225,7 @@ async def delete_post(
             detail="Post not found or no permission",
         )
 
-
+# This is only for admin to hard delete a post
 @router.delete(
     "/{post_id}/hard",
     status_code=status.HTTP_204_NO_CONTENT,
