@@ -19,6 +19,7 @@ from enum import Enum
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
+from .date_extractor import validate_article_recency
 
 logger = logging.getLogger(__name__)
 
@@ -204,22 +205,38 @@ class GDELTAnomalyTrigger(BaseTrigger):
                     title = art.get("title", "")
                     matched = self._matches_keywords(title)
 
-                    # Extract publication date from GDELT response
-                    pub_date_str = art.get("seendate", "") or art.get("pubdate", "")
+                    # Extract seendate from GDELT response
+                    pub_date_str = art.get("seendate", "")
                     try:
-                        detected_at = (
-                            datetime.strptime(pub_date_str[:14], "%Y%m%d%H%M%S")
-                            if pub_date_str and len(pub_date_str) >= 14
+                        clean_date = pub_date_str.replace("T", "").replace("Z", "")
+                        seendate = (
+                            datetime.strptime(clean_date[:14], "%Y%m%d%H%M%S")
+                            if clean_date and len(clean_date) >= 14
                             else datetime.utcnow()
                         )
                     except (ValueError, TypeError):
-                        detected_at = datetime.utcnow()
+                        seendate = datetime.utcnow()
+
+                    # Validate article recency using URL date
+                    url = art.get("url", "")
+                    is_recent, reason, url_date = validate_article_recency(
+                        url=url,
+                        seendate=seendate,
+                        max_age_hours=48,
+                        max_discrepancy_hours=72,
+                    )
+
+                    if not is_recent:
+                        logger.info(f"[GKG-RECENCY] Rejected: {reason} | {title[:50]}...")
+                        continue
+
+                    detected_at = url_date if url_date else seendate
 
                     events.append(TriggerEvent(
                         title=title,
                         source=TriggerSource.GDELT,
                         source_name=art.get("domain", "unknown"),
-                        url=art.get("url", ""),
+                        url=url,
                         detected_at=detected_at,
                         language=art.get("language", "en"),
                         country=art.get("sourcecountry", ""),
@@ -227,6 +244,8 @@ class GDELTAnomalyTrigger(BaseTrigger):
                         raw_data={
                             **art,
                             "anomaly_type": AnomalyType.GKG_THEME.value,
+                            "url_date": url_date.isoformat() if url_date else None,
+                            "recency_reason": reason,
                         },
                     ))
 
@@ -275,22 +294,38 @@ class GDELTAnomalyTrigger(BaseTrigger):
                     title = art.get("title", "")
                     matched = self._matches_keywords(title)
 
-                    # Extract publication date from GDELT response
-                    pub_date_str = art.get("seendate", "") or art.get("pubdate", "")
+                    # Extract seendate from GDELT response
+                    pub_date_str = art.get("seendate", "")
                     try:
-                        detected_at = (
-                            datetime.strptime(pub_date_str[:14], "%Y%m%d%H%M%S")
-                            if pub_date_str and len(pub_date_str) >= 14
+                        clean_date = pub_date_str.replace("T", "").replace("Z", "")
+                        seendate = (
+                            datetime.strptime(clean_date[:14], "%Y%m%d%H%M%S")
+                            if clean_date and len(clean_date) >= 14
                             else datetime.utcnow()
                         )
                     except (ValueError, TypeError):
-                        detected_at = datetime.utcnow()
+                        seendate = datetime.utcnow()
+
+                    # Validate article recency using URL date
+                    url = art.get("url", "")
+                    is_recent, reason, url_date = validate_article_recency(
+                        url=url,
+                        seendate=seendate,
+                        max_age_hours=48,
+                        max_discrepancy_hours=72,
+                    )
+
+                    if not is_recent:
+                        logger.info(f"[GOLDSTEIN-RECENCY] Rejected: {reason} | {title[:50]}...")
+                        continue
+
+                    detected_at = url_date if url_date else seendate
 
                     events.append(TriggerEvent(
                         title=title,
                         source=TriggerSource.GDELT,
                         source_name=art.get("domain", "unknown"),
-                        url=art.get("url", ""),
+                        url=url,
                         detected_at=detected_at,
                         language=art.get("language", "en"),
                         country=art.get("sourcecountry", ""),
@@ -299,6 +334,8 @@ class GDELTAnomalyTrigger(BaseTrigger):
                             **art,
                             "anomaly_type": AnomalyType.GOLDSTEIN_CONFLICT.value,
                             "tone": tone,
+                            "url_date": url_date.isoformat() if url_date else None,
+                            "recency_reason": reason,
                         },
                     ))
 
