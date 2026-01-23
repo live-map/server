@@ -2,7 +2,8 @@
 이벤트 검증기 - 하이브리드 방식
 
 Stage 1: 규칙 기반 필터 (70% 제거, $0)
-Stage 2: LLM 기반 검증 (30%만 검증, $0.001/건)
+Stage 2: Zero-shot 분류 (local model, 확신도 높으면 결정)
+Stage 3: LLM 기반 검증 (edge cases만, $0.001/건)
 
 목적:
 - 키워드 매칭으로 수집된 콘텐츠 중 실제 이벤트만 통과
@@ -106,7 +107,36 @@ def is_likely_real_event(text: str) -> tuple[bool, str | None]:
 
 
 # ============================================
-# Stage 2: LLM 기반 검증
+# Stage 2: Zero-shot 분류
+# ============================================
+
+def classify_with_zero_shot(text: str) -> tuple[bool | None, float, str]:
+    """
+    Zero-shot 분류기로 텍스트 분류
+
+    Args:
+        text: 분류할 텍스트
+
+    Returns:
+        (is_international, confidence, label)
+        - is_international: 국제 정세 여부 (None이면 불확실)
+        - confidence: 신뢰도
+        - label: 분류 레이블
+    """
+    try:
+        from app.agent.zero_shot_classifier import get_zero_shot_classifier
+        classifier = get_zero_shot_classifier()
+        return classifier.classify(text)
+    except ImportError:
+        logger.warning("Zero-shot classifier not available, skipping")
+        return None, 0.0, "UNAVAILABLE"
+    except Exception as e:
+        logger.warning(f"Zero-shot classification error: {e}")
+        return None, 0.0, f"ERROR: {e}"
+
+
+# ============================================
+# Stage 3: LLM 기반 검증
 # ============================================
 
 EVENT_VERIFY_PROMPT = """Today's date: {today}
@@ -159,7 +189,7 @@ async def verify_event_with_llm(
     llm: "ChatOpenAI"
 ) -> tuple[bool, str]:
     """
-    LLM 기반 2차 검증
+    LLM 기반 검증
 
     Args:
         text: 검증할 텍스트
@@ -203,21 +233,33 @@ async def verify_event_with_llm(
         return True, f"LLM_ERROR: {str(e)[:50]}"
 
 
+# ============================================
+# 하이브리드 검증 파이프라인
+# ============================================
+
+# Zero-shot 신뢰도 임계값
+ZERO_SHOT_HIGH_CONFIDENCE = 0.8  # 이 이상이면 바로 결정
+ZERO_SHOT_LOW_CONFIDENCE = 0.5   # 이 이하면 LLM 검증
+
+
 async def verify_event_hybrid(
     text: str,
     llm: "ChatOpenAI | None" = None,
-    use_llm: bool = True
+    use_llm: bool = True,
+    use_zero_shot: bool = True
 ) -> tuple[bool, str]:
     """
-    하이브리드 이벤트 검증
+    하이브리드 이벤트 검증 (3단계)
 
     1단계: 규칙 기반 (빠름, 무료)
-    2단계: LLM (정밀, 비용) - 선택적
+    2단계: Zero-shot 분류 (로컬 모델, 확신도 높으면 결정)
+    3단계: LLM (정밀, 비용) - 불확실한 경우만
 
     Args:
         text: 검증할 텍스트 (title + content)
         llm: LangChain ChatOpenAI 인스턴스 (None이면 규칙만 적용)
         use_llm: LLM 검증 활성화 여부
+        use_zero_shot: Zero-shot 분류 활성화 여부
 
     Returns:
         (이벤트 여부, 사유)
@@ -229,13 +271,30 @@ async def verify_event_hybrid(
         logger.debug(f"[GATE0-RULES] Rejected: {rejection_reason}")
         return False, rejection_reason
 
-    # Stage 2: LLM 검증 (규칙 통과한 것만)
+    # Stage 2: Zero-shot 분류 (선택적)
+    if use_zero_shot:
+        is_intl, confidence, label = classify_with_zero_shot(text)
+
+        if is_intl is not None and confidence >= ZERO_SHOT_HIGH_CONFIDENCE:
+            # 확신도 높으면 바로 결정
+            if is_intl:
+                logger.debug(f"[GATE0-ZEROSHOT] Passed: {label} ({confidence:.2f})")
+                return True, f"ZERO_SHOT: {label} ({confidence:.2f})"
+            else:
+                logger.debug(f"[GATE0-ZEROSHOT] Rejected: {label} ({confidence:.2f})")
+                return False, f"ZERO_SHOT_REJECT: {label} ({confidence:.2f})"
+
+        # 중간 확신도는 LLM으로 넘김
+        if is_intl is not None:
+            logger.debug(f"[GATE0-ZEROSHOT] Uncertain: {label} ({confidence:.2f}), forwarding to LLM")
+
+    # Stage 3: LLM 검증 (불확실한 경우만)
     if use_llm and llm:
         is_event, reason = await verify_event_with_llm(text, llm)
         if not is_event:
             logger.debug(f"[GATE0-LLM] Rejected: {reason}")
             return False, f"LLM: {reason}"
-        return True, f"PASSED: {reason}"
+        return True, f"LLM_PASSED: {reason}"
 
     return True, "PASSED_RULES_ONLY"
 
@@ -269,17 +328,20 @@ TEST_CASES = [
 ]
 
 
-async def run_tests(llm: "ChatOpenAI | None" = None):
+async def run_tests(llm: "ChatOpenAI | None" = None, use_zero_shot: bool = False):
     """테스트 케이스 실행"""
     print("\n" + "=" * 70)
     print("EVENT VERIFIER TEST")
+    print(f"Zero-shot: {'ON' if use_zero_shot else 'OFF'}, LLM: {'ON' if llm else 'OFF'}")
     print("=" * 70)
 
     passed = 0
     failed = 0
 
     for text, expected in TEST_CASES:
-        is_event, reason = await verify_event_hybrid(text, llm, use_llm=llm is not None)
+        is_event, reason = await verify_event_hybrid(
+            text, llm, use_llm=llm is not None, use_zero_shot=use_zero_shot
+        )
 
         if is_event == expected:
             status = "PASS"
@@ -299,4 +361,4 @@ async def run_tests(llm: "ChatOpenAI | None" = None):
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(run_tests())
+    asyncio.run(run_tests(use_zero_shot=False))
