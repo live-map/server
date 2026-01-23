@@ -42,6 +42,7 @@ NOT_EVENT_PATTERNS = [
 
     # 추측/가정/시나리오
     r"\b(if .* would|could potentially|might happen|hypothetically)\b",
+    r"\bif .* (might|could|may) ",  # "If X, Y might/could/may..."
     r"\b(what if|scenario|simulation|thought experiment)\b",
     r"\b(prediction|forecast|speculation)\b",
 
