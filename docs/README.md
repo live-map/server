@@ -1,176 +1,129 @@
 # LiveMap Documentation
 
-> AI-powered international affairs news verification platform
+> AI-powered International Affairs News Verification Platform
+>
+> AI 기반 국제 정세 뉴스 검증 플랫폼
 
 ---
 
-## Choose Your Path
+## Choose Your Language / 언어를 선택하세요
 
-### For Investors & Business
+<table>
+<tr>
+<td width="50%" align="center">
 
-> *"What is LiveMap and why does it matter?"*
+### English Documentation
 
-| Document | Description |
-|----------|-------------|
-| [**Overview**](OVERVIEW.md) | System overview and key differentiators |
-| [**Investor Summary**](business/INVESTOR_SUMMARY.md) | Executive pitch and business model |
-| [**Roadmap**](business/ROADMAP.md) | Future development plans |
+Full documentation in English
 
-**Key highlights:**
-- $0 source cost vs $20,000+/month competitors
-- 15-60 minutes faster than traditional media
-- 91% LLM cost reduction through hybrid verification
+[**Enter English Docs**](en/README.md)
 
----
+[PM Reading Guide](en/READING_GUIDE.md) | [Overview](en/OVERVIEW.md)
 
-### For Users & Journalists
+</td>
+<td width="50%" align="center">
 
-> *"How can I trust LiveMap's information?"*
+### 한국어 문서
 
-| Document | Description |
-|----------|-------------|
-| [**Overview**](OVERVIEW.md) | How LiveMap works |
-| [**Confidence Scoring**](concepts/CONFIDENCE_SCORING.md) | How trust scores are calculated |
-| [**Source Tiers**](concepts/SOURCE_TIERS.md) | How sources are evaluated |
-| [**Two-Source Rule**](concepts/TWO_SOURCE_RULE.md) | Why we require 2+ sources |
-| [**International Affairs Focus**](concepts/INTERNATIONAL_AFFAIRS.md) | What categories we cover |
+한국어 전체 문서
 
-**Key principles:**
-- IFCN-compliant methodology
-- Transparent confidence scores
-- All sources cited
+[**한국어 문서 보기**](ko/README.md)
+
+[PM 읽기 가이드](ko/READING_GUIDE.md) | [개요](ko/OVERVIEW.md)
+
+</td>
+</tr>
+</table>
 
 ---
 
-### For Technical Experts
+## Quick Start / 빠른 시작
 
-> *"How does the technology actually work?"*
+### For Investors / 투자자용
+- **EN**: [Investor Summary](en/business/INVESTOR_SUMMARY.md) | [Competitive Analysis](en/business/COMPETITIVE_ANALYSIS.md)
+- **KO**: [투자자 요약](ko/business/INVESTOR_SUMMARY.md) | [경쟁 분석](ko/business/COMPETITIVE_ANALYSIS.md)
 
-| Document | Description |
-|----------|-------------|
-| [**Architecture Overview**](architecture/README.md) | System architecture |
-| [**Scanner Pipeline**](architecture/SCANNER_PIPELINE.md) | 7-stage processing pipeline |
-| [**Event Verification**](architecture/EVENT_VERIFICATION.md) | Gate 0 hybrid verification |
-| [**Zero-shot Classifier**](architecture/ZERO_SHOT_CLASSIFIER.md) | ML-based classification |
-| [**Claim Verification**](architecture/CLAIM_VERIFICATION.md) | v3.0 SOTA implementation |
-| [**Algorithms**](algorithms/README.md) | Detailed algorithm documentation |
-| [**ADRs**](adr/README.md) | Architecture Decision Records |
+### For Technical Experts / 기술 전문가용
+- **EN**: [Architecture](en/architecture/README.md) | [Scanner Pipeline](en/architecture/SCANNER_PIPELINE.md)
+- **KO**: [아키텍처](ko/architecture/README.md) | [스캐너 파이프라인](ko/architecture/SCANNER_PIPELINE.md)
 
-**Technical highlights:**
-- 2026 SOTA implementation (AIC CTU, HerO 2, VeriScore)
-- 3-stage hybrid verification (Rules → Zero-shot → LLM)
-- BGE-M3 embeddings + HDBSCAN clustering
+### For Developers / 개발자용
+- **EN**: [Getting Started](en/getting-started/README.md) | [Installation](en/getting-started/INSTALLATION.md)
+- **KO**: [시작하기](ko/getting-started/README.md) | [설치](ko/getting-started/INSTALLATION.md)
 
 ---
 
-### For Developers
-
-> *"How do I set up and contribute?"*
-
-| Document | Description |
-|----------|-------------|
-| [**Getting Started**](getting-started/README.md) | 5-minute quickstart |
-| [**Installation**](getting-started/INSTALLATION.md) | Detailed setup guide |
-| [**Project Structure**](getting-started/PROJECT_STRUCTURE.md) | Codebase organization |
-| [**API Reference**](api/README.md) | REST API documentation |
-| [**Configuration**](guides/CONFIGURATION.md) | All settings |
-| [**Trigger Guide**](guides/TRIGGER_GUIDE.md) | Adding new data sources |
-| [**Testing Guide**](guides/TESTING_GUIDE.md) | Writing tests |
-| [**Deployment**](guides/DEPLOYMENT.md) | Production deployment |
-| [**Troubleshooting**](guides/TROUBLESHOOTING.md) | Common issues |
-
-**Developer resources:**
-- Database Schema: [reference/DATABASE_SCHEMA.md](reference/DATABASE_SCHEMA.md)
-- Glossary: [reference/GLOSSARY.md](reference/GLOSSARY.md)
-- Security: [security/README.md](security/README.md)
-
----
-
-## Documentation Structure
+## Documentation Structure / 문서 구조
 
 ```
 docs/
-├── README.md                    # This file (entry point)
-├── OVERVIEW.md                  # System overview (all audiences)
+├── README.md              # This landing page / 이 랜딩 페이지
 │
-├── getting-started/             # New developer onboarding
-│   ├── README.md               # 5-minute quickstart
-│   ├── INSTALLATION.md         # Detailed setup
-│   └── PROJECT_STRUCTURE.md    # Codebase guide
+├── en/                    # English Documentation
+│   ├── README.md
+│   ├── OVERVIEW.md
+│   ├── READING_GUIDE.md   # PM Guide (English)
+│   ├── adr/               # Architecture Decision Records
+│   ├── algorithms/        # Algorithm documentation
+│   ├── api/               # API reference
+│   ├── architecture/      # System architecture
+│   ├── business/          # Business documentation
+│   ├── concepts/          # Core concepts
+│   ├── getting-started/   # Developer onboarding
+│   ├── guides/            # How-to guides
+│   ├── history/           # Project history
+│   ├── reference/         # Technical reference
+│   └── security/          # Security documentation
 │
-├── concepts/                    # Core concepts (all audiences)
-│   ├── TWO_SOURCE_RULE.md      # Verification standard
-│   ├── SOURCE_TIERS.md         # Source credibility
-│   ├── CONFIDENCE_SCORING.md   # Trust calculation
-│   └── INTERNATIONAL_AFFAIRS.md # Category focus
-│
-├── architecture/                # Technical deep-dive
-│   ├── SCANNER_PIPELINE.md     # 7-stage pipeline
-│   ├── EVENT_VERIFICATION.md   # Gate 0 hybrid
-│   ├── ZERO_SHOT_CLASSIFIER.md # ML classification
-│   └── CLAIM_VERIFICATION.md   # v3.0 system
-│
-├── api/                         # API documentation
-│   └── README.md               # Endpoints reference
-│
-├── guides/                      # How-to guides
-│   ├── CONFIGURATION.md        # Settings reference
-│   ├── TRIGGER_GUIDE.md        # Adding sources
-│   ├── TESTING_GUIDE.md        # Testing guide
-│   ├── DEPLOYMENT.md           # Production deploy
-│   └── TROUBLESHOOTING.md      # Issue resolution
-│
-├── reference/                   # Technical reference
-│   ├── DATABASE_SCHEMA.md      # DB models
-│   └── GLOSSARY.md             # Terms & definitions
-│
-├── business/                    # Business documentation
-│   ├── INVESTOR_SUMMARY.md     # Executive pitch
-│   └── ROADMAP.md              # Future plans
-│
-├── adr/                         # Architecture decisions
-│   ├── ADR-001 to ADR-006
-│   └── README.md               # ADR index
-│
-├── algorithms/                  # Algorithm documentation
-│   ├── CROSS_SOURCE_MATCHER.md
-│   ├── CONFIDENCE_SCORING.md
-│   └── DEDUPLICATION.md
-│
-├── security/                    # Security documentation
-│   ├── API_KEYS.md             # Key management
-│   └── DATA_HANDLING.md        # Data processing
-│
-└── history/                     # Project evolution
-    ├── README.md               # Timeline
-    ├── CHANGELOG.md            # Version history
-    └── archive/                # Deprecated docs
+└── ko/                    # 한국어 문서
+    ├── README.md
+    ├── OVERVIEW.md
+    ├── READING_GUIDE.md   # PM 가이드 (한글)
+    ├── adr/               # 아키텍처 결정 기록
+    ├── algorithms/        # 알고리즘 문서
+    ├── api/               # API 레퍼런스
+    ├── architecture/      # 시스템 아키텍처
+    ├── business/          # 비즈니스 문서
+    ├── concepts/          # 핵심 개념
+    ├── getting-started/   # 개발자 온보딩
+    ├── guides/            # 가이드
+    ├── history/           # 프로젝트 히스토리
+    ├── reference/         # 기술 레퍼런스
+    └── security/          # 보안 문서
 ```
 
 ---
 
-## Quick Links
+## Key Highlights / 핵심 특징
 
-| Need | Go To |
-|------|-------|
-| System overview | [OVERVIEW.md](OVERVIEW.md) |
-| Setup in 5 minutes | [getting-started/README.md](getting-started/README.md) |
-| API endpoints | [api/README.md](api/README.md) |
-| All settings | [guides/CONFIGURATION.md](guides/CONFIGURATION.md) |
-| Help with issues | [guides/TROUBLESHOOTING.md](guides/TROUBLESHOOTING.md) |
+| Feature | Description |
+|---------|-------------|
+| **Cost** | $20/month vs competitors $10K-$200K |
+| **Speed** | 15-60 min faster than traditional media |
+| **Accuracy** | 2026 SOTA implementation (AIC CTU, HerO 2) |
+| **Languages** | 100+ via BGE-M3 multilingual embeddings |
 
----
-
-## Contributing to Documentation
-
-When adding new documentation:
-
-1. Place in appropriate directory
-2. Update this README index
-3. Link from related documents
-4. Follow markdown conventions
-5. Include code examples where relevant
+| 특징 | 설명 |
+|------|------|
+| **비용** | 월 $20 (경쟁사 대비 99% 절감) |
+| **속도** | 전통 언론 대비 15-60분 빠른 감지 |
+| **정확도** | 2026 SOTA 구현 (AIC CTU, HerO 2) |
+| **언어** | BGE-M3로 100개+ 언어 지원 |
 
 ---
 
-*Last updated: January 2026*
+## Contributing / 기여하기
+
+When adding documentation:
+1. Add to both `en/` and `ko/` directories
+2. Keep code examples language-neutral
+3. Update the relevant README index
+
+문서 추가 시:
+1. `en/`과 `ko/` 디렉토리 모두에 추가
+2. 코드 예시는 언어 중립적으로 유지
+3. 관련 README 인덱스 업데이트
+
+---
+
+*Last updated / 최종 업데이트: January 2026*
