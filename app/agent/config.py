@@ -108,7 +108,7 @@ class AgentSettings(BaseSettings):
     # 국제 정세 집중 전략
     # ===========================================
     focus_international_affairs: bool = True  # 국제 정세 카테고리만 처리
-    international_affairs_categories: str = "war,conflict,politics,security,military,terrorism,diplomacy"
+    international_affairs_categories: str = "war,conflict,politics,security,military,terrorism,diplomacy,protest"
 
     # ===========================================
     # 유의성 점수 설정 (Significance Scoring)

@@ -11,6 +11,7 @@ Stage 2: LLM 기반 검증 (30%만 검증, $0.001/건)
 
 import re
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -46,19 +47,34 @@ NOT_EVENT_PATTERNS = [
     r"\b(what if|scenario|simulation|thought experiment)\b",
     r"\b(prediction|forecast|speculation)\b",
 
-    # 리뷰/의견/분석
-    r"\b(review|opinion|editorial|analysis|commentary)\b",
+    # 리뷰/의견/분석 (개선)
+    r"\b(review|opinion|editorial|commentary)\b",
     r"\b(my thoughts on|i think|in my opinion)\b",
+    r"\bwhy .{1,50} (is|are|isn't|not)\b",
+    r"\bhow .{1,50} (can|could|should|will)\b",
+    r"\bwhat .{1,50} (means|tells|shows)\b",
+    r"\b(explained|breakdown|deep dive|explainer)\b",
 
-    # 스포츠
+    # 스포츠 (영어)
     r"\b(football|soccer|basketball|baseball|tennis|golf|cricket|rugby)\b",
     r"\b(olympics|world cup|championship|tournament|league|playoffs)\b",
     r"\b(match|game score|win|lose|defeat|victory)\s+(?!military|war)",
     r"\b(nba|nfl|mlb|nhl|fifa|uefa)\b",
 
-    # 광고/프로모션
+    # 스포츠 (다국어 - 한국어)
+    r"(레알 마드리드|바르셀로나|맨체스터|리버풀|첼시|아스널|토트넘)",
+    r"(손흥민|황희찬|이강인|김민재)",
+    r"(프리미어리그|라리가|분데스리가|세리에A|K리그)",
+
+    # 스포츠 (다국어 - 아랍어)
+    r"(ريال مدريد|برشلونة|مانشستر|ليفربول)",
+
+    # 스포츠 (다국어 - 중국어)
+    r"(皇马|巴萨|曼联|利物浦|拜仁|切尔西)",
+
+    # 광고/프로모션 (수정됨 - "deal" 제거)
     r"\b(sale|discount|buy now|limited time|sponsored|ad)\b",
-    r"\b(promo code|coupon|deal|offer expires)\b",
+    r"\b(promo code|coupon|offer expires|flash sale|limited offer)\b",
 
     # 소설/픽션
     r"\b(novel|fiction|story|tale|book review)\b",
@@ -93,31 +109,49 @@ def is_likely_real_event(text: str) -> tuple[bool, str | None]:
 # Stage 2: LLM 기반 검증
 # ============================================
 
-EVENT_VERIFY_PROMPT = """다음 텍스트가 실제로 발생한 국제 정세 이벤트를 보도하는지 판단하세요.
+EVENT_VERIFY_PROMPT = """Today's date: {today}
 
-텍스트: {text}
+## Task
+Determine if this text reports an INTERNATIONAL AFFAIRS event.
 
-판단 기준:
-- YES: 실제 발생한 사건
-  - 전쟁, 군사 충돌, 테러 공격
-  - 외교 활동, 정상회담, 제재
-  - 시위, 폭동, 쿠데타
-  - 자연재해 (지진, 태풍 등)
-  - 현재 또는 최근에 발생한 사건
-  - 구체적인 날짜, 장소, 행위자 언급
+## Definition
+International affairs = events involving 2+ countries OR global security implications.
 
-- NO: 다음 중 하나에 해당
-  - 영화, 드라마, 게임 콘텐츠
-  - 역사적 사건 (과거 회고)
-  - 추측, 가정, 시나리오
-  - 의견, 분석, 사설
-  - 스포츠 경기 결과
-  - 광고, 프로모션
-  - 픽션, 소설
+## Classification
 
-답변 형식 (정확히 지켜주세요):
-VERDICT: YES 또는 NO
-REASON: 한 줄 설명"""
+PASS if ANY of these:
+- Military conflict between nations
+- Diplomatic meeting/negotiation between countries
+- International sanctions, treaties, agreements
+- UN/NATO/international organization actions
+- Cross-border humanitarian crisis
+- Terrorism with international implications
+- Protests with international significance
+
+REJECT if ANY of these:
+- Single country domestic politics (US immigration court, local elections)
+- Sports (any language)
+- Entertainment, celebrities
+- Opinion/analysis articles
+- Local crime, accidents
+
+## Examples
+
+Input: "Putin meets Trump envoys as Kremlin says Ukraine settlement hinges on territory"
+Output: PASS - Russia-US diplomatic meeting about Ukraine - 3 countries involved
+
+Input: "Judge warns Trump administration on immigration status"
+Output: REJECT - US domestic legal matter - single country
+
+Input: "TikTok deal between China and White House finalized"
+Output: PASS - US-China trade/tech deal - 2 countries
+
+## Input
+Text: {text}
+
+## Output (exactly this format)
+VERDICT: PASS or REJECT
+REASON: brief explanation"""
 
 
 async def verify_event_with_llm(
@@ -136,7 +170,8 @@ async def verify_event_with_llm(
     """
     # 텍스트 길이 제한 (토큰 절약)
     truncated_text = text[:500]
-    prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text)
+    today = datetime.now().strftime("%Y-%m-%d")
+    prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text, today=today)
 
     try:
         response = await llm.ainvoke(prompt)
@@ -144,9 +179,14 @@ async def verify_event_with_llm(
 
         # 응답 파싱
         lines = content.split("\n")
-        verdict_line = lines[0] if lines else ""
+        verdict_line = ""
+        for line in lines:
+            if "VERDICT:" in line.upper():
+                verdict_line = line
+                break
 
-        is_event = "YES" in verdict_line.upper()
+        # PASS = 통과, REJECT = 거부
+        is_event = "PASS" in verdict_line.upper()
 
         # REASON 추출
         reason = "N/A"
@@ -212,6 +252,8 @@ TEST_CASES = [
     ("Putin and Xi meet in Beijing for summit talks", True),
     ("M6.2 earthquake hits Turkey, 15 dead", True),
     ("Israeli forces conduct airstrike on Gaza", True),
+    ("TikTok deal between China and White House finalized", True),  # NEW: "deal" 패턴 수정 테스트
+    ("Anti-ICE protest erupts at federal building", True),  # NEW: protest 테스트
 
     # 거부해야 함 (이벤트 아님)
     ("New war movie 'Invasion' releases this Friday", False),
@@ -222,6 +264,8 @@ TEST_CASES = [
     ("My review of the new documentary about war", False),
     ("Game of Thrones season 8 episode 3 battle scene", False),
     ("50% off sale on military-style jackets", False),
+    ("손흥민이 토트넘에서 해트트릭 기록", False),  # NEW: 한국어 스포츠 테스트
+    ("Why the Ukraine war is changing global politics", False),  # NEW: 분석 기사 테스트
 ]
 
 
