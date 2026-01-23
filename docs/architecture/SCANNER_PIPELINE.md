@@ -288,7 +288,7 @@ Tier-1 정부 소스(USGS, NOAA)는 **Two-Source Rule 면제**:
 
 **파일**: `app/agent/event_verifier.py`
 
-**참고 문서**: [Zero-shot Classification](./ZERO_SHOT_CLASSIFICATION.md), [Event Verification](./EVENT_VERIFICATION.md)
+**참고 문서**: [Zero-shot Classification](./ZERO_SHOT_CLASSIFIER.md), [Event Verification](./EVENT_VERIFICATION.md)
 
 ### 3.5.2 문제 정의
 

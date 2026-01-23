@@ -1,114 +1,165 @@
-# LiveMap Backend Documentation
+# LiveMap Documentation
 
-Welcome to the LiveMap backend documentation. This directory contains comprehensive documentation for the news intelligence system.
+> AI-powered international affairs news verification platform
 
-## Quick Start
+---
 
-- **[Getting Started](GETTING_STARTED.md)** - Setup guide for new developers (5 minutes)
-- **[Configuration Reference](CONFIG_REFERENCE.md)** - All environment variables and settings
+## Choose Your Path
 
-## Core Documentation
+### For Investors & Business
 
-### System Design
-- **[Methodology](METHODOLOGY.md)** - Core methodology and principles
-- **[Scanner Pipeline](SCANNER_PIPELINE.md)** - 7-stage pipeline architecture
-- **[Event Verification](EVENT_VERIFICATION.md)** - Gate 0 3-stage hybrid verification
-- **[Zero-shot Classification](ZERO_SHOT_CLASSIFICATION.md)** - Stage 2 ML-based event classification
-- **[International Affairs Focus](INTERNATIONAL_AFFAIRS_FOCUS.md)** - Category definitions
+> *"What is LiveMap and why does it matter?"*
 
-### Architecture Decisions (ADRs)
-- **[ADR Index](adr/README.md)** - All architecture decision records
-- [ADR-001: Two-Source Rule](adr/ADR-001-two-source-rule.md)
-- [ADR-002: Gate Ordering](adr/ADR-002-gate-ordering.md)
-- [ADR-003: Tier System](adr/ADR-003-tier-system.md)
-- [ADR-004: Hybrid Verification](adr/ADR-004-hybrid-verification.md)
-- [ADR-005: Bilingual Generation](adr/ADR-005-bilingual-generation.md)
-- [ADR-006: Deduplication](adr/ADR-006-deduplication.md)
+| Document | Description |
+|----------|-------------|
+| [**Overview**](OVERVIEW.md) | System overview and key differentiators |
+| [**Investor Summary**](business/INVESTOR_SUMMARY.md) | Executive pitch and business model |
+| [**Roadmap**](business/ROADMAP.md) | Future development plans |
 
-### API Reference
-- **[API Reference](api/README.md)** - REST API endpoints with examples
+**Key highlights:**
+- $0 source cost vs $20,000+/month competitors
+- 15-60 minutes faster than traditional media
+- 91% LLM cost reduction through hybrid verification
 
-### Algorithms
-- **[Cross-Source Matcher](algorithms/CROSS_SOURCE_MATCHER.md)** - Semantic event matching
-- **[Confidence Scoring](algorithms/CONFIDENCE_SCORING.md)** - Multi-source confidence calculation
-- **[Deduplication](algorithms/DEDUPLICATION.md)** - Two-layer event deduplication
+---
 
-### Guides
-- **[Trigger Guide](guides/TRIGGER_GUIDE.md)** - Adding new data sources
-- **[Testing Guide](guides/TESTING_GUIDE.md)** - Running and writing tests
+### For Users & Journalists
 
-## Document Index
+> *"How can I trust LiveMap's information?"*
+
+| Document | Description |
+|----------|-------------|
+| [**Overview**](OVERVIEW.md) | How LiveMap works |
+| [**Confidence Scoring**](concepts/CONFIDENCE_SCORING.md) | How trust scores are calculated |
+| [**Source Tiers**](concepts/SOURCE_TIERS.md) | How sources are evaluated |
+| [**Two-Source Rule**](concepts/TWO_SOURCE_RULE.md) | Why we require 2+ sources |
+| [**International Affairs Focus**](concepts/INTERNATIONAL_AFFAIRS.md) | What categories we cover |
+
+**Key principles:**
+- IFCN-compliant methodology
+- Transparent confidence scores
+- All sources cited
+
+---
+
+### For Technical Experts
+
+> *"How does the technology actually work?"*
+
+| Document | Description |
+|----------|-------------|
+| [**Architecture Overview**](architecture/README.md) | System architecture |
+| [**Scanner Pipeline**](architecture/SCANNER_PIPELINE.md) | 7-stage processing pipeline |
+| [**Event Verification**](architecture/EVENT_VERIFICATION.md) | Gate 0 hybrid verification |
+| [**Zero-shot Classifier**](architecture/ZERO_SHOT_CLASSIFIER.md) | ML-based classification |
+| [**Claim Verification**](architecture/CLAIM_VERIFICATION.md) | v3.0 SOTA implementation |
+| [**Algorithms**](algorithms/README.md) | Detailed algorithm documentation |
+| [**ADRs**](adr/README.md) | Architecture Decision Records |
+
+**Technical highlights:**
+- 2026 SOTA implementation (AIC CTU, HerO 2, VeriScore)
+- 3-stage hybrid verification (Rules → Zero-shot → LLM)
+- BGE-M3 embeddings + HDBSCAN clustering
+
+---
+
+### For Developers
+
+> *"How do I set up and contribute?"*
+
+| Document | Description |
+|----------|-------------|
+| [**Getting Started**](getting-started/README.md) | 5-minute quickstart |
+| [**Installation**](getting-started/INSTALLATION.md) | Detailed setup guide |
+| [**Project Structure**](getting-started/PROJECT_STRUCTURE.md) | Codebase organization |
+| [**API Reference**](api/README.md) | REST API documentation |
+| [**Configuration**](guides/CONFIGURATION.md) | All settings |
+| [**Trigger Guide**](guides/TRIGGER_GUIDE.md) | Adding new data sources |
+| [**Testing Guide**](guides/TESTING_GUIDE.md) | Writing tests |
+| [**Deployment**](guides/DEPLOYMENT.md) | Production deployment |
+| [**Troubleshooting**](guides/TROUBLESHOOTING.md) | Common issues |
+
+**Developer resources:**
+- Database Schema: [reference/DATABASE_SCHEMA.md](reference/DATABASE_SCHEMA.md)
+- Glossary: [reference/GLOSSARY.md](reference/GLOSSARY.md)
+- Security: [security/README.md](security/README.md)
+
+---
+
+## Documentation Structure
 
 ```
 docs/
-├── README.md                    # This file
-├── GETTING_STARTED.md          # Quick setup guide
-├── CONFIG_REFERENCE.md         # Configuration options
-├── METHODOLOGY.md              # Core methodology
-├── SCANNER_PIPELINE.md         # Pipeline architecture
-├── EVENT_VERIFICATION.md       # Gate 0 3-stage verification
-├── ZERO_SHOT_CLASSIFICATION.md # Stage 2 ML classification
-├── INTERNATIONAL_AFFAIRS_FOCUS.md  # Category focus
-├── CODE.md                     # Code organization
-├── adr/                        # Architecture Decision Records
-│   ├── README.md
-│   ├── ADR-001-two-source-rule.md
-│   ├── ADR-002-gate-ordering.md
-│   ├── ADR-003-tier-system.md
-│   ├── ADR-004-hybrid-verification.md
-│   ├── ADR-005-bilingual-generation.md
-│   └── ADR-006-deduplication.md
-├── api/                        # API documentation
-│   └── README.md
-├── algorithms/                 # Algorithm documentation
+├── README.md                    # This file (entry point)
+├── OVERVIEW.md                  # System overview (all audiences)
+│
+├── getting-started/             # New developer onboarding
+│   ├── README.md               # 5-minute quickstart
+│   ├── INSTALLATION.md         # Detailed setup
+│   └── PROJECT_STRUCTURE.md    # Codebase guide
+│
+├── concepts/                    # Core concepts (all audiences)
+│   ├── TWO_SOURCE_RULE.md      # Verification standard
+│   ├── SOURCE_TIERS.md         # Source credibility
+│   ├── CONFIDENCE_SCORING.md   # Trust calculation
+│   └── INTERNATIONAL_AFFAIRS.md # Category focus
+│
+├── architecture/                # Technical deep-dive
+│   ├── SCANNER_PIPELINE.md     # 7-stage pipeline
+│   ├── EVENT_VERIFICATION.md   # Gate 0 hybrid
+│   ├── ZERO_SHOT_CLASSIFIER.md # ML classification
+│   └── CLAIM_VERIFICATION.md   # v3.0 system
+│
+├── api/                         # API documentation
+│   └── README.md               # Endpoints reference
+│
+├── guides/                      # How-to guides
+│   ├── CONFIGURATION.md        # Settings reference
+│   ├── TRIGGER_GUIDE.md        # Adding sources
+│   ├── TESTING_GUIDE.md        # Testing guide
+│   ├── DEPLOYMENT.md           # Production deploy
+│   └── TROUBLESHOOTING.md      # Issue resolution
+│
+├── reference/                   # Technical reference
+│   ├── DATABASE_SCHEMA.md      # DB models
+│   └── GLOSSARY.md             # Terms & definitions
+│
+├── business/                    # Business documentation
+│   ├── INVESTOR_SUMMARY.md     # Executive pitch
+│   └── ROADMAP.md              # Future plans
+│
+├── adr/                         # Architecture decisions
+│   ├── ADR-001 to ADR-006
+│   └── README.md               # ADR index
+│
+├── algorithms/                  # Algorithm documentation
 │   ├── CROSS_SOURCE_MATCHER.md
 │   ├── CONFIDENCE_SCORING.md
 │   └── DEDUPLICATION.md
-└── guides/                     # How-to guides
-    ├── TRIGGER_GUIDE.md
-    └── TESTING_GUIDE.md
+│
+├── security/                    # Security documentation
+│   ├── API_KEYS.md             # Key management
+│   └── DATA_HANDLING.md        # Data processing
+│
+└── history/                     # Project evolution
+    ├── README.md               # Timeline
+    ├── CHANGELOG.md            # Version history
+    └── archive/                # Deprecated docs
 ```
 
-## Key Concepts
+---
 
-### Source Tiers
+## Quick Links
 
-| Tier | Sources | Credibility |
-|------|---------|-------------|
-| Tier-1 Govt | USGS, NOAA | 0.99 |
-| Tier-1 News | GDELT | 0.90 |
-| Tier-2 Data | ACLED | 0.85 |
-| Tier-2 News | Currents, WorldNews | 0.75 |
-| Tier-3 Social | Reddit, Twitter | 0.40 |
-| Tier-3 Msg | Telegram | 0.35 |
-| Tier-3 Trend | Google Trends | 0.30 |
+| Need | Go To |
+|------|-------|
+| System overview | [OVERVIEW.md](OVERVIEW.md) |
+| Setup in 5 minutes | [getting-started/README.md](getting-started/README.md) |
+| API endpoints | [api/README.md](api/README.md) |
+| All settings | [guides/CONFIGURATION.md](guides/CONFIGURATION.md) |
+| Help with issues | [guides/TROUBLESHOOTING.md](guides/TROUBLESHOOTING.md) |
 
-### Pipeline Stages
-
-1. **Trigger Collection** - Multi-source event gathering
-2. **Clustering** - Semantic grouping
-3. **Classification** - Tier-based source categorization
-4. **Event Verification** - Gate 0 filtering
-5. **Confidence Scoring** - Two-Source Rule
-6. **Content Gates** - Quality filtering
-7. **Final Output** - Category limiting
-
-### Filtering Gates
-
-| Gate | Purpose | Method |
-|------|---------|--------|
-| Gate 0 | Real event? | 3-stage hybrid (Rules → Zero-shot → LLM) |
-| Gate 1 | Newsworthy? | Pattern matching |
-| Gate 2 | Specific? | Pattern matching |
-| Gate 3 | Evidence? | Claim verification |
-
-#### Gate 0: 3-Stage Pipeline
-
-| Stage | Method | Cost | Filter Rate |
-|-------|--------|------|-------------|
-| Stage 1 | Rule-based patterns | $0 | ~70% |
-| Stage 2 | Zero-shot (BART-MNLI) | $0 | ~70% of remaining |
-| Stage 3 | LLM verification | $0.001/event | Edge cases only |
+---
 
 ## Contributing to Documentation
 
@@ -119,3 +170,7 @@ When adding new documentation:
 3. Link from related documents
 4. Follow markdown conventions
 5. Include code examples where relevant
+
+---
+
+*Last updated: January 2026*

@@ -102,7 +102,7 @@ All agent settings use the `AGENT_` prefix.
 
 #### Gate 0: Event Verification (3-Stage Hybrid)
 
-See [Zero-shot Classification](./ZERO_SHOT_CLASSIFICATION.md) and [Event Verification](./EVENT_VERIFICATION.md) for details.
+See [Zero-shot Classification](../architecture/ZERO_SHOT_CLASSIFIER.md) and [Event Verification](../architecture/EVENT_VERIFICATION.md) for details.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|

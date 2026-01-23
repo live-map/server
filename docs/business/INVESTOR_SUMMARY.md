@@ -280,4 +280,24 @@ LiveMap delivers **verified breaking news at zero source cost** through:
 
 ---
 
-*For detailed technical methodology, see [METHODOLOGY.md](./METHODOLOGY.md)*
+## Technical References
+
+### Data Sources
+- **GDELT Project**: [gdeltproject.org](https://www.gdeltproject.org/) - Monitoring 100,000+ news sources in 100+ languages
+- **ACLED**: [acleddata.com](https://acleddata.com/) - Armed Conflict Location & Event Data Project
+
+### ML Models
+- **BART-MNLI**: [HuggingFace](https://huggingface.co/facebook/bart-large-mnli) - Zero-shot event classification
+- **BGE-M3**: [HuggingFace](https://huggingface.co/BAAI/bge-m3) - Multilingual semantic embeddings
+
+### Verification Research
+- **VeriScore**: [GitHub](https://github.com/Yixiao-Song/VeriScore) - Verifiable claim extraction methodology
+- **AIC CTU**: [arXiv](https://arxiv.org/abs/2508.04390) - FEVER 8 competition winner (AVeriTeC 0.50)
+- **HerO 2**: [arXiv](https://arxiv.org/abs/2507.11004) - AVeriTeC 2025 runner-up
+
+### Journalism Standards
+- **IFCN**: [Poynter Institute](https://www.ifcncodeofprinciples.poynter.org/) - International Fact-Checking Network Code of Principles
+
+---
+
+*For detailed technical methodology, see [Concepts Overview](../concepts/README.md)*

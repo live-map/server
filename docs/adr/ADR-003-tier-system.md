@@ -131,4 +131,4 @@ TIER_WEIGHTS = {
 ## References
 - Implementation: `app/agent/triggers/base.py`
 - Confidence scoring: `app/agent/confidence_scorer.py`
-- Project docs: `docs/METHODOLOGY.md`
+- Project docs: `docs/concepts/README.md`

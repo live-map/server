@@ -433,4 +433,4 @@ except Exception as e:
 
 *관련 문서:*
 - [ADR-004: Hybrid Event Verification](./adr/ADR-004-hybrid-verification.md)
-- [Zero-shot Classification](./ZERO_SHOT_CLASSIFICATION.md)
+- [Zero-shot Classification](./ZERO_SHOT_CLASSIFIER.md)

@@ -260,7 +260,7 @@ async def verify_event_hybrid(
 - Zero-shot classifier: `app/agent/zero_shot_classifier.py`
 - Gate ordering: `docs/adr/ADR-002-gate-ordering.md`
 - Project docs: `docs/EVENT_VERIFICATION.md`
-- Zero-shot docs: `docs/ZERO_SHOT_CLASSIFICATION.md`
+- Zero-shot docs: `docs/architecture/ZERO_SHOT_CLASSIFIER.md`
 
 ## Changelog
 

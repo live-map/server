@@ -89,5 +89,5 @@ Publish after N minutes if no contradicting sources found.
 
 ## References
 - [Two-Source Rule in Journalism](https://en.wikipedia.org/wiki/Confirmation_by_two_sources)
-- Project docs: `docs/METHODOLOGY.md`
+- Project docs: `docs/concepts/README.md`
 - Implementation: `app/agent/confidence_scorer.py`

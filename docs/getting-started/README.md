@@ -171,7 +171,7 @@ psql -d livemap -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 ## Next Steps
 
-- Read [METHODOLOGY.md](METHODOLOGY.md) for system design
+- Read [Concepts Overview](../concepts/README.md) for system design
 - Explore [API Reference](api/README.md) for endpoints
 - Check [Architecture Decisions](adr/README.md) for design rationale
 - Review [Trigger Guide](guides/TRIGGER_GUIDE.md) to add new sources
