@@ -467,6 +467,10 @@ class PostRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    # Not recommended to use this method to fetch all posts by user_id
+    # Becuase it will be slow and inefficient because it will fetch all posts and then filter them by user_id
+    # Instead, use the query with user_id directly in the service layer
+    # Use only when you need to fetch all posts!!!  전체 게시글 조회시에만 사용 !!!
     async def get_all(
         self,
         limit: int = 20,
@@ -474,6 +478,9 @@ class PostRepository:
         user_id: str | None = None,
     ) -> Sequence[Post]:
         """
+
+        !!! 전체 게시글 조회시에만 사용 !!!
+
         게시글 목록 조회 (페이지네이션).
 
         Args:
@@ -518,14 +525,49 @@ class PostRepository:
 
         Returns:
             bool: 삭제 성공 여부
+
+        Raises:
+            ValueError: 게시글이 존재하지 않는 경우
         """
         post = await self.get_by_id(post_id)
         if post is None:
-            return False
+            raise ValueError(f"Post with id {post_id} not found")
 
         post.is_deleted = True
         await self.session.flush()
         logger.debug(f"Soft deleted post: {post_id}")
+        return True
+
+    async def hard_delete(self, post_id: uuid.UUID) -> bool:
+        """
+        !!! 게시글 완전 삭제 (DB에서 영구 삭제!) !!!
+        !!! admin 만 사용할 수 있는 메서드!!!
+
+        게시글 완전 삭제 (DB에서 영구 삭제!).
+
+        CASCADE 설정으로 인해 해당 게시글의 모든 댓글과
+        대댓글도 함께 삭제됩니다.
+
+        Args:
+            post_id: 삭제할 게시글 UUID
+
+        Returns:
+            bool: 삭제 성공 여부
+
+        Raises:
+            ValueError: 게시글이 존재하지 않는 경우
+        """
+        # is_deleted 상태와 관계없이 조회
+        stmt = select(Post).where(Post.id == post_id)
+        result = await self.session.execute(stmt)
+        post = result.scalar_one_or_none()
+
+        if post is None:
+            raise ValueError(f"Post with id {post_id} not found")
+
+        await self.session.delete(post)
+        await self.session.flush()
+        logger.debug(f"Hard deleted post: {post_id} (with all comments via CASCADE)")
         return True
 
     async def count(self, user_id: str | None = None) -> int:
@@ -547,7 +589,7 @@ class PostRepository:
         return result.scalar_one()
 ```
 
-### 4.2 Comment Repository (`app/api/v1/post/comment_repository.py`)
+### 4.2 Comment Repository (`app/api/v1/comment/repository.py`)
 
 ```python
 """
@@ -636,7 +678,7 @@ class CommentRepository:
     async def get_top_level_comments(
         self,
         post_id: uuid.UUID,
-        limit: int = 50,
+        limit: int = 30,
         offset: int = 0,
     ) -> Sequence[Comment]:
         """
@@ -847,43 +889,10 @@ from typing import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.post.comment_repository import CommentRepository
 from app.api.v1.post.repository import PostRepository
-from app.models.comment import Comment
 from app.models.post import Post
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class CommentTreeNode:
-    """
-    댓글 트리 노드 DTO.
-
-    계층 구조를 클라이언트에 전달하기 위한 형태.
-    """
-    id: uuid.UUID
-    user_id: str
-    user_name: str | None
-    content: str
-    depth: int
-    created_at: str
-    is_deleted: bool
-    replies: list["CommentTreeNode"]
-
-    @classmethod
-    def from_comment(cls, comment: Comment) -> "CommentTreeNode":
-        """Comment 엔티티를 트리 노드로 변환."""
-        return cls(
-            id=comment.id,
-            user_id=comment.user_id,
-            user_name=comment.user.name if comment.user else None,
-            content=comment.content if not comment.is_deleted else "[삭제된 댓글입니다]",
-            depth=comment.depth,
-            created_at=comment.created_at.isoformat(),
-            is_deleted=comment.is_deleted,
-            replies=[],  # 나중에 채워짐
-        )
 
 
 class PostService:
@@ -894,7 +903,6 @@ class PostService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.post_repo = PostRepository(session)
-        self.comment_repo = CommentRepository(session)
 
     # ========================================
     # Post Methods
@@ -1000,6 +1008,35 @@ class PostService:
         result = await self.post_repo.soft_delete(post_id)
         await self.session.commit()
         return result
+```
+
+---
+
+### 5.2 Comment Service (`app/api/v1/comment/service.py`)
+
+```python
+import logging
+import uuid
+from dataclasses import dataclass
+from typing import Sequence
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.v1.comment.repository import CommentRepository
+from app.models.comment import Comment
+from app.api.v1.comment.dto.commentTreeNode import CommentTreeNode
+
+logger = logging.getLogger(__name__)
+
+
+class CommentService:
+    """
+    Comment 관련 비즈니스 로직을 처리하는 서비스.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.comment_repo = CommentRepository(session)
 
     # ========================================
     # Comment Methods
@@ -1205,17 +1242,19 @@ class PostService:
         return await self.comment_repo.count_by_post(post_id)
 ```
 
+> **Note:** `CommentService.create_comment` 메서드에서 `self.post_repo`를 참조하고 있습니다. 실제 구현 시 `PostRepository`를 주입하거나 게시글 존재 확인 로직을 수정해야 합니다.
+
 ---
 
 ## 6. Schemas (Pydantic)
 
-API 요청/응답을 위한 Pydantic 스키마입니다.
+API 요청/응답을 위한 Pydantic 스키마입니다. Post와 Comment 스키마는 각 모듈별로 분리되어 있습니다.
 
-### 6.1 Post Schemas (`app/api/v1/post/schemas.py`)
+### 6.1 Post Schemas (`app/api/v1/post/dto/schemas.py`)
 
 ```python
 """
-Pydantic schemas for Post and Comment API endpoints.
+Pydantic schemas for Post API endpoints.
 """
 
 import uuid
@@ -1223,10 +1262,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-
-# ========================================
-# Post Schemas
-# ========================================
 
 class PostCreate(BaseModel):
     """게시글 생성 요청."""
@@ -1261,14 +1296,26 @@ class PostListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+```
 
+---
 
-# ========================================
-# Comment Schemas
-# ========================================
+### 6.2 Comment Schemas (`app/api/v1/comment/dto/schemas.py`)
+
+```python
+"""
+Pydantic schemas for Comment API endpoints.
+"""
+
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
 
 class CommentCreate(BaseModel):
-    """댓글 생성 요청."""
+    """댓글 생성 요청 (독립된 /comments 엔드포인트용)."""
+    post_id: uuid.UUID = Field(..., description="게시글 UUID")
     content: str = Field(..., min_length=1, max_length=1000)
     parent_id: uuid.UUID | None = Field(None, description="대댓글인 경우 부모 댓글 UUID")
 
@@ -1329,23 +1376,100 @@ class CommentTreeListResponse(BaseModel):
 
 ---
 
-## 7. API Endpoints
+### 6.3 CommentTreeNode DTO (`app/api/v1/comment/dto/commentTreeNode.py`)
 
-FastAPI 라우터 정의입니다.
+Service 레이어에서 사용하는 트리 구조 DTO입니다:
+
+```python
+from dataclasses import dataclass
+import uuid
+
+from app.models.comment import Comment
+
+@dataclass
+class CommentTreeNode:
+    """
+    댓글 트리 노드 DTO.
+
+    계층 구조를 클라이언트에 전달하기 위한 형태.
+    """
+    id: uuid.UUID
+    user_id: str
+    user_name: str | None
+    content: str
+    depth: int
+    created_at: str
+    is_deleted: bool
+    replies: list["CommentTreeNode"]
+
+    @classmethod
+    def from_comment(cls, comment: Comment) -> "CommentTreeNode":
+        """Comment 엔티티를 트리 노드로 변환."""
+        return cls(
+            id=comment.id,
+            user_id=comment.user_id,
+            user_name=comment.user.name if comment.user else None,
+            content=comment.content if not comment.is_deleted else "[삭제된 댓글입니다]",
+            depth=comment.depth,
+            created_at=comment.created_at.isoformat(),
+            is_deleted=comment.is_deleted,
+            replies=[],  # 나중에 채워짐
+        )
+```
+
+---
+
+## 7. API Endpoints (Completely Separate Controllers)
+
+Post와 Comment를 **완전히 독립된 Controller로 분리**하여 관심사 분리(Separation of Concerns)를 적용합니다.
+
+**핵심 설계 원칙:**
+- Post Controller: `/posts` 경로에서 게시글만 처리
+- Comment Controller: `/comments` 경로에서 댓글만 처리 (게시글과 독립적인 URL)
+- 각 모듈은 완전히 독립적으로 동작하며, 서로의 존재를 알 필요 없음
+
+### 디렉토리 구조
+
+```
+app/api/v1/
+├── post/
+│   ├── __init__.py          # router export
+│   ├── controller.py        # Post 전용 Controller (/posts)
+│   ├── service.py           # Post 비즈니스 로직
+│   ├── repository.py        # Post 데이터 접근
+│   └── dto/
+│       └── schemas.py       # Post 관련 Pydantic 스키마
+│
+├── comment/
+│   ├── __init__.py          # router export
+│   ├── controller.py        # Comment 전용 Controller (/comments)
+│   ├── service.py           # Comment 비즈니스 로직
+│   ├── repository.py        # Comment 데이터 접근
+│   └── dto/
+│       ├── schemas.py       # Comment 관련 Pydantic 스키마
+│       └── commentTreeNode.py  # 트리 구조 DTO
+│
+└── router.py                # 모든 라우터 통합 (각각 독립적으로 등록)
+```
+
+---
 
 ### 7.1 Post Controller (`app/api/v1/post/controller.py`)
 
+Post 관련 CRUD 작업만 처리하는 전용 Controller입니다.
+
 ```python
 """
-Post API endpoints.
+Post Controller - API route handlers for post endpoints.
 
-게시글 및 댓글 CRUD API를 제공합니다.
+게시글 CRUD API만 제공합니다.
+댓글 관련 API는 별도의 CommentController에서 처리합니다.
 
 Architecture Flow (기존 jwt_test 모듈과 동일):
 1. Request hits this controller (routes)
 2. JWT Guard validates the token (interpreter/jwt_guard.py)
 3. Controller calls Service layer (service.py)
-4. Service calls Repository layer (repository.py, comment_repository.py)
+4. Service calls Repository layer (repository.py)
 5. Repository queries Database
 6. Response flows back up the chain
 """
@@ -1354,23 +1478,17 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.interpreter import CurrentUser, JWTPayload
-from app.api.v1.post.schemas import (
-    CommentCreate,
-    CommentListResponse,
-    CommentResponse,
-    CommentTreeListResponse,
-    CommentTreeResponse,
-    CommentUpdate,
+from app.api.v1.interpreter import CurrentUser, CurrentAdmin
+from app.api.v1.post.dto.schemas import (
     PostCreate,
     PostListResponse,
     PostResponse,
     PostUpdate,
 )
-from app.api.v1.post.service import CommentTreeNode, PostService
+from app.api.v1.post.service import PostService
 from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -1383,17 +1501,14 @@ router = APIRouter(prefix="/posts", tags=["posts"])
 # ========================================
 
 async def get_post_service(
-    session: AsyncSession = Depends(get_db),
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> PostService:
     """PostService 의존성 주입."""
     return PostService(session)
 
 
-# Type alias for service dependency
-Service = Annotated[PostService, Depends(get_post_service)]
-
-# Note: CurrentUser는 app.api.v1.interpreter에서 이미 정의되어 있음
-# CurrentUser = Annotated[JWTPayload, Depends(get_current_user)]
+# Type alias for cleaner route signatures
+PostServiceDep = Annotated[PostService, Depends(get_post_service)]
 
 
 # ========================================
@@ -1405,11 +1520,12 @@ Service = Annotated[PostService, Depends(get_post_service)]
     response_model=PostResponse,
     status_code=status.HTTP_201_CREATED,
     summary="게시글 작성",
+    description="새 게시글을 작성합니다. 인증 필요.",
 )
 async def create_post(
     data: PostCreate,
     current_user: CurrentUser,
-    service: Service,
+    service: PostServiceDep,
 ) -> PostResponse:
     """
     새 게시글을 작성합니다.
@@ -1438,38 +1554,35 @@ async def create_post(
     "",
     response_model=PostListResponse,
     summary="게시글 목록 조회",
+    description="게시글 목록을 페이지네이션으로 조회합니다.",
 )
 async def list_posts(
-    service: Service,
-    limit: int = 20,
-    offset: int = 0,
-    user_id: str | None = None,
+    service: PostServiceDep,
+    limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 20,
+    offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
 ) -> PostListResponse:
     """
     게시글 목록을 조회합니다.
 
-    - **limit**: 최대 조회 수 (기본 20)
+    - **limit**: 최대 조회 수 (기본 20, 최대 100)
     - **offset**: 건너뛸 수 (기본 0)
-    - **user_id**: 특정 사용자의 글만 조회 (선택)
     """
-    posts = await service.list_posts(limit=limit, offset=offset, user_id=user_id)
-    total = await service.post_repo.count(user_id=user_id)
+    posts = await service.list_posts(limit=limit, offset=offset)
+    total = await service.post_repo.count()
 
-    items = []
-    for post in posts:
-        comment_count = await service.get_comment_count(post.id)
-        items.append(
-            PostResponse(
-                id=post.id,
-                user_id=post.user_id,
-                user_name=post.user.name if post.user else None,
-                title=post.title,
-                content=post.content,
-                created_at=post.created_at,
-                updated_at=post.updated_at,
-                comment_count=comment_count,
-            )
+    items = [
+        PostResponse(
+            id=post.id,
+            user_id=post.user_id,
+            user_name=post.user.name if post.user else None,
+            title=post.title,
+            content=post.content,
+            created_at=post.created_at,
+            updated_at=post.updated_at,
+            comment_count=len(post.comments) if post.comments else 0,
         )
+        for post in posts
+    ]
 
     return PostListResponse(
         items=items,
@@ -1483,21 +1596,20 @@ async def list_posts(
     "/{post_id}",
     response_model=PostResponse,
     summary="게시글 상세 조회",
+    description="특정 게시글의 상세 정보를 조회합니다.",
 )
 async def get_post(
     post_id: uuid.UUID,
-    service: Service,
+    service: PostServiceDep,
 ) -> PostResponse:
     """게시글 상세 정보를 조회합니다."""
-    post = await service.get_post(post_id)
+    post = await service.get_post_with_comments(post_id)
 
     if post is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Post not found",
         )
-
-    comment_count = await service.get_comment_count(post_id)
 
     return PostResponse(
         id=post.id,
@@ -1507,7 +1619,7 @@ async def get_post(
         content=post.content,
         created_at=post.created_at,
         updated_at=post.updated_at,
-        comment_count=comment_count,
+        comment_count=len(post.comments) if post.comments else 0,
     )
 
 
@@ -1515,12 +1627,13 @@ async def get_post(
     "/{post_id}",
     response_model=PostResponse,
     summary="게시글 수정",
+    description="게시글을 수정합니다. 작성자만 가능.",
 )
 async def update_post(
     post_id: uuid.UUID,
     data: PostUpdate,
     current_user: CurrentUser,
-    service: Service,
+    service: PostServiceDep,
 ) -> PostResponse:
     """
     게시글을 수정합니다.
@@ -1553,15 +1666,16 @@ async def update_post(
 @router.delete(
     "/{post_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="게시글 삭제",
+    summary="게시글 삭제 (소프트)",
+    description="게시글을 소프트 삭제합니다. 작성자만 가능.",
 )
 async def delete_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
-    service: Service,
+    service: PostServiceDep,
 ) -> None:
     """
-    게시글을 삭제합니다.
+    게시글을 삭제합니다 (소프트 삭제).
 
     작성자만 삭제 가능합니다.
     """
@@ -1577,30 +1691,131 @@ async def delete_post(
         )
 
 
+@router.delete(
+    "/{post_id}/hard",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="게시글 완전 삭제 (Admin Only)",
+    description="게시글을 DB에서 완전 삭제합니다. 관리자만 가능.",
+)
+async def hard_delete_post(
+    post_id: uuid.UUID,
+    current_admin: CurrentAdmin,
+    service: PostServiceDep,
+) -> None:
+    """
+    게시글을 완전 삭제합니다 (하드 삭제).
+
+    CASCADE로 모든 댓글도 함께 삭제됩니다.
+    관리자만 사용 가능합니다.
+    """
+    try:
+        await service.post_repo.hard_delete(post_id)
+        await service.session.commit()
+        logger.info(f"Admin {current_admin.user_id} hard deleted post {post_id}")
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+```
+
+---
+
+### 7.2 Comment Controller (`app/api/v1/comment/controller.py`)
+
+Comment 관련 CRUD 작업만 처리하는 **완전히 독립된** Controller입니다.
+
+**URL 설계:**
+- 기본 경로: `/comments` (게시글 경로와 완전히 분리)
+- `post_id`는 path parameter가 아닌 **query parameter** 또는 **body**로 전달
+
+```python
+"""
+Comment Controller - API route handlers for comment endpoints.
+
+댓글 및 대댓글 CRUD API를 제공합니다.
+게시글 관련 API는 별도의 PostController에서 처리합니다.
+
+URL 설계:
+- 완전히 독립된 /comments 경로 사용
+- post_id는 query parameter로 필터링에 사용
+- 이를 통해 Post 모듈과 Comment 모듈의 완전한 분리 달성
+
+Architecture Flow:
+1. Request hits this controller (routes)
+2. JWT Guard validates the token (interpreter/jwt_guard.py)
+3. Controller calls Service layer (service.py)
+4. Service calls Repository layer (repository.py)
+5. Repository queries Database
+6. Response flows back up the chain
+"""
+
+import logging
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.v1.interpreter import CurrentUser
+from app.api.v1.comment.dto.schemas import (
+    CommentCreate,
+    CommentListResponse,
+    CommentResponse,
+    CommentTreeListResponse,
+    CommentTreeResponse,
+    CommentUpdate,
+)
+from app.api.v1.comment.dto.commentTreeNode import CommentTreeNode
+from app.api.v1.comment.service import CommentService
+from app.core.database import get_db
+
+logger = logging.getLogger(__name__)
+
+# 완전히 독립된 /comments 경로 사용
+router = APIRouter(prefix="/comments", tags=["comments"])
+
+
 # ========================================
-# Comment Endpoints
+# Dependencies
+# ========================================
+
+async def get_comment_service(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> CommentService:
+    """CommentService 의존성 주입."""
+    return CommentService(session)
+
+
+# Type alias for cleaner route signatures
+CommentServiceDep = Annotated[CommentService, Depends(get_comment_service)]
+
+
+# ========================================
+# Comment Endpoints (독립된 /comments 경로)
 # ========================================
 
 @router.post(
-    "/{post_id}/comments",
+    "",
     response_model=CommentResponse,
     status_code=status.HTTP_201_CREATED,
     summary="댓글/대댓글 작성",
+    description="새 댓글 또는 대댓글을 작성합니다. 인증 필요.",
 )
 async def create_comment(
-    post_id: uuid.UUID,
     data: CommentCreate,
     current_user: CurrentUser,
-    service: Service,
+    service: CommentServiceDep,
 ) -> CommentResponse:
     """
     댓글 또는 대댓글을 작성합니다.
 
+    - **post_id**: 게시글 UUID (Request Body에 포함)
     - **content**: 댓글 내용 (1-1000자)
-    - **parent_id**: 대댓글인 경우 부모 댓글 ID (선택)
+    - **parent_id**: 대댓글인 경우 부모 댓글 UUID (선택)
     """
     comment = await service.create_comment(
-        post_id=post_id,
+        post_id=data.post_id,
         user_id=current_user.user_id,
         content=data.content,
         parent_id=data.parent_id,
@@ -1625,21 +1840,26 @@ async def create_comment(
 
 
 @router.get(
-    "/{post_id}/comments",
+    "",
     response_model=CommentListResponse,
     summary="댓글 목록 조회 (플랫)",
+    description="게시글의 댓글을 플랫 리스트로 조회합니다.",
 )
 async def list_comments_flat(
-    post_id: uuid.UUID,
-    service: Service,
+    service: CommentServiceDep,
+    post_id: Annotated[uuid.UUID, Query(description="게시글 UUID")],
+    limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 50,
+    offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
 ) -> CommentListResponse:
     """
     게시글의 댓글을 플랫 리스트로 조회합니다.
 
+    - **post_id**: Query parameter로 게시글 UUID 지정
+
     depth와 order_number로 정렬되어 있어
     프론트엔드에서 depth 값으로 들여쓰기 표현이 가능합니다.
     """
-    comments = await service.get_flat_comments(post_id)
+    comments = await service.get_flat_comments(post_id, limit=limit, offset=offset)
     total = await service.get_comment_count(post_id)
 
     items = []
@@ -1665,16 +1885,19 @@ async def list_comments_flat(
 
 
 @router.get(
-    "/{post_id}/comments/tree",
+    "/tree",
     response_model=CommentTreeListResponse,
     summary="댓글 목록 조회 (트리)",
+    description="게시글의 댓글을 트리 구조로 조회합니다.",
 )
 async def list_comments_tree(
-    post_id: uuid.UUID,
-    service: Service,
+    service: CommentServiceDep,
+    post_id: Annotated[uuid.UUID, Query(description="게시글 UUID")],
 ) -> CommentTreeListResponse:
     """
     게시글의 댓글을 트리 구조로 조회합니다.
+
+    - **post_id**: Query parameter로 게시글 UUID 지정
 
     각 댓글의 replies 필드에 대댓글이 재귀적으로 포함됩니다.
     """
@@ -1698,17 +1921,53 @@ async def list_comments_tree(
     return CommentTreeListResponse(items=items, total=total)
 
 
+@router.get(
+    "/{comment_id}",
+    response_model=CommentResponse,
+    summary="댓글 상세 조회",
+    description="특정 댓글의 상세 정보를 조회합니다.",
+)
+async def get_comment(
+    comment_id: uuid.UUID,
+    service: CommentServiceDep,
+) -> CommentResponse:
+    """댓글 상세 정보를 조회합니다 (comment_id로 직접 조회)."""
+    comment = await service.comment_repo.get_by_id(comment_id)
+
+    if comment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comment not found",
+        )
+
+    reply_count = await service.get_reply_count(comment_id)
+
+    return CommentResponse(
+        id=comment.id,
+        post_id=comment.post_id,
+        user_id=comment.user_id,
+        user_name=comment.user.name if comment.user else None,
+        parent_id=comment.parent_id,
+        content=comment.content,
+        depth=comment.depth,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+        is_deleted=comment.is_deleted,
+        reply_count=reply_count,
+    )
+
+
 @router.patch(
-    "/{post_id}/comments/{comment_id}",
+    "/{comment_id}",
     response_model=CommentResponse,
     summary="댓글 수정",
+    description="댓글을 수정합니다. 작성자만 가능.",
 )
 async def update_comment(
-    post_id: uuid.UUID,
     comment_id: uuid.UUID,
     data: CommentUpdate,
     current_user: CurrentUser,
-    service: Service,
+    service: CommentServiceDep,
 ) -> CommentResponse:
     """
     댓글을 수정합니다.
@@ -1740,18 +1999,18 @@ async def update_comment(
 
 
 @router.delete(
-    "/{post_id}/comments/{comment_id}",
+    "/{comment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="댓글 삭제",
+    description="댓글을 소프트 삭제합니다. 작성자만 가능.",
 )
 async def delete_comment(
-    post_id: uuid.UUID,
     comment_id: uuid.UUID,
     current_user: CurrentUser,
-    service: Service,
+    service: CommentServiceDep,
 ) -> None:
     """
-    댓글을 삭제합니다.
+    댓글을 삭제합니다 (소프트 삭제).
 
     대댓글이 있는 경우 내용만 마스킹되고 구조는 유지됩니다.
     작성자만 삭제 가능합니다.
@@ -1766,25 +2025,65 @@ async def delete_comment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Comment not found or no permission",
         )
+
+
+@router.get(
+    "/{comment_id}/replies",
+    response_model=CommentListResponse,
+    summary="대댓글 목록 조회",
+    description="특정 댓글의 직접 대댓글만 조회합니다.",
+)
+async def list_replies(
+    comment_id: uuid.UUID,
+    service: CommentServiceDep,
+    limit: Annotated[int, Query(ge=1, le=50, description="최대 조회 수")] = 20,
+) -> CommentListResponse:
+    """
+    특정 댓글의 직접 대댓글만 조회합니다.
+
+    무한 대댓글 구조에서 특정 댓글의 바로 아래 대댓글만 가져올 때 사용합니다.
+    """
+    replies = await service.comment_repo.get_replies(comment_id, limit=limit)
+    total = await service.get_reply_count(comment_id)
+
+    items = [
+        CommentResponse(
+            id=reply.id,
+            post_id=reply.post_id,
+            user_id=reply.user_id,
+            user_name=reply.user.name if reply.user else None,
+            parent_id=reply.parent_id,
+            content=reply.content,
+            depth=reply.depth,
+            created_at=reply.created_at,
+            updated_at=reply.updated_at,
+            is_deleted=reply.is_deleted,
+            reply_count=0,  # 하위 대댓글 수는 별도 조회 필요
+        )
+        for reply in replies
+    ]
+
+    return CommentListResponse(items=items, total=total)
 ```
 
-### 7.2 모듈 `__init__.py` (`app/api/v1/post/__init__.py`)
+---
 
-NestJS-like 모듈 구조를 따라 `__init__.py`에서 router를 export합니다:
+### 7.3 모듈 `__init__.py` 파일들
+
+#### Post 모듈 (`app/api/v1/post/__init__.py`)
 
 ```python
 """
-Post Module - Bulletin board with nested comments feature module.
+Post Module - Bulletin board feature module.
 
 This module follows a NestJS-like structure where all related components
 (controller, service, repository, schemas) are grouped together.
 
 Structure:
-- controller.py       : API route handlers (like NestJS controllers)
-- service.py          : Business logic layer (like NestJS services)
+- controller.py       : Post API route handlers
+- service.py          : Post business logic layer
 - repository.py       : Post data access layer
-- comment_repository.py : Comment data access layer
-- schemas.py          : Pydantic schemas for request/response validation
+- dto/schemas.py      : Post Pydantic schemas
 """
 
 from app.api.v1.post.controller import router
@@ -1792,13 +2091,41 @@ from app.api.v1.post.controller import router
 __all__ = ["router"]
 ```
 
-### 7.3 라우터 등록
+#### Comment 모듈 (`app/api/v1/comment/__init__.py`)
 
-`app/api/v1/router.py`에 추가:
+```python
+"""
+Comment Module - Nested comments feature module.
+
+This module follows a NestJS-like structure where all related components
+(controller, service, repository, schemas) are grouped together.
+
+Structure:
+- controller.py           : Comment API route handlers
+- service.py              : Comment business logic layer
+- repository.py           : Comment data access layer
+- dto/schemas.py          : Comment Pydantic schemas
+- dto/commentTreeNode.py  : Tree structure DTO
+"""
+
+from app.api.v1.comment.controller import router
+
+__all__ = ["router"]
+```
+
+---
+
+### 7.4 라우터 등록 (`app/api/v1/router.py`)
+
+Post와 Comment 라우터를 **완전히 독립적으로** 등록합니다.
 
 ```python
 """
 API v1 router - combines all endpoint routers.
+
+Post와 Comment는 완전히 독립된 모듈로 등록됩니다:
+- Post: /posts 경로
+- Comment: /comments 경로 (게시글과 독립)
 """
 
 from fastapi import APIRouter
@@ -1806,16 +2133,54 @@ from fastapi import APIRouter
 from app.api.v1.routes.agent import router as agent_router
 from app.api.v1.routes.feeds import router as feeds_router
 from app.api.v1.jwt_test import router as jwt_test_router
-from app.api.v1.post import router as post_router  # 추가
+from app.api.v1.post import router as post_router
+from app.api.v1.comment import router as comment_router
 
 api_router = APIRouter()
 
-# Include all routers
+# Include all routers (각 모듈은 완전히 독립적)
 api_router.include_router(feeds_router, prefix="/feeds", tags=["feeds"])
 api_router.include_router(agent_router, prefix="/agent", tags=["agent"])
 api_router.include_router(jwt_test_router, prefix="/jwt-test", tags=["jwt-test", "auth"])
-api_router.include_router(post_router)  # 추가 (prefix는 controller에서 이미 정의됨)
+
+# Post 모듈 (완전 독립)
+api_router.include_router(post_router)      # prefix는 controller에서 정의: /posts
+
+# Comment 모듈 (완전 독립 - Post와 별개의 경로)
+api_router.include_router(comment_router)   # prefix는 controller에서 정의: /comments
 ```
+
+---
+
+### 7.5 API 엔드포인트 요약
+
+Post와 Comment는 **완전히 독립된 URL 경로**를 사용합니다.
+
+#### Post Endpoints (`/api/v1/posts`)
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/posts` | Required | 게시글 작성 |
+| GET | `/posts` | None | 게시글 목록 조회 |
+| GET | `/posts/{post_id}` | None | 게시글 상세 조회 |
+| PATCH | `/posts/{post_id}` | Required | 게시글 수정 (작성자만) |
+| DELETE | `/posts/{post_id}` | Required | 게시글 소프트 삭제 (작성자만) |
+| DELETE | `/posts/{post_id}/hard` | Admin | 게시글 하드 삭제 (관리자만) |
+
+#### Comment Endpoints (`/api/v1/comments`) - 완전 독립 경로
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/comments` | Required | 댓글/대댓글 작성 (post_id는 body에 포함) |
+| GET | `/comments?post_id={uuid}` | None | 댓글 목록 조회 (플랫) |
+| GET | `/comments/tree?post_id={uuid}` | None | 댓글 목록 조회 (트리) |
+| GET | `/comments/{comment_id}` | None | 댓글 상세 조회 |
+| PATCH | `/comments/{comment_id}` | Required | 댓글 수정 (작성자만) |
+| DELETE | `/comments/{comment_id}` | Required | 댓글 소프트 삭제 (작성자만) |
+| GET | `/comments/{comment_id}/replies` | None | 대댓글 목록 조회 |
+
+> **Note**: Comment 엔드포인트는 `/comments`라는 독립된 경로를 사용합니다.
+> `post_id`는 리스트 조회 시 **query parameter**로, 생성 시 **request body**로 전달됩니다.
 
 ---
 
@@ -1836,10 +2201,11 @@ Authorization: Bearer <token>
 ### 8.2 댓글 작성 (최상위)
 
 ```bash
-POST /api/v1/posts/550e8400-e29b-41d4-a716-446655440000/comments
+POST /api/v1/comments
 Authorization: Bearer <token>
 
 {
+  "post_id": "550e8400-e29b-41d4-a716-446655440000",
   "content": "좋은 글이네요!"
 }
 ```
@@ -1847,16 +2213,29 @@ Authorization: Bearer <token>
 ### 8.3 대댓글 작성
 
 ```bash
-POST /api/v1/posts/550e8400-e29b-41d4-a716-446655440000/comments
+POST /api/v1/comments
 Authorization: Bearer <token>
 
 {
+  "post_id": "550e8400-e29b-41d4-a716-446655440000",
   "content": "저도 동의합니다!",
-  "parent_id": "550e8400-e29b-41d4-a716-446655440001"  # 부모 댓글 UUID
+  "parent_id": "550e8400-e29b-41d4-a716-446655440001"
 }
 ```
 
-### 8.4 댓글 트리 조회 응답 예시
+### 8.4 댓글 목록 조회 (플랫)
+
+```bash
+GET /api/v1/comments?post_id=550e8400-e29b-41d4-a716-446655440000
+```
+
+### 8.5 댓글 트리 조회
+
+```bash
+GET /api/v1/comments/tree?post_id=550e8400-e29b-41d4-a716-446655440000
+```
+
+### 8.6 댓글 트리 조회 응답 예시
 
 ```json
 {

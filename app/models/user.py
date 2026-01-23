@@ -16,7 +16,9 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.account import Account
+    from app.models.comment import Comment
     from app.models.item import Item
+    from app.models.post import Post
     from app.models.session import Session
 
 
@@ -72,6 +74,12 @@ class User(Base):
     )
     items: Mapped[list["Item"]] = relationship(
         "Item", back_populates="user", cascade="all, delete-orphan"
+    )
+    posts: Mapped[list["Post"]] = relationship(
+        "Post", back_populates="user", cascade="all, delete-orphan"
+    )
+    comments: Mapped[list["Comment"]] = relationship(
+        "Comment", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

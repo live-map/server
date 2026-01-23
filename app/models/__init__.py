@@ -5,6 +5,8 @@ from app.models.article import Article, ArticleStatus, UpdateType
 from app.models.channel import Channel
 from app.models.event import Event
 from app.models.feed import Feed
+from app.models.post import Post
+from app.models.comment import Comment
 
 # Auth/NextAuth models (synced with frontend Prisma schema)
 from app.models.user import User
@@ -21,6 +23,8 @@ __all__ = [
     "Event",
     "Feed",
     "UpdateType",
+    "Post",
+    "Comment",
     # Auth/NextAuth models
     "User",
     "Account",
