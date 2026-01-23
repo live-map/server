@@ -40,6 +40,57 @@ from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult, Pu
 logger = logging.getLogger(__name__)
 
 
+# ============================================
+# 국제 정세 카테고리 키워드 매핑
+# ============================================
+INTERNATIONAL_AFFAIRS_KEYWORDS = {
+    "war": [
+        "war", "warfare", "invasion", "invade", "invaded",
+        "airstrike", "air strike", "missile", "bombing", "bombed",
+        "troops", "offensive", "military operation", "combat",
+        "shelling", "artillery", "drone strike",
+    ],
+    "conflict": [
+        "conflict", "clash", "clashes", "fighting",
+        "battle", "skirmish", "ceasefire", "cease-fire",
+        "hostilities", "armed conflict", "gunfire",
+        "border tension", "territorial dispute",
+    ],
+    "politics": [
+        "summit", "sanctions", "election", "elections",
+        "president", "prime minister", "parliament",
+        "government", "regime", "administration",
+        "foreign minister", "state department", "foreign policy",
+        "bilateral", "vote", "legislation",
+    ],
+    "security": [
+        "nuclear", "cyberattack", "cyber attack",
+        "espionage", "intelligence", "spy", "spying",
+        "security threat", "national security",
+        "hacking", "breach", "surveillance",
+    ],
+    "military": [
+        "military", "army", "navy", "air force",
+        "defense", "defence", "weapons", "deployment",
+        "troops", "soldiers", "forces", "base", "bases",
+        "warship", "fighter jet", "tank", "submarine",
+    ],
+    "terrorism": [
+        "terrorist", "terrorism", "terror attack",
+        "extremist", "hostage", "kidnapping",
+        "ISIS", "Al-Qaeda", "Taliban", "militant",
+        "suicide bomb", "car bomb", "IED",
+    ],
+    "diplomacy": [
+        "diplomat", "diplomatic", "embassy",
+        "treaty", "negotiation", "negotiations",
+        "ambassador", "envoy", "bilateral",
+        "multilateral", "UN", "United Nations",
+        "peace talks", "agreement", "accord",
+    ],
+}
+
+
 class MultiSourceScanner:
     """
     다중 소스 스캐너
@@ -446,6 +497,36 @@ class MultiSourceScanner:
             logger.info(f"  {cat}: {count} events")
 
         # ============================================
+        # Step 5.5: 국제 정세 카테고리 필터 (선택적)
+        # ============================================
+        if agent_settings.focus_international_affairs:
+            allowed_categories = agent_settings.get_international_affairs_categories()
+            filtered_by_category = []
+            excluded_counts: dict[str, int] = {}
+
+            for item in limited_events:
+                category = item.get("_category", "other")
+                if category in allowed_categories:
+                    filtered_by_category.append(item)
+                else:
+                    excluded_counts[category] = excluded_counts.get(category, 0) + 1
+
+            logger.info(
+                f"International affairs filter: {len(filtered_by_category)}/{len(limited_events)} events "
+                f"(allowed: {', '.join(allowed_categories)})"
+            )
+
+            if excluded_counts:
+                excluded_str = ", ".join(f"{cat}({cnt})" for cat, cnt in sorted(excluded_counts.items()))
+                logger.info(f"  Excluded categories: {excluded_str}")
+
+            limited_events = filtered_by_category
+
+            if not limited_events:
+                logger.warning("No events passed international affairs filter")
+                return []
+
+        # ============================================
         # Step 6: 다양성을 위한 인터리빙 (뉴스 카테고리 우선)
         # ============================================
         if agent_settings.ensure_category_diversity:
@@ -521,7 +602,7 @@ class MultiSourceScanner:
         return results
 
     def _infer_category_from_event(self, event: TriggerEvent) -> str:
-        """TriggerEvent에서 카테고리 추론"""
+        """TriggerEvent에서 카테고리 추론 (국제 정세 세분화)"""
         text = f"{event.title} {event.content}".lower()
 
         # 소스 기반 카테고리
@@ -530,19 +611,19 @@ class MultiSourceScanner:
         if event.source == TriggerSource.NOAA:
             return "natural_disaster"
 
-        # 키워드 기반 카테고리
-        if any(kw in text for kw in ["earthquake", "tsunami", "flood", "hurricane"]):
+        # 국제 정세 키워드 매핑 기반 분류 (우선순위 순)
+        for category, keywords in INTERNATIONAL_AFFAIRS_KEYWORDS.items():
+            if any(kw in text for kw in keywords):
+                return category
+
+        # 기타 카테고리 (국제 정세 외)
+        if any(kw in text for kw in ["earthquake", "tsunami", "flood", "hurricane", "wildfire", "tornado"]):
             return "natural_disaster"
-        if any(kw in text for kw in ["war", "invasion", "airstrike", "troops"]):
-            return "war"
-        if any(kw in text for kw in ["terrorist", "bombing", "hostage"]):
-            return "terrorism"
-        if any(kw in text for kw in ["protest", "demonstration", "riot"]):
+        if any(kw in text for kw in ["protest", "demonstration", "riot", "rally"]):
             return "protest"
-        if any(kw in text for kw in ["military", "army", "navy", "air force"]):
-            return "military"
-        if any(kw in text for kw in ["violence", "killed", "casualties"]):
+        if any(kw in text for kw in ["violence", "killed", "casualties", "shooting"]):
             return "violence"
+
         return "other"
 
     async def _llm_validate_and_format(

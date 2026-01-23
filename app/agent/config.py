@@ -77,10 +77,11 @@ class AgentSettings(BaseSettings):
     worldnews_api_key: str = ""
 
     # Specialized APIs (Tier-1/2)
-    usgs_enabled: bool = True
+    # 국제 정세 집중 전략: 자연재해 소스 비활성화
+    usgs_enabled: bool = False  # 지진 비활성화 (USGS 공식 채널 존재)
     usgs_min_magnitude: float = 5.0
 
-    noaa_enabled: bool = True
+    noaa_enabled: bool = False  # 날씨 비활성화 (NOAA 공식 채널 존재)
     noaa_severity: str = "Extreme,Severe"
 
     acled_enabled: bool = False
@@ -102,6 +103,12 @@ class AgentSettings(BaseSettings):
     # 카테고리별 이벤트 제한 (큐 다양성 보장)
     max_events_per_category: int = 5  # 각 카테고리당 최대 이벤트 수
     ensure_category_diversity: bool = True  # 다양한 카테고리 우선
+
+    # ===========================================
+    # 국제 정세 집중 전략
+    # ===========================================
+    focus_international_affairs: bool = True  # 국제 정세 카테고리만 처리
+    international_affairs_categories: str = "war,conflict,politics,security,military,terrorism,diplomacy"
 
     # ===========================================
     # 유의성 점수 설정 (Significance Scoring)
@@ -203,6 +210,12 @@ class AgentSettings(BaseSettings):
         if not self.telegram_channels:
             return []
         return [ch.strip() for ch in self.telegram_channels.split(",") if ch.strip()]
+
+    def get_international_affairs_categories(self) -> list[str]:
+        """국제 정세 카테고리 목록 파싱"""
+        if not self.international_affairs_categories:
+            return ["war", "conflict", "politics", "security", "military", "terrorism", "diplomacy"]
+        return [cat.strip() for cat in self.international_affairs_categories.split(",") if cat.strip()]
 
 
 agent_settings = AgentSettings()
