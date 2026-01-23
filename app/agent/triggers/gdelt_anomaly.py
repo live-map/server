@@ -204,12 +204,23 @@ class GDELTAnomalyTrigger(BaseTrigger):
                     title = art.get("title", "")
                     matched = self._matches_keywords(title)
 
+                    # Extract publication date from GDELT response
+                    pub_date_str = art.get("seendate", "") or art.get("pubdate", "")
+                    try:
+                        detected_at = (
+                            datetime.strptime(pub_date_str[:14], "%Y%m%d%H%M%S")
+                            if pub_date_str and len(pub_date_str) >= 14
+                            else datetime.utcnow()
+                        )
+                    except (ValueError, TypeError):
+                        detected_at = datetime.utcnow()
+
                     events.append(TriggerEvent(
                         title=title,
                         source=TriggerSource.GDELT,
                         source_name=art.get("domain", "unknown"),
                         url=art.get("url", ""),
-                        detected_at=datetime.utcnow(),
+                        detected_at=detected_at,
                         language=art.get("language", "en"),
                         country=art.get("sourcecountry", ""),
                         keywords_matched=matched if matched else ["[gkg-theme]"],
@@ -264,12 +275,23 @@ class GDELTAnomalyTrigger(BaseTrigger):
                     title = art.get("title", "")
                     matched = self._matches_keywords(title)
 
+                    # Extract publication date from GDELT response
+                    pub_date_str = art.get("seendate", "") or art.get("pubdate", "")
+                    try:
+                        detected_at = (
+                            datetime.strptime(pub_date_str[:14], "%Y%m%d%H%M%S")
+                            if pub_date_str and len(pub_date_str) >= 14
+                            else datetime.utcnow()
+                        )
+                    except (ValueError, TypeError):
+                        detected_at = datetime.utcnow()
+
                     events.append(TriggerEvent(
                         title=title,
                         source=TriggerSource.GDELT,
                         source_name=art.get("domain", "unknown"),
                         url=art.get("url", ""),
-                        detected_at=datetime.utcnow(),
+                        detected_at=detected_at,
                         language=art.get("language", "en"),
                         country=art.get("sourcecountry", ""),
                         keywords_matched=matched if matched else ["[goldstein-conflict]"],

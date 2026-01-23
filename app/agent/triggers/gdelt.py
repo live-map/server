@@ -157,6 +157,18 @@ class GDELTTrigger(BaseTrigger):
                     if self.tone_threshold is not None:
                         source_marker = "[tone-filtered]"
 
+                    # Extract publication date from GDELT response
+                    # GDELT uses "seendate" field in format "YYYYMMDDHHmmss"
+                    pub_date_str = art.get("seendate", "") or art.get("pubdate", "")
+                    try:
+                        detected_at = (
+                            datetime.strptime(pub_date_str[:14], "%Y%m%d%H%M%S")
+                            if pub_date_str and len(pub_date_str) >= 14
+                            else datetime.utcnow()
+                        )
+                    except (ValueError, TypeError):
+                        detected_at = datetime.utcnow()
+
                     # GDELT가 이미 키워드로 필터링했으므로 모든 기사 포함
                     # 최종 필터링은 significance scoring에서 수행
                     events.append(TriggerEvent(
@@ -164,7 +176,7 @@ class GDELTTrigger(BaseTrigger):
                         source=TriggerSource.GDELT,
                         source_name=art.get("domain", "unknown"),
                         url=art.get("url", ""),
-                        detected_at=datetime.utcnow(),
+                        detected_at=detected_at,
                         language=art.get("language", "en"),
                         country=art.get("sourcecountry", ""),
                         keywords_matched=matched if matched else [source_marker],
