@@ -169,6 +169,10 @@ class AgentSettings(BaseSettings):
     # 콘텐츠 필터링 게이트 설정
     # ===========================================
 
+    # Gate 0: Event Verification (이벤트 검증)
+    event_verification_enabled: bool = True   # 이벤트 검증 활성화
+    event_verification_use_llm: bool = True   # LLM 검증 사용 (False면 규칙만)
+
     # Gate 1: Check-worthiness
     checkworthiness_enabled: bool = True
     entertainment_pattern_threshold: int = 2  # N개 이상 패턴 매칭 시 거부

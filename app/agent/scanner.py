@@ -23,6 +23,7 @@ from langchain_openai import ChatOpenAI
 
 from .checkworthiness import check_worthiness, RejectionReason
 from .config import agent_settings
+from .event_verifier import verify_event_hybrid
 from .specificity import check_specificity
 from .triggers import TriggerEvent, TriggerManager, TriggerSource
 from .triggers.base import SourceTier, SOURCE_TIER_MAP
@@ -319,6 +320,50 @@ class MultiSourceScanner:
         if not publishable_events:
             logger.warning("No events passed confidence threshold")
             return []
+
+        # ============================================
+        # Step 3.5: 이벤트 검증 (Gate 0) - 하이브리드 방식
+        # ============================================
+        if agent_settings.event_verification_enabled:
+            verified_events = []
+            rejected_count = 0
+
+            for item in publishable_events:
+                event = item["event"]
+
+                # Tier-1 정부 소스는 검증 면제 (공식 발표)
+                if item["is_tier1_govt"]:
+                    verified_events.append(item)
+                    continue
+
+                # 이벤트 텍스트 구성
+                text = f"{event.title} {event.content[:300]}"
+
+                # 하이브리드 검증 (규칙 + LLM)
+                is_event, reason = await verify_event_hybrid(
+                    text,
+                    llm=self.llm if agent_settings.event_verification_use_llm else None,
+                    use_llm=agent_settings.event_verification_use_llm,
+                )
+
+                if is_event:
+                    verified_events.append(item)
+                else:
+                    rejected_count += 1
+                    if agent_settings.log_gate_rejections:
+                        logger.info(
+                            f"[GATE0-REJECT] {reason}: {event.title[:50]}..."
+                        )
+
+            logger.info(
+                f"Event verification (Gate 0): {len(verified_events)}/{len(publishable_events)} passed "
+                f"({rejected_count} rejected)"
+            )
+            publishable_events = verified_events
+
+            if not publishable_events:
+                logger.warning("No events passed event verification (Gate 0)")
+                return []
 
         # ============================================
         # Step 4: Content Gates 적용 (Tier-1 govt는 일부 면제)
