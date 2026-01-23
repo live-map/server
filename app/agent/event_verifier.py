@@ -11,6 +11,7 @@ Stage 2: LLM 기반 검증 (30%만 검증, $0.001/건)
 
 import re
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -93,29 +94,34 @@ def is_likely_real_event(text: str) -> tuple[bool, str | None]:
 # Stage 2: LLM 기반 검증
 # ============================================
 
-EVENT_VERIFY_PROMPT = """다음 텍스트가 실제로 발생한 국제 정세 이벤트를 보도하는지 판단하세요.
+EVENT_VERIFY_PROMPT = """오늘 날짜는 {today}입니다.
+
+다음 텍스트가 국제 정세 관련 뉴스 기사인지 판단하세요.
 
 텍스트: {text}
 
 판단 기준:
-- YES: 실제 발생한 사건
-  - 전쟁, 군사 충돌, 테러 공격
-  - 외교 활동, 정상회담, 제재
+- YES: 다음 중 하나에 해당하면 YES
+  - 전쟁, 군사 작전, 충돌, 공격
+  - 외교 활동, 정상회담, 협상, 제재
+  - 정치인/정부의 정책 발표, 성명
   - 시위, 폭동, 쿠데타
+  - 테러, 테러 위협
   - 자연재해 (지진, 태풍 등)
-  - 현재 또는 최근에 발생한 사건
-  - 구체적인 날짜, 장소, 행위자 언급
+  - 국제 관계에 영향을 미치는 사건
+  - 뉴스 헤드라인 형식의 보도
 
 - NO: 다음 중 하나에 해당
-  - 영화, 드라마, 게임 콘텐츠
-  - 역사적 사건 (과거 회고)
-  - 추측, 가정, 시나리오
-  - 의견, 분석, 사설
+  - 영화, 드라마, 게임, 연예인 뉴스
   - 스포츠 경기 결과
-  - 광고, 프로모션
-  - 픽션, 소설
+  - 지역 사건/사고 (교통사고, 범죄 등)
+  - 제품 리뷰, 광고, 프로모션
+  - 생활 정보, 팁, 요리법
+  - 개인 회고, 에세이
 
-답변 형식 (정확히 지켜주세요):
+중요: 뉴스 보도 형식이면 YES로 판단하세요. 지나치게 엄격하게 거부하지 마세요.
+
+답변 형식:
 VERDICT: YES 또는 NO
 REASON: 한 줄 설명"""
 
@@ -136,7 +142,8 @@ async def verify_event_with_llm(
     """
     # 텍스트 길이 제한 (토큰 절약)
     truncated_text = text[:500]
-    prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text)
+    today = datetime.now().strftime("%Y년 %m월 %d일")
+    prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text, today=today)
 
     try:
         response = await llm.ainvoke(prompt)
