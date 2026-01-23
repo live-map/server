@@ -65,36 +65,36 @@ class TestLLMTimeoutAndErrors:
 
     @pytest.mark.asyncio
     async def test_llm_timeout_60s(self, mock_llm_timeout):
-        """LLM 60s timeout should be handled gracefully."""
+        """LLM 60s timeout should reject (conservative approach)."""
         text = "Iran attacks US bases"
-        is_event, reason = await verify_event_hybrid(text, mock_llm_timeout, use_llm=True)
+        is_event, reason = await verify_event_hybrid(text, mock_llm_timeout, use_llm=True, use_zero_shot=False)
 
-        # Should pass on error (fail-safe)
-        assert is_event
+        # Should reject on error (conservative approach)
+        assert not is_event
         assert "LLM_ERROR" in reason
 
     @pytest.mark.asyncio
     async def test_llm_network_error(self):
-        """Network errors should be handled gracefully."""
+        """Network errors should reject (conservative approach)."""
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(side_effect=ConnectionError("Network unreachable"))
 
         text = "Iran attacks US bases"
-        is_event, reason = await verify_event_hybrid(text, mock_llm, use_llm=True)
+        is_event, reason = await verify_event_hybrid(text, mock_llm, use_llm=True, use_zero_shot=False)
 
-        assert is_event
+        assert not is_event
         assert "LLM_ERROR" in reason
 
     @pytest.mark.asyncio
     async def test_llm_rate_limit_error(self):
-        """Rate limit errors should be handled gracefully."""
+        """Rate limit errors should reject (conservative approach)."""
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(side_effect=Exception("Rate limit exceeded"))
 
         text = "Iran attacks US bases"
-        is_event, reason = await verify_event_hybrid(text, mock_llm, use_llm=True)
+        is_event, reason = await verify_event_hybrid(text, mock_llm, use_llm=True, use_zero_shot=False)
 
-        assert is_event
+        assert not is_event
         assert "LLM_ERROR" in reason
 
     @pytest.mark.asyncio

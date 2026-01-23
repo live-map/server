@@ -51,9 +51,9 @@ NOT_EVENT_PATTERNS = [
     # 리뷰/의견/분석 (개선)
     r"\b(review|opinion|editorial|commentary)\b",
     r"\b(my thoughts on|i think|in my opinion)\b",
-    r"\bwhy .{1,50} (is|are|isn't|not)\b",
-    r"\bhow .{1,50} (can|could|should|will)\b",
-    r"\bwhat .{1,50} (means|tells|shows)\b",
+    r"\bwhy \S{1,50} (is|are|isn't|not)\b",
+    r"\bhow \S{1,50} (can|could|should|will)\b",
+    r"\bwhat \S{1,50} (means|tells|shows)\b",
     r"\b(explained|breakdown|deep dive|explainer)\b",
 
     # 스포츠 (영어)
@@ -139,6 +139,29 @@ def classify_with_zero_shot(text: str) -> tuple[bool | None, float, str]:
 # Stage 3: LLM 기반 검증
 # ============================================
 
+
+def _sanitize_text_for_llm(text: str) -> str:
+    """
+    Sanitize text before sending to LLM to mitigate prompt injection.
+
+    - Remove potential injection patterns (VERDICT:, REASON:)
+    - Remove control characters
+    - Normalize whitespace
+    """
+    import re
+
+    # Remove potential injection patterns (case-insensitive)
+    sanitized = re.sub(r'\b(VERDICT|REASON|OUTPUT|PASS|REJECT)\s*:', '[REMOVED]:', text, flags=re.IGNORECASE)
+
+    # Remove control characters except newlines and tabs
+    sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', sanitized)
+
+    # Normalize excessive whitespace
+    sanitized = re.sub(r'\s{3,}', '  ', sanitized)
+
+    return sanitized
+
+
 EVENT_VERIFY_PROMPT = """Today's date: {today}
 
 ## Task
@@ -198,8 +221,8 @@ async def verify_event_with_llm(
     Returns:
         (이벤트 여부, 사유)
     """
-    # 텍스트 길이 제한 (토큰 절약)
-    truncated_text = text[:500]
+    # 텍스트 길이 제한 및 sanitize (토큰 절약 + 보안)
+    truncated_text = _sanitize_text_for_llm(text[:500])
     today = datetime.now().strftime("%Y-%m-%d")
     prompt = EVENT_VERIFY_PROMPT.format(text=truncated_text, today=today)
 
@@ -207,30 +230,31 @@ async def verify_event_with_llm(
         response = await llm.ainvoke(prompt)
         content = response.content.strip()
 
-        # 응답 파싱
+        # 응답 파싱 - LLM 응답에서만 VERDICT 찾기 (첫 번째만 사용)
         lines = content.split("\n")
         verdict_line = ""
+        reason = "N/A"
+        verdict_found = False
+
         for line in lines:
-            if "VERDICT:" in line.upper():
+            line_upper = line.upper().strip()
+            # 첫 번째 VERDICT만 사용 (prompt injection 방지)
+            if not verdict_found and "VERDICT:" in line_upper:
                 verdict_line = line
-                break
+                verdict_found = True
+            # REASON도 첫 번째만 사용
+            elif "REASON:" in line_upper and reason == "N/A":
+                reason = line.split(":", 1)[-1].strip()[:100]  # 길이 제한
 
         # PASS = 통과, REJECT = 거부
-        is_event = "PASS" in verdict_line.upper()
-
-        # REASON 추출
-        reason = "N/A"
-        for line in lines:
-            if "REASON:" in line.upper():
-                reason = line.split(":", 1)[-1].strip()
-                break
+        is_event = "PASS" in verdict_line.upper() and "REJECT" not in verdict_line.upper()
 
         return is_event, reason
 
     except Exception as e:
-        logger.warning(f"LLM verification error: {e}")
-        # 에러 시 통과 (false positive보다 false negative가 나음)
-        return True, f"LLM_ERROR: {str(e)[:50]}"
+        logger.error(f"LLM verification error: {e}")
+        # 에러 시 거부 (보수적 접근 - false negative보다 안전)
+        return False, f"LLM_ERROR: verification failed - {str(e)[:30]}"
 
 
 # ============================================
