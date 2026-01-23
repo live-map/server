@@ -261,6 +261,37 @@ class MultiSourceScanner:
             logger.info("No events detected")
             return []
 
+        # ============================================
+        # Recency Filter - Reject old articles
+        # ============================================
+        max_age_hours = agent_settings.max_event_age_hours
+        current_time = datetime.utcnow()
+        recent_events = []
+        rejected_count = 0
+
+        for event in events:
+            age_hours = (current_time - event.detected_at).total_seconds() / 3600
+            if age_hours <= max_age_hours:
+                recent_events.append(event)
+            else:
+                rejected_count += 1
+                logger.warning(
+                    f"[RECENCY-FILTER] Rejected old event (age={age_hours:.1f}h): "
+                    f"{event.title[:50]}..."
+                )
+
+        if rejected_count > 0:
+            logger.info(
+                f"Recency filter: {len(recent_events)}/{len(events)} events within "
+                f"{max_age_hours}h window ({rejected_count} rejected)"
+            )
+
+        events = recent_events
+
+        if not events:
+            logger.info("No recent events after recency filter")
+            return []
+
         # LLM으로 최종 분류 및 그룹화
         significant_events = await self._classify_and_group(events)
         logger.info(f"Significant events: {len(significant_events)}")

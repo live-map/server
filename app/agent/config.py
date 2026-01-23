@@ -100,6 +100,9 @@ class AgentSettings(BaseSettings):
     scan_interval_minutes: int = 15  # 멀티소스용 15분 간격
     max_news_per_scan: int = 100
 
+    # Recency filter - reject articles older than this threshold
+    max_event_age_hours: int = 48  # Maximum age for events to be processed
+
     # 카테고리별 이벤트 제한 (큐 다양성 보장)
     max_events_per_category: int = 5  # 각 카테고리당 최대 이벤트 수
     ensure_category_diversity: bool = True  # 다양한 카테고리 우선
