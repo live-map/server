@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.post.repository import PostRepository
 from app.models.post import Post
-
+from fastapi import HTTPException, status
 logger = logging.getLogger(__name__)
 
 
@@ -96,6 +96,7 @@ class PostService:
         # 권한 확인: 작성자만 수정 가능
         if post.user_id != user_id:
             logger.warning(f"User {user_id} tried to edit post {post_id} owned by {post.user_id}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not the owner of this post")
             return None
 
         if title is not None:
