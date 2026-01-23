@@ -434,8 +434,8 @@ class ClaimVerificationAgent:
         """Search for evidence for a single claim."""
         all_results: list[dict] = []
 
-        # Try multiple search tools
-        search_tools = ["search_news_gdelt", "search_web_free", "search_web"]
+        # Try news-specific search tools first (filter old/Wikipedia content)
+        search_tools = ["search_news_gdelt", "search_news_ddg", "search_web_free"]
 
         for tool_name in search_tools:
             tool = TOOL_MAP.get(tool_name)

@@ -3,15 +3,19 @@ Search tools for investigation agent.
 
 Priority-based search strategy (based on expert research):
 1. GDELT (free) - News/events specialized
-2. DuckDuckGo (free) - General web search
-3. Tavily (paid) - High-quality fallback
+2. DuckDuckGo News (free) - Recent news search
+3. DuckDuckGo Web (free) - General web search (filtered)
+4. Tavily (paid) - High-quality fallback
 
 - search_news_gdelt: GDELT news search (FREE, news specialized)
-- search_web_free: DuckDuckGo search (FREE, general web)
+- search_news_ddg: DuckDuckGo NEWS search (FREE, recent news only)
+- search_web_free: DuckDuckGo search (FREE, general web, filtered)
 - search_web: Tavily-based web search (PAID, high quality)
 """
 
 import logging
+import re
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 import httpx
@@ -20,6 +24,36 @@ from langchain_core.tools import tool
 from app.agent.config import agent_settings
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DOMAINS TO EXCLUDE FROM EVIDENCE (not news sources)
+# =============================================================================
+EXCLUDED_DOMAINS = {
+    # Wikipedia and wikis
+    "wikipedia.org",
+    "en.wikipedia.org",
+    "ko.wikipedia.org",
+    "wikidata.org",
+    "wikimedia.org",
+    "wikiwand.com",
+    # Reference sites (not news)
+    "britannica.com",
+    "dictionary.com",
+    "merriam-webster.com",
+    "encyclopedia.com",
+    # Social media (not primary sources)
+    "twitter.com",
+    "x.com",
+    "facebook.com",
+    "instagram.com",
+    "tiktok.com",
+    "reddit.com",
+    # Academic/archive (old content)
+    "jstor.org",
+    "archive.org",
+    "academia.edu",
+    "researchgate.net",
+}
 
 
 def _is_valid_url(url: str) -> bool:
@@ -44,22 +78,136 @@ def _extract_domain(url: str) -> str:
         return "unknown"
 
 
+def _is_excluded_domain(url: str) -> bool:
+    """Check if URL is from an excluded domain (Wikipedia, etc.)."""
+    if not url:
+        return True
+    try:
+        domain = _extract_domain(url).lower()
+        for excluded in EXCLUDED_DOMAINS:
+            if excluded in domain:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _extract_date_from_url(url: str) -> datetime | None:
+    """Extract date from URL if present (common in news URLs)."""
+    if not url:
+        return None
+
+    # Common patterns: /2024/01/23/, /2024-01-23/, /20240123/
+    patterns = [
+        r'/(\d{4})/(\d{2})/(\d{2})/',  # /2024/01/23/
+        r'/(\d{4})-(\d{2})-(\d{2})/',  # /2024-01-23/
+        r'/(\d{4})(\d{2})(\d{2})/',     # /20240123/
+        r'/(\d{4})/(\d{2})/',           # /2024/01/ (month only)
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            try:
+                groups = match.groups()
+                year = int(groups[0])
+                month = int(groups[1])
+                day = int(groups[2]) if len(groups) > 2 else 1
+                return datetime(year, month, day)
+            except (ValueError, IndexError):
+                continue
+    return None
+
+
+def _is_recent_url(url: str, max_age_days: int = 7) -> bool:
+    """Check if URL appears to be recent based on date in URL."""
+    url_date = _extract_date_from_url(url)
+    if url_date is None:
+        # Can't determine date, don't filter
+        return True
+
+    cutoff = datetime.now() - timedelta(days=max_age_days)
+    return url_date >= cutoff
+
+
 # =============================================================================
 # FREE SEARCH TOOLS (Use these first!)
 # =============================================================================
 
 
 @tool
-async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
+async def search_news_ddg(query: str, max_results: int = 15, max_age_days: int = 7) -> list[dict]:
+    """
+    FREE news search using DuckDuckGo News. Use for RECENT news only.
+
+    This searches DuckDuckGo's news index which only returns recent articles.
+    Use this for evidence gathering on current events.
+
+    Args:
+        query: Search query (news topics, events, breaking news)
+        max_results: Maximum number of results (default 15)
+        max_age_days: Maximum age of articles in days (default 7)
+
+    Returns:
+        List of news results [{title, url, content, source, source_name, published}]
+    """
+    try:
+        from ddgs import DDGS
+
+        results = []
+        with DDGS() as ddgs:
+            # Use news() instead of text() for recent news only
+            for r in ddgs.news(query, max_results=max_results):
+                url = r.get("url", r.get("link", ""))
+
+                # Validate URL
+                if not _is_valid_url(url):
+                    logger.debug(f"Skipping invalid URL: {url}")
+                    continue
+
+                # Filter out excluded domains (Wikipedia, etc.)
+                if _is_excluded_domain(url):
+                    logger.debug(f"Skipping excluded domain: {url}")
+                    continue
+
+                # Filter by URL date if present
+                if not _is_recent_url(url, max_age_days=max_age_days):
+                    logger.debug(f"Skipping old URL: {url}")
+                    continue
+
+                domain = _extract_domain(url)
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": url,
+                    "content": r.get("body", "")[:500],
+                    "source": domain,
+                    "source_name": f"DDGNews:{domain}",
+                    "published": r.get("date", ""),
+                })
+
+        logger.info(f"DuckDuckGo News: {len(results)} articles for '{query[:30]}...'")
+        return results
+
+    except Exception as e:
+        logger.error(f"DuckDuckGo News search error: {e}")
+        return []  # Return empty list on error
+
+
+@tool
+async def search_web_free(query: str, max_results: int = 10, filter_old: bool = True) -> list[dict]:
     """
     FREE web search using DuckDuckGo. Use this BEFORE paid search tools.
 
     This is a free alternative to Tavily. Always try this first for general
     web searches to save costs.
 
+    NOTE: This returns general web results. For news/evidence gathering,
+    prefer search_news_ddg or search_news_gdelt.
+
     Args:
         query: Search query (any topic, news, general information)
         max_results: Maximum number of results (default 10)
+        filter_old: Filter out Wikipedia and old URLs (default True)
 
     Returns:
         List of results [{title, url, content, source, source_name}]
@@ -69,13 +217,23 @@ async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
 
         results = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
+            for r in ddgs.text(query, max_results=max_results * 2):  # Fetch more to account for filtering
                 # New ddgs package uses 'link' instead of 'href'
                 url = r.get("link", r.get("href", ""))
 
                 # Validate URL
                 if not _is_valid_url(url):
                     logger.debug(f"Skipping invalid URL: {url}")
+                    continue
+
+                # Filter out excluded domains (Wikipedia, etc.)
+                if filter_old and _is_excluded_domain(url):
+                    logger.debug(f"Skipping excluded domain: {url}")
+                    continue
+
+                # Filter by URL date if present
+                if filter_old and not _is_recent_url(url, max_age_days=30):
+                    logger.debug(f"Skipping old URL: {url}")
                     continue
 
                 domain = _extract_domain(url)
@@ -86,6 +244,9 @@ async def search_web_free(query: str, max_results: int = 10) -> list[dict]:
                     "source": domain,
                     "source_name": f"DuckDuckGo:{domain}",
                 })
+
+                if len(results) >= max_results:
+                    break
 
         logger.info(f"DuckDuckGo: {len(results)} results for '{query[:30]}...'")
         return results
