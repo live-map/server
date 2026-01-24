@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
+from .date_extractor import validate_trigger_recency
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class CurrentsTrigger(BaseTrigger):
         country: str | None = None,
         category: str | None = None,
         max_results: int = 50,
+        max_age_hours: int = 48,
     ):
         super().__init__(keywords)
         self.api_key = api_key
@@ -56,6 +58,7 @@ class CurrentsTrigger(BaseTrigger):
         self.country = country
         self.category = category
         self.max_results = max_results
+        self.max_age_hours = max_age_hours
         self.seen_hashes: dict[str, float] = {}
         self._request_count = 0
 
@@ -170,11 +173,27 @@ class CurrentsTrigger(BaseTrigger):
             language = article.get("language", self.language)
             category = article.get("category", [])
 
-            # Parse timestamp
+            # Parse API timestamp
             try:
-                detected_at = datetime.fromisoformat(published.replace("Z", "+00:00"))
+                api_date = datetime.fromisoformat(published.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                detected_at = datetime.utcnow()
+                api_date = None
+
+            # Validate recency using 4-Layer validation
+            is_recent, reason, validated_date = validate_trigger_recency(
+                url=url,
+                title=title,
+                content=description[:500],
+                api_date=api_date,
+                max_age_hours=self.max_age_hours,
+            )
+
+            if not is_recent:
+                logger.info(f"[CURRENTS-RECENCY] Rejected: {reason} | {title[:50]}...")
+                return None
+
+            # Use validated date
+            detected_at = validated_date if validated_date else datetime.utcnow()
 
             # Find matched keywords
             full_text = f"{title} {description}"
@@ -197,6 +216,7 @@ class CurrentsTrigger(BaseTrigger):
                     "id": article.get("id"),
                     "category": category,
                     "source_url": url,
+                    "recency_reason": reason,
                 },
             )
 

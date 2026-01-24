@@ -10,8 +10,10 @@ Handles startup and shutdown operations.
 
 import asyncio
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 
@@ -25,23 +27,48 @@ _scanner_task: asyncio.Task | None = None
 
 
 def setup_logging():
-    """Configure logging to show all agent activity."""
+    """Configure logging with file output for overnight debugging.
+
+    Logs are written to:
+    - Console: All activity with timestamp (HH:MM:SS format)
+    - File: logs/livemap.log with full timestamp (YYYY-MM-DD HH:MM:SS)
+
+    File rotation: 10MB max size, 5 backup files (max 50MB total)
+    """
     # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
 
-    # Console handler with detailed format
+    # === Console handler (existing) ===
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
+    console_formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
         datefmt="%H:%M:%S",
     )
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
 
-    # Clear existing handlers and add new one
+    # === File handler (new for overnight debugging) ===
+    log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    file_handler = RotatingFileHandler(
+        os.path.join(log_dir, "livemap.log"),
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # Clear existing handlers and add both
     root_logger.handlers.clear()
     root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
     # Set specific loggers
     logging.getLogger("app").setLevel(logging.DEBUG)
@@ -52,6 +79,9 @@ def setup_logging():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+    # Log startup
+    logger.info(f"Logging initialized - file output: {os.path.join(log_dir, 'livemap.log')}")
 
 
 async def run_scheduled_scan():

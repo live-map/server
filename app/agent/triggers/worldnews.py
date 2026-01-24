@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
+from .date_extractor import validate_trigger_recency
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +48,14 @@ class WorldNewsTrigger(BaseTrigger):
         language: str = "en",
         source_countries: str | None = None,
         max_results: int = 50,
+        max_age_hours: int = 48,
     ):
         super().__init__(keywords)
         self.api_key = api_key
         self.language = language
         self.source_countries = source_countries
         self.max_results = max_results
+        self.max_age_hours = max_age_hours
         self.seen_hashes: dict[str, float] = {}
         self._request_count = 0
 
@@ -179,11 +182,27 @@ class WorldNewsTrigger(BaseTrigger):
             source_country = article.get("source_country", "")
             sentiment = article.get("sentiment", 0)
 
-            # Parse timestamp
+            # Parse API timestamp
             try:
-                detected_at = datetime.fromisoformat(publish_date.replace("Z", "+00:00"))
+                api_date = datetime.fromisoformat(publish_date.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                detected_at = datetime.utcnow()
+                api_date = None
+
+            # Validate recency using 4-Layer validation
+            is_recent, reason, validated_date = validate_trigger_recency(
+                url=url,
+                title=title,
+                content=text[:500] if text else summary[:500],
+                api_date=api_date,
+                max_age_hours=self.max_age_hours,
+            )
+
+            if not is_recent:
+                logger.info(f"[WORLDNEWS-RECENCY] Rejected: {reason} | {title[:50]}...")
+                return None
+
+            # Use validated date
+            detected_at = validated_date if validated_date else datetime.utcnow()
 
             # Find matched keywords
             full_text = f"{title} {text}"
@@ -211,6 +230,7 @@ class WorldNewsTrigger(BaseTrigger):
                     "sentiment": sentiment,
                     "category": article.get("category"),
                     "full_text": text,
+                    "recency_reason": reason,
                 },
             )
 

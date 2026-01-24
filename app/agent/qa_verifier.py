@@ -25,6 +25,13 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from .claim_extraction import ExtractedClaim
 from .config import agent_settings
@@ -429,15 +436,22 @@ class QAVerifier:
         return result
 
     async def _generate_questions(self, claim: str) -> list[str]:
-        """Generate verification questions for a claim."""
+        """Generate verification questions for a claim with retry logic."""
         try:
-            response = await asyncio.wait_for(
-                self.llm.ainvoke([
-                    SystemMessage(content="You are a fact-checker generating verification questions."),
-                    HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
-                ]),
-                timeout=self.llm_timeout,
-            )
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=1, max=10),
+                retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+                reraise=True,
+            ):
+                with attempt:
+                    response = await asyncio.wait_for(
+                        self.llm.ainvoke([
+                            SystemMessage(content="You are a fact-checker generating verification questions."),
+                            HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
+                        ]),
+                        timeout=self.llm_timeout,
+                    )
 
             questions = []
             for line in response.content.split("\n"):
@@ -449,6 +463,9 @@ class QAVerifier:
 
             return questions[:4] if questions else [f"Is the following claim true: {claim}?"]
 
+        except RetryError:
+            logger.warning(f"Question generation failed after retries")
+            return [f"Is the following claim true: {claim}?"]
         except asyncio.TimeoutError:
             logger.warning(f"Question generation timed out after {self.llm_timeout}s")
             return [f"Is the following claim true: {claim}?"]
@@ -525,29 +542,43 @@ class QAVerifier:
         evidence: str,
         questions: list[str],
     ) -> dict:
-        """Get LLM verdict for claim."""
+        """Get LLM verdict for claim with retry logic."""
         questions_text = "\n".join([f"- {q}" for q in questions])
 
         try:
-            response = await asyncio.wait_for(
-                self.llm.ainvoke([
-                    SystemMessage(content=(
-                        "You are a professional fact-checker. You MUST only use information "
-                        "from the provided evidence documents. Never use external knowledge. "
-                        "Always cite sources explicitly by name. If evidence is insufficient, "
-                        "return NOT_ENOUGH_INFO."
-                    )),
-                    HumanMessage(content=VERIFICATION_PROMPT.format(
-                        claim=claim,
-                        evidence=evidence,
-                        questions=questions_text,
-                    )),
-                ]),
-                timeout=self.llm_timeout,
-            )
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=1, max=10),
+                retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+                reraise=True,
+            ):
+                with attempt:
+                    response = await asyncio.wait_for(
+                        self.llm.ainvoke([
+                            SystemMessage(content=(
+                                "You are a professional fact-checker. You MUST only use information "
+                                "from the provided evidence documents. Never use external knowledge. "
+                                "Always cite sources explicitly by name. If evidence is insufficient, "
+                                "return NOT_ENOUGH_INFO."
+                            )),
+                            HumanMessage(content=VERIFICATION_PROMPT.format(
+                                claim=claim,
+                                evidence=evidence,
+                                questions=questions_text,
+                            )),
+                        ]),
+                        timeout=self.llm_timeout,
+                    )
 
             return self._parse_verdict(response.content)
 
+        except RetryError:
+            logger.error("Verdict generation failed after retries")
+            return {
+                "verdict": "NOT_ENOUGH_INFO",
+                "confidence": 1,
+                "reasoning": "Verification failed after multiple retries",
+            }
         except asyncio.TimeoutError:
             logger.error(f"Verdict generation timed out after {self.llm_timeout}s")
             return {

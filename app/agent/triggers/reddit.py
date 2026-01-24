@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
+from .date_extractor import validate_trigger_recency
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class RedditTrigger(BaseTrigger):
         min_score: int = 10,  # Minimum upvotes
         min_comments: int = 0,
         time_filter: str = "day",  # hour, day, week, month, year, all
+        max_age_hours: int = 48,  # Maximum article age
     ):
         super().__init__(keywords)
         self.subreddits = subreddits or NEWS_SUBREDDITS
@@ -66,6 +68,7 @@ class RedditTrigger(BaseTrigger):
         self.min_score = min_score
         self.min_comments = min_comments
         self.time_filter = time_filter
+        self.max_age_hours = max_age_hours
         self.seen_hashes: dict[str, float] = {}
         # User agent required by Reddit API
         self.user_agent = "LiveMapBot/1.0 (Breaking News Monitor)"
@@ -188,12 +191,32 @@ class RedditTrigger(BaseTrigger):
             if not matched:
                 matched = [keyword]
 
-            # Extract timestamp
+            # Extract timestamp from Reddit API
             created_utc = post.get("created_utc", 0)
             try:
-                detected_at = datetime.utcfromtimestamp(created_utc)
+                api_date = datetime.utcfromtimestamp(created_utc) if created_utc else None
             except (ValueError, OSError):
-                detected_at = datetime.utcnow()
+                api_date = None
+
+            # Get external URL if linked article
+            external_url = post.get("url", "")
+            article_url = external_url if external_url and not external_url.startswith("https://www.reddit.com") else ""
+
+            # Validate recency using 4-Layer validation
+            is_recent, reason, validated_date = validate_trigger_recency(
+                url=article_url,
+                title=title,
+                content=selftext[:500],
+                api_date=api_date,
+                max_age_hours=self.max_age_hours,
+            )
+
+            if not is_recent:
+                logger.info(f"[REDDIT-RECENCY] Rejected: {reason} | {title[:50]}...")
+                return None
+
+            # Use validated date
+            detected_at = validated_date if validated_date else datetime.utcnow()
 
             # Extract media
             media_urls = []
@@ -211,10 +234,9 @@ class RedditTrigger(BaseTrigger):
             # Build full URL
             post_url = f"https://www.reddit.com{permalink}"
 
-            # Get external link if any
-            external_url = post.get("url", "")
-            if external_url and not external_url.startswith("https://www.reddit.com"):
-                content = f"{selftext}\n\nSource: {external_url}" if selftext else external_url
+            # Build content with external link if available
+            if article_url:
+                content = f"{selftext}\n\nSource: {article_url}" if selftext else article_url
             else:
                 content = selftext
 
@@ -243,7 +265,8 @@ class RedditTrigger(BaseTrigger):
                     "over_18": post.get("over_18"),
                     "spoiler": post.get("spoiler"),
                     "link_flair_text": post.get("link_flair_text"),
-                    "external_url": external_url if external_url != post_url else None,
+                    "external_url": article_url if article_url else None,
+                    "recency_reason": reason,
                 },
             )
 

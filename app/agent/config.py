@@ -181,7 +181,7 @@ class AgentSettings(BaseSettings):
 
     # Gate 0: Event Verification (이벤트 검증)
     event_verification_enabled: bool = True   # 이벤트 검증 활성화
-    event_verification_use_llm: bool = True   # LLM 검증 사용 (False면 규칙만)
+    event_verification_use_llm: bool = False  # LLM 검증 비활성화 (규칙만 사용하여 비용 절감)
     event_verification_use_zero_shot: bool = False  # Zero-shot 분류 사용 (transformers 필요)
     zero_shot_high_confidence: float = 0.8    # 이 이상이면 바로 결정
     zero_shot_model: str = "facebook/bart-large-mnli"  # Zero-shot 모델

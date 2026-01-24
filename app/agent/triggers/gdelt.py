@@ -21,7 +21,7 @@ from datetime import datetime
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
-from .date_extractor import extract_date_from_url, validate_article_recency
+from .date_extractor import validate_trigger_recency
 
 logger = logging.getLogger(__name__)
 
@@ -172,21 +172,22 @@ class GDELTTrigger(BaseTrigger):
                     except (ValueError, TypeError):
                         seendate = datetime.utcnow()
 
-                    # Validate article recency using URL date
+                    # Validate article recency using 4-Layer validation
                     url = art.get("url", "")
-                    is_recent, reason, url_date = validate_article_recency(
+                    is_recent, reason, validated_date = validate_trigger_recency(
                         url=url,
-                        seendate=seendate,
+                        title=title,
+                        content="",  # GDELT doesn't provide content
+                        api_date=seendate,
                         max_age_hours=48,
-                        max_discrepancy_hours=72,
                     )
 
                     if not is_recent:
                         logger.info(f"[GDELT-RECENCY] Rejected: {reason} | {title[:50]}...")
                         continue
 
-                    # Use URL date if available, otherwise seendate
-                    detected_at = url_date if url_date else seendate
+                    # Use validated date (conservative: require a valid date)
+                    detected_at = validated_date if validated_date else datetime.utcnow()
 
                     # GDELT가 이미 키워드로 필터링했으므로 모든 기사 포함
                     # 최종 필터링은 significance scoring에서 수행
@@ -203,7 +204,7 @@ class GDELTTrigger(BaseTrigger):
                             **art,
                             "gkg_themes_enabled": self.use_gkg_themes,
                             "tone_threshold": self.tone_threshold,
-                            "url_date": url_date.isoformat() if url_date else None,
+                            "validated_date": validated_date.isoformat() if validated_date else None,
                             "seendate_parsed": seendate.isoformat(),
                             "recency_reason": reason,
                         },

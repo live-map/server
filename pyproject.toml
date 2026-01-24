@@ -39,6 +39,8 @@ dependencies = [
     # JWT Authentication (NextAuth JWE decryption)
     "fastapi-nextauth-jwt>=0.2.4", # Decode NextAuth JWE tokens
     "pytrends>=4.9.2",
+    # Date parsing (for evidence date filtering)
+    "python-dateutil>=2.8.2",
 ]
 
 [dependency-groups]

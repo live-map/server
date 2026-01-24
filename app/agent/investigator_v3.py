@@ -44,9 +44,11 @@ from tenacity import (
 from .article_generator import ArticleGenerator, GeneratedArticle
 from .bilingual_article_generator import BilingualArticleGenerator, BilingualArticle, RelatedSource
 from .claim_extraction import ClaimExtractor, ExtractedClaim
+from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult
 from .config import agent_settings
 from .qa_verifier import ClaimVerdict, QAVerifier, VerificationResult
 from .tools import ALL_TOOLS
+from .tools.search import _is_evidence_recent, _is_excluded_domain, _is_recent_url
 
 
 # =============================================================================
@@ -147,6 +149,10 @@ class ClaimVerificationState(BaseModel):
     refuted_claims: list[dict] = Field(default_factory=list)
     unverifiable_claims: list[dict] = Field(default_factory=list)
     overall_reliability: float = 0.0
+
+    # === STAGE 4.25: MULTI-SOURCE CONFIDENCE (NEW) ===
+    confidence_result: dict | None = None
+    two_source_satisfied: bool = False
 
     # === STAGE 4.5: UPDATE DETECTION (NEW) ===
     is_update: bool = False
@@ -431,16 +437,18 @@ class ClaimVerificationAgent:
         }
 
     async def _search_for_claim(self, claim: str) -> list[dict]:
-        """Search for evidence for a single claim."""
-        all_results: list[dict] = []
+        """Search for evidence for a single claim.
 
-        # Try news-specific search tools first (filter old/Wikipedia content)
+        Runs searches in parallel across multiple tools for better performance.
+        """
+        # Search tools to use (in order of preference for result ranking)
         search_tools = ["search_news_gdelt", "search_news_ddg", "search_web_free"]
 
-        for tool_name in search_tools:
+        async def _single_search(tool_name: str) -> list[dict]:
+            """Run a single search tool with error handling."""
             tool = TOOL_MAP.get(tool_name)
             if not tool:
-                continue
+                return []
 
             try:
                 async with self._search_semaphore:
@@ -449,19 +457,48 @@ class ClaimVerificationAgent:
                         timeout=self.config.TOOL_TIMEOUT,
                     )
 
+                results = []
                 if isinstance(result, list):
                     for item in result:
                         if isinstance(item, dict) and not item.get("error"):
-                            item["source_name"] = item.get("source_name", tool_name)
-                            all_results.append(item)
+                            # Double defense: Apply date validation again
+                            # (tools already filter, but this catches edge cases)
+                            if not _is_evidence_recent(item, max_age_days=30):
+                                logger.debug(
+                                    f"Investigator rejected old evidence: "
+                                    f"{item.get('url', '')[:50]}..."
+                                )
+                                continue
 
-                if len(all_results) >= self.config.MAX_EVIDENCE_PER_CLAIM:
-                    break
+                            item["source_name"] = item.get("source_name", tool_name)
+                            results.append(item)
+                return results
 
             except asyncio.TimeoutError:
                 logger.warning(f"Search timeout: {tool_name}")
+                return []
             except Exception as e:
                 logger.warning(f"Search failed ({tool_name}): {e}")
+                return []
+
+        # Run all searches in parallel
+        search_tasks = [_single_search(tool_name) for tool_name in search_tools]
+        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+        # Combine results, preserving tool priority order
+        all_results: list[dict] = []
+        for i, result in enumerate(search_results):
+            if isinstance(result, Exception):
+                logger.warning(f"Search task failed: {search_tools[i]}: {result}")
+                continue
+            if isinstance(result, list):
+                for item in result:
+                    if len(all_results) >= self.config.MAX_EVIDENCE_PER_CLAIM:
+                        break
+                    all_results.append(item)
+
+            if len(all_results) >= self.config.MAX_EVIDENCE_PER_CLAIM:
+                break
 
         return all_results
 
@@ -515,6 +552,10 @@ class ClaimVerificationAgent:
         1. Tier-1 sources (Reuters, AP, government)
         2. Tier-2 sources (major news orgs)
         3. Higher relevance scores
+
+        Filters out:
+        - Excluded domains (Wikipedia, etc.)
+        - Old sources (> 30 days based on published date or URL date pattern)
         """
         if not evidence_docs:
             return []
@@ -528,6 +569,16 @@ class ClaimVerificationAgent:
             if not url or url in seen_urls:
                 continue
             seen_urls.add(url)
+
+            # Filter out excluded domains (Wikipedia, etc.)
+            if _is_excluded_domain(url):
+                logger.debug(f"Skipping excluded domain for related: {url}")
+                continue
+
+            # 3-Layer date validation for related sources
+            if not _is_evidence_recent(doc, max_age_days=30):
+                logger.debug(f"Skipping old source for related: {url}")
+                continue
 
             source_name = doc.get("source_name", "")
             title = doc.get("title", "")
@@ -651,7 +702,7 @@ class ClaimVerificationAgent:
     # =========================================================================
 
     async def _aggregate_verdicts_node(self, state: dict) -> dict:
-        """Aggregate verdicts and calculate reliability."""
+        """Aggregate verdicts and calculate reliability with Two-Source Rule check."""
         logger.info("Stage 4: Aggregating verdicts")
 
         verdicts = state.get("verdicts", [])
@@ -663,6 +714,50 @@ class ClaimVerificationAgent:
         total = len(verdicts)
         reliability = len(supported) / total if total > 0 else 0.0
 
+        # === Multi-Source Confidence Scoring (Two-Source Rule) ===
+        evidence_docs = state.get("evidence_docs", [])
+
+        # Build unique source list with credibility tiers
+        seen_sources = set()
+        evidence_sources = []
+        for doc in evidence_docs:
+            source_name = doc.get("source_name", "unknown")
+            url = doc.get("url", "")
+
+            # Deduplicate by source name
+            if source_name in seen_sources:
+                continue
+            seen_sources.add(source_name)
+
+            tier = self._get_credibility_tier(source_name, url)
+            # Map tier1/tier2/tier3 to expected format
+            tier_mapping = {
+                "tier1": "tier1_news",
+                "tier2": "tier2_news",
+                "tier3": "tier3_social",
+            }
+            evidence_sources.append({
+                "name": source_name,
+                "tier": tier_mapping.get(tier, "tier2_news"),
+            })
+
+        # Calculate multi-source confidence
+        scorer = MultiSourceConfidenceScorer()
+        confidence_result = scorer.calculate_confidence(evidence_sources)
+
+        # Log Two-Source Rule status
+        if not confidence_result.two_source_satisfied:
+            logger.warning(
+                f"Two-Source Rule not satisfied: "
+                f"{state.get('original_text', '')[:40]}... "
+                f"(sources: {len(evidence_sources)})"
+            )
+        else:
+            logger.info(
+                f"Two-Source Rule satisfied: {confidence_result.source_count} sources, "
+                f"confidence={confidence_result.score:.2f}"
+            )
+
         logger.info(
             "Aggregation complete",
             extra={
@@ -670,6 +765,8 @@ class ClaimVerificationAgent:
                 "refuted": len(refuted),
                 "unverifiable": len(unverifiable),
                 "reliability": f"{reliability:.1%}",
+                "confidence_score": f"{confidence_result.score:.2f}",
+                "two_source_satisfied": confidence_result.two_source_satisfied,
             },
         )
 
@@ -679,6 +776,8 @@ class ClaimVerificationAgent:
             "refuted_claims": refuted,
             "unverifiable_claims": unverifiable,
             "overall_reliability": reliability,
+            "confidence_result": confidence_result.to_dict(),
+            "two_source_satisfied": confidence_result.two_source_satisfied,
             "current_stage": "synthesizer",
         }
 
