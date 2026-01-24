@@ -25,6 +25,9 @@ class AgentSettings(BaseSettings):
     # Tavily 검색 (무료 1,000회/월)
     tavily_api_key: str = ""
 
+    # P1: Brave Search (무료 2,000회/월)
+    brave_api_key: str = ""
+
     # ===========================================
     # 트리거 소스 설정
     # ===========================================

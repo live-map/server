@@ -259,14 +259,18 @@ Already collected {len(collected)} items.
 
 === COST OPTIMIZATION: USE FREE TOOLS FIRST ===
 
-FREE TOOLS (use these first):
+FREE NEWS TOOLS (use these first):
 1. search_news_gdelt - FREE: For breaking news, conflicts, protests (100,000+ sources)
-2. search_web_free - FREE: For general web search (DuckDuckGo)
-3. search_telegram - FREE: For real-time footage and local reports
-4. search_youtube - FREE: For video content
+2. search_news_ddg - FREE: For recent news (DuckDuckGo News)
+3. search_news_brave - FREE: For broader coverage (2000/month, auto-translates queries)
+
+FREE WEB/SOCIAL TOOLS:
+4. search_web_free - FREE: For general web search (DuckDuckGo)
+5. search_telegram - FREE: For real-time footage and local reports
+6. search_youtube - FREE: For video content
 
 PAID TOOLS (use only if free tools fail):
-5. search_web - PAID: High-quality search (Tavily) - USE ONLY AS LAST RESORT
+7. search_web - PAID: High-quality search (Tavily) - USE ONLY AS LAST RESORT
 
 UTILITY TOOLS:
 - get_video_info: Video metadata
@@ -274,9 +278,10 @@ UTILITY TOOLS:
 
 RULES:
 1. ALWAYS start with search_news_gdelt for news/events
-2. Use search_web_free for general information
-3. ONLY use search_web (paid) if free tools return <3 results
-4. Focus on getting diverse sources
+2. Use search_news_ddg and search_news_brave for additional coverage
+3. Use search_web_free for general information
+4. ONLY use search_web (paid) if free tools return <3 results
+5. Focus on getting diverse sources from different outlets
 
 If you have enough information (10+ items from multiple sources), say "COLLECTION_COMPLETE"."""
 

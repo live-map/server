@@ -4,21 +4,32 @@ Search tools for investigation agent.
 Priority-based search strategy (based on expert research):
 1. GDELT (free) - News/events specialized
 2. DuckDuckGo News (free) - Recent news search
-3. DuckDuckGo Web (free) - General web search (filtered)
-4. Tavily (paid) - High-quality fallback
+3. Brave Search (free tier) - P1 Enhancement
+4. DuckDuckGo Web (free) - General web search (filtered)
+5. Tavily (paid) - High-quality fallback
 
 - search_news_gdelt: GDELT news search (FREE, news specialized)
 - search_news_ddg: DuckDuckGo NEWS search (FREE, recent news only)
+- search_news_brave: Brave Search NEWS (FREE tier, 2000 queries/month)
 - search_web_free: DuckDuckGo search (FREE, general web, filtered)
 - search_web: Tavily-based web search (PAID, high quality)
+- search_multi: P1 - Parallel search across multiple engines
 
-P1 Enhancement: Non-English query translation support
+P1 Enhancement:
+- Non-English query translation support
+- Multi-engine parallel search
+- Response caching (15 min TTL)
+- Brave Search integration
 """
 
+import asyncio
+import hashlib
 import logging
 import re
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -28,6 +39,49 @@ from langchain_core.tools import tool
 from app.agent.config import agent_settings
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# P1: SEARCH RESULT CACHING (15 min TTL)
+# =============================================================================
+
+# Cache structure: {cache_key: (timestamp, results)}
+_search_cache: dict[str, tuple[float, list[dict]]] = {}
+CACHE_TTL_SECONDS = 900  # 15 minutes (increased from 5 min)
+
+
+def _get_cache_key(tool_name: str, query: str, **kwargs) -> str:
+    """Generate cache key for search query."""
+    key_data = f"{tool_name}:{query}:{sorted(kwargs.items())}"
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+
+def _get_cached_results(cache_key: str) -> list[dict] | None:
+    """Get cached search results if valid."""
+    cached = _search_cache.get(cache_key)
+    if cached:
+        timestamp, results = cached
+        if time.time() - timestamp < CACHE_TTL_SECONDS:
+            logger.debug(f"Cache hit for {cache_key[:8]}...")
+            return results
+    return None
+
+
+def _set_cached_results(cache_key: str, results: list[dict]) -> None:
+    """Cache search results."""
+    _search_cache[cache_key] = (time.time(), results)
+    _cleanup_cache()
+
+
+def _cleanup_cache() -> None:
+    """Remove expired cache entries."""
+    current_time = time.time()
+    expired_keys = [
+        k for k, (ts, _) in _search_cache.items()
+        if current_time - ts > CACHE_TTL_SECONDS
+    ]
+    for k in expired_keys:
+        del _search_cache[k]
 
 
 # =============================================================================
@@ -702,3 +756,287 @@ async def search_news_gdelt(
     except Exception as e:
         logger.error(f"GDELT search error: {e}")
         return []
+
+
+# =============================================================================
+# P1: BRAVE SEARCH (Free tier: 2000 queries/month)
+# =============================================================================
+
+
+@tool
+async def search_news_brave(
+    query: str,
+    max_results: int = 15,
+    freshness: str = "pw",  # pd=day, pw=week, pm=month
+    translate_query: bool = True,
+) -> list[dict]:
+    """
+    FREE (limited) news search using Brave Search API.
+
+    Brave Search provides high-quality results with a free tier of 2000 queries/month.
+    Use this as a secondary source after GDELT for broader coverage.
+
+    P1 Enhancement: Added as alternative search engine for better evidence coverage.
+
+    Args:
+        query: Search query (news topics, events)
+        max_results: Maximum number of results (default 15)
+        freshness: Time filter - pd (day), pw (week), pm (month)
+        translate_query: Whether to translate non-English queries (default True)
+
+    Returns:
+        List of news results [{title, url, content, source, source_name, published}]
+    """
+    # Check if Brave API key is configured
+    brave_api_key = getattr(agent_settings, 'brave_api_key', None)
+    if not brave_api_key:
+        logger.debug("Brave API key not configured, skipping")
+        return []
+
+    # Check cache
+    cache_key = _get_cache_key("brave_news", query, max_results=max_results, freshness=freshness)
+    cached = _get_cached_results(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        # P1: Translate query if needed
+        search_query = await _prepare_search_query(query, translate=translate_query)
+        logger.debug(f"Brave News search: original='{query}' prepared='{search_query}'")
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                "https://api.search.brave.com/res/v1/news/search",
+                headers={
+                    "Accept": "application/json",
+                    "X-Subscription-Token": brave_api_key,
+                },
+                params={
+                    "q": search_query,
+                    "count": max_results * 2,  # Fetch more to account for filtering
+                    "freshness": freshness,
+                },
+            )
+
+            if response.status_code == 429:
+                logger.warning("Brave API rate limit reached")
+                return []
+
+            if response.status_code != 200:
+                logger.warning(f"Brave API returned status {response.status_code}")
+                return []
+
+            data = response.json()
+            results = []
+
+            for item in data.get("results", []):
+                url = item.get("url", "")
+
+                # Validate URL
+                if not _is_valid_url(url):
+                    continue
+
+                # Filter out excluded domains
+                if _is_excluded_domain(url):
+                    continue
+
+                domain = _extract_domain(url)
+                doc = {
+                    "title": item.get("title", ""),
+                    "url": url,
+                    "content": item.get("description", "")[:500],
+                    "source": domain,
+                    "source_name": f"Brave:{domain}",
+                    "published": item.get("age", ""),  # Brave provides relative age
+                }
+
+                # Date validation
+                if not _is_evidence_recent(doc, max_age_days=30):
+                    continue
+
+                results.append(doc)
+
+                if len(results) >= max_results:
+                    break
+
+            logger.info(f"Brave News: {len(results)} articles for '{query[:30]}...'")
+
+            # Cache results
+            _set_cached_results(cache_key, results)
+
+            return results
+
+    except httpx.TimeoutException:
+        logger.warning("Brave Search request timed out")
+        return []
+    except Exception as e:
+        logger.error(f"Brave Search error: {e}")
+        return []
+
+
+# =============================================================================
+# P1: MULTI-ENGINE PARALLEL SEARCH
+# =============================================================================
+
+
+async def search_multi_engine(
+    query: str,
+    max_results_per_engine: int = 10,
+    engines: list[str] | None = None,
+    translate_query: bool = True,
+) -> dict[str, list[dict]]:
+    """
+    P1: Parallel search across multiple engines for better evidence coverage.
+
+    Searches GDELT, DuckDuckGo News, and Brave Search in parallel,
+    returning results from all engines. This increases the chance of
+    finding corroborating evidence for Gate 3.
+
+    Args:
+        query: Search query
+        max_results_per_engine: Max results per engine (default 10)
+        engines: List of engines to use. Options: "gdelt", "ddg", "brave"
+                 Default: ["gdelt", "ddg", "brave"]
+        translate_query: Whether to translate non-English queries
+
+    Returns:
+        Dict mapping engine name to results list
+        {
+            "gdelt": [{...}, ...],
+            "ddg": [{...}, ...],
+            "brave": [{...}, ...],
+        }
+    """
+    if engines is None:
+        engines = ["gdelt", "ddg", "brave"]
+
+    # Create search tasks for each engine
+    tasks = {}
+
+    if "gdelt" in engines:
+        tasks["gdelt"] = search_news_gdelt.ainvoke({
+            "query": query,
+            "max_results": max_results_per_engine,
+            "translate_query": translate_query,
+        })
+
+    if "ddg" in engines:
+        tasks["ddg"] = search_news_ddg.ainvoke({
+            "query": query,
+            "max_results": max_results_per_engine,
+            "translate_query": translate_query,
+        })
+
+    if "brave" in engines:
+        # Only include if API key is configured
+        if getattr(agent_settings, 'brave_api_key', None):
+            tasks["brave"] = search_news_brave.ainvoke({
+                "query": query,
+                "max_results": max_results_per_engine,
+                "translate_query": translate_query,
+            })
+
+    if not tasks:
+        logger.warning("No search engines available")
+        return {}
+
+    # Run searches in parallel
+    engine_names = list(tasks.keys())
+    results_list = await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+    # Collect results
+    results = {}
+    total_count = 0
+
+    for engine_name, engine_results in zip(engine_names, results_list):
+        if isinstance(engine_results, Exception):
+            logger.error(f"{engine_name} search failed: {engine_results}")
+            results[engine_name] = []
+        else:
+            results[engine_name] = engine_results or []
+            total_count += len(results[engine_name])
+
+    logger.info(
+        f"Multi-engine search complete: {total_count} total results "
+        f"(gdelt={len(results.get('gdelt', []))}, "
+        f"ddg={len(results.get('ddg', []))}, "
+        f"brave={len(results.get('brave', []))})"
+    )
+
+    return results
+
+
+async def search_evidence(
+    query: str,
+    min_results: int = 3,
+    max_results: int = 15,
+    translate_query: bool = True,
+) -> list[dict]:
+    """
+    P1: Smart evidence search with fallback strategy.
+
+    Searches multiple engines in parallel and deduplicates results.
+    If initial search doesn't find enough results, expands to paid sources.
+
+    Args:
+        query: Search query for evidence
+        min_results: Minimum results needed (triggers fallback if not met)
+        max_results: Maximum total results to return
+        translate_query: Whether to translate non-English queries
+
+    Returns:
+        Deduplicated list of evidence documents
+    """
+    # Check cache first
+    cache_key = _get_cache_key("evidence", query, min_results=min_results, max_results=max_results)
+    cached = _get_cached_results(cache_key)
+    if cached is not None:
+        return cached
+
+    # Phase 1: Free multi-engine search
+    multi_results = await search_multi_engine(
+        query=query,
+        max_results_per_engine=10,
+        engines=["gdelt", "ddg", "brave"],
+        translate_query=translate_query,
+    )
+
+    # Deduplicate results by URL
+    seen_urls: set[str] = set()
+    all_results: list[dict] = []
+
+    for engine_name, engine_results in multi_results.items():
+        for doc in engine_results:
+            url = doc.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                doc["search_engine"] = engine_name
+                all_results.append(doc)
+
+    logger.info(f"Phase 1 (free engines): {len(all_results)} unique results for '{query[:30]}...'")
+
+    # Phase 2: If not enough results, try Tavily (paid)
+    if len(all_results) < min_results and agent_settings.tavily_api_key:
+        logger.info(f"Phase 2: Not enough results ({len(all_results)} < {min_results}), trying Tavily")
+
+        tavily_results = await search_web.ainvoke({
+            "query": query,
+            "max_results": max_results - len(all_results),
+        })
+
+        for doc in tavily_results or []:
+            url = doc.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                doc["search_engine"] = "tavily"
+                all_results.append(doc)
+
+        logger.info(f"Phase 2 complete: {len(all_results)} total results")
+
+    # Limit to max_results
+    final_results = all_results[:max_results]
+
+    # Cache results
+    _set_cached_results(cache_key, final_results)
+
+    return final_results
