@@ -93,6 +93,25 @@ async def run_scheduled_scan():
     print("[SCANNER] Starting scheduled scan...")
     print("=" * 60)
 
+    # P2 Enhancement: In-memory tracking of published events within this scan cycle
+    # to prevent duplicate articles on the same topic (e.g., Trump NATO x7)
+    published_in_cycle: list[str] = []
+
+    def _is_similar_to_published(event_desc: str, threshold: float = 0.6) -> bool:
+        """Check if event is too similar to already-published events in this cycle."""
+        # Simple word overlap similarity
+        event_words = set(event_desc.lower().split())
+        for published in published_in_cycle:
+            published_words = set(published.lower().split())
+            if not event_words or not published_words:
+                continue
+            intersection = len(event_words & published_words)
+            union = len(event_words | published_words)
+            similarity = intersection / union if union > 0 else 0
+            if similarity >= threshold:
+                return True
+        return False
+
     try:
         scanner = NewsScanner()
         # Initialize scanner (loads CrossSourceMatcher for multi-source verification)
@@ -127,6 +146,11 @@ async def run_scheduled_scan():
             category = event.get("category", "other")
 
             print(f"\n[SCANNER] [{i+1}] Investigating: {event_desc[:80]}...")
+
+            # === P2 Enhancement: In-cycle duplicate check ===
+            if _is_similar_to_published(event_desc):
+                print(f"[SCANNER] [{i+1}] SKIPPING: Similar to already-published event in this cycle")
+                continue
 
             # === STAGE 1.5: DEDUPLICATION CHECK (NEW) ===
             if agent_settings.dedup_enabled:
@@ -223,6 +247,8 @@ async def run_scheduled_scan():
                         )
                         print(f"[SCANNER] [{i+1}] SAVED: event_id={saved_event.id}, article_id={saved_article.id}")
                         investigation_count += 1
+                        # P2: Track published event for in-cycle duplicate prevention
+                        published_in_cycle.append(event_desc)
 
                 # Output the generated article
                 article = result.get("article")

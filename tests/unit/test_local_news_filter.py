@@ -26,6 +26,8 @@ from app.agent.checkworthiness import (
     RejectionReason,
     LOCAL_INCIDENT_PATTERNS,
     SIGNIFICANCE_INDICATORS,
+    SPORTS_NEWS_PATTERNS,
+    LOCAL_CRIME_PATTERNS,
 )
 
 
@@ -364,3 +366,162 @@ class TestPatternCompilation:
         """RejectionReason.LOCAL_INCIDENT should exist."""
         assert hasattr(RejectionReason, "LOCAL_INCIDENT")
         assert RejectionReason.LOCAL_INCIDENT.value == "local_incident"
+
+
+# ============================================
+# P0 Tests: Sports News Filter
+# ============================================
+
+class TestSportsNewsPatterns:
+    """Tests for P0: Sports news filtering patterns."""
+
+    def test_cycling_rejected_in_event_verifier(self):
+        """Cycling/bicycle race should be rejected."""
+        text = "Scaroni Triumphs in Tour de France Stage 15"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+        assert "NOT_EVENT" in reason
+
+    def test_rally_rejected_in_event_verifier(self):
+        """Rally/motorsport should be rejected."""
+        text = "Nasser Al-Attiyah Leads Dakar Rally After Stage 8"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+        assert "NOT_EVENT" in reason
+
+    def test_championship_rejected_in_event_verifier(self):
+        """Championship/tournament should be rejected."""
+        text = "Manchester United Wins Premier League Championship"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+    def test_athlete_triumphs_rejected(self):
+        """'Athlete triumphs' pattern should be rejected."""
+        text = "Olympic athlete triumphs over rivals in final sprint"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+    def test_sports_patterns_exist(self):
+        """SPORTS_NEWS_PATTERNS should have multiple patterns."""
+        assert len(SPORTS_NEWS_PATTERNS) >= 10
+
+    def test_checkworthiness_rejects_sports_news(self):
+        """check_worthiness should reject sports news."""
+        text = "Cyclist wins Tour de France stage after dramatic sprint finish"
+        result = check_worthiness(text)
+        assert not result.is_checkworthy
+        assert result.rejection_reason == RejectionReason.SPORTS_NEWS
+
+    def test_sports_rejection_reason_exists(self):
+        """RejectionReason.SPORTS_NEWS should exist."""
+        assert hasattr(RejectionReason, "SPORTS_NEWS")
+        assert RejectionReason.SPORTS_NEWS.value == "sports_news"
+
+
+class TestSportsCasesFromBugReport:
+    """Tests for specific sports cases from the test analysis bug report."""
+
+    def test_scaroni_triumphs_cycling(self):
+        """Article #34: Scaroni Triumphs should be rejected as sports."""
+        text = "Scaroni Triumphs in Grueling Mountain Stage"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+    def test_nasser_al_attiyah_rally(self):
+        """Article #19: Nasser Al-Attiyah Leads should be rejected as rally."""
+        text = "Nasser Al-Attiyah Leads Dakar Rally"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+
+# ============================================
+# P0 Tests: Crime News Filter
+# ============================================
+
+class TestCrimeNewsPatterns:
+    """Tests for P0: Local crime news filtering patterns."""
+
+    def test_murder_rejected_in_event_verifier(self):
+        """Local murder should be rejected."""
+        text = "Man charged with murder in downtown stabbing"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+        assert "NOT_EVENT" in reason
+
+    def test_robbery_rejected_in_event_verifier(self):
+        """Local robbery should be rejected."""
+        text = "Police investigate robbery at convenience store"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+    def test_child_abuse_rejected(self):
+        """Child abuse case should be rejected."""
+        text = "Parents charged with child abuse and neglect"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+    def test_sentencing_rejected(self):
+        """Local sentencing should be rejected."""
+        text = "Man sentenced to 10 years for burglary"
+        passed, reason = is_likely_real_event(text)
+        assert not passed
+
+    def test_crime_patterns_exist(self):
+        """LOCAL_CRIME_PATTERNS should have multiple patterns."""
+        assert len(LOCAL_CRIME_PATTERNS) >= 8
+
+    def test_checkworthiness_rejects_local_crime(self):
+        """check_worthiness should reject local crime without significance."""
+        text = "Murder suspect arraigned in court, bail set at $500,000"
+        result = check_worthiness(text)
+        assert not result.is_checkworthy
+        assert result.rejection_reason == RejectionReason.LOCAL_CRIME
+
+    def test_crime_rejection_reason_exists(self):
+        """RejectionReason.LOCAL_CRIME should exist."""
+        assert hasattr(RejectionReason, "LOCAL_CRIME")
+        assert RejectionReason.LOCAL_CRIME.value == "local_crime"
+
+
+class TestCrimeCasesFromBugReport:
+    """Tests for specific crime cases from the test analysis bug report."""
+
+    def test_murder_misclassified_as_diplomacy(self):
+        """Article #9: Murder should NOT be classified as diplomacy."""
+        # This tests the scanner.py category validation
+        text = "Man Found Dead in Apparent Murder Case"
+        passed, reason = is_likely_real_event(text)
+        # Should be rejected by crime patterns
+        assert not passed
+
+    def test_child_abuse_misclassified_as_diplomacy(self):
+        """Article #60: Child abuse should NOT be classified as diplomacy."""
+        text = "Parents Charged with Child Abuse and Neglect"
+        passed, reason = is_likely_real_event(text)
+        # Should be rejected by crime patterns
+        assert not passed
+
+
+class TestInternationalCrimeStillPasses:
+    """Tests that internationally significant crime still passes."""
+
+    def test_war_crime_passes(self):
+        """War crime should pass (international significance)."""
+        text = "ICC investigates war crimes in conflict zone"
+        passed, reason = is_likely_real_event(text)
+        assert passed
+
+    def test_terrorism_passes(self):
+        """Terror attack should pass (international significance)."""
+        text = "Terror attack kills dozens in capital city"
+        passed, reason = is_likely_real_event(text)
+        # "Terror" is excluded from crime pattern, should pass
+        result = check_worthiness(text)
+        assert result.is_checkworthy
+
+    def test_political_assassination_passes(self):
+        """Political assassination should pass."""
+        text = "Political leader assassinated in suspected terror attack"
+        # Has significance indicator (terror)
+        is_significant, count, patterns = check_significance(text)
+        assert is_significant

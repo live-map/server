@@ -20,6 +20,8 @@ class RejectionReason(Enum):
     PROMOTIONAL = "promotional"          # 광고/홍보
     HUMAN_INTEREST = "human_interest"    # 인물 특집/미담 기사
     LOCAL_INCIDENT = "local_incident"    # 로컬 사건 (교통사고, 지역 범죄 등)
+    SPORTS_NEWS = "sports_news"          # 스포츠 뉴스 (P0 추가)
+    LOCAL_CRIME = "local_crime"          # 로컬 범죄 (P0 추가)
     NONE = "none"                        # 거부 사유 없음
 
 
@@ -113,6 +115,59 @@ LOCAL_INCIDENT_PATTERNS = [
 ]
 
 # ============================================
+# 스포츠 뉴스 패턴 (방어선 - P0 추가)
+# ============================================
+SPORTS_NEWS_PATTERNS = [
+    # 사이클/자전거 경기
+    r"\b(cyclist|cycling|bicycle race|bike race|peloton|velodrome)\b",
+    r"\b(tour de france|giro|vuelta|stage race)\b",
+    r"\b(sprint|time trial|breakaway|gruppetto)\b",
+
+    # 모터스포츠/랠리
+    r"\b(rally|rallying|dakar|wrc|formula|f1|motorsport)\b",
+    r"\b(grand prix|pole position|podium finish|pit stop)\b",
+    r"\b(driver|racer|racing team)\b(?!.*(?:military|attack))",
+
+    # 일반 스포츠 결과/승리
+    r"\b(triumphs?|wins?|defeats?|victory|victories)\b(?!.*(?:military|war|battle))",
+    r"\b(champion|championship|title|trophy|medal)\b",
+    r"\b(final|semi.?final|quarter.?final|knockout)\b",
+    r"\b(score|scored|goal|assist|save)\b(?!.*(?:war|conflict))",
+    r"\b(athlete|player|coach|manager|captain)\b",
+
+    # 리그/대회 이름
+    r"\b(premier league|la liga|serie a|bundesliga|ligue 1)\b",
+    r"\b(champions league|europa league|world series|super bowl)\b",
+    r"\b(australian open|us open|wimbledon|french open)\b",
+
+    # 스포츠 종목
+    r"\b(tennis|golf|cricket|rugby|boxing|mma|ufc)\b",
+    r"\b(basketball|baseball|hockey|volleyball)\b(?!.*(?:violence|riot))",
+]
+
+# ============================================
+# 로컬 범죄 뉴스 패턴 (방어선 - P0 추가)
+# ============================================
+LOCAL_CRIME_PATTERNS = [
+    # 살인/폭력 (국제적 맥락 없음)
+    r"\b(murder|homicide|killing|manslaughter)\b(?!.*(?:war crime|genocide|mass|terror|political))",
+    r"\b(stabbing|stabbed|knifing|knifed)\b(?!.*(?:terror|mass))",
+    r"\b(shooting|shot|gunman)\b(?!.*(?:military|war|terror|mass|school|police brutality))",
+    r"\b(assault|assaulted|battery|beaten)\b(?!.*(?:military|protest))",
+
+    # 절도/강도
+    r"\b(robbery|robbed|burglary|theft|stolen)\b(?!.*(?:art theft|cyber|identity))",
+    r"\b(shoplifting|pickpocket|mugging|carjacking)\b",
+
+    # 아동 범죄
+    r"\b(child abuse|child neglect|domestic violence)\b",
+
+    # 법원/재판 (로컬)
+    r"\b(arraigned|arraignment|bail hearing|plea deal)\b",
+    r"\b(sentenced|sentencing|parole|probation)\b(?!.*(?:war crime|tribunal|political))",
+]
+
+# ============================================
 # 국제적 중요성 지표 (방어선 4)
 # 로컬 사건이라도 이 패턴이 있으면 통과
 # ============================================
@@ -163,6 +218,8 @@ def check_worthiness(
     speculation_threshold: int = 2,
     human_interest_threshold: int = 3,
     local_incident_threshold: int = 2,
+    sports_threshold: int = 2,
+    crime_threshold: int = 2,
 ) -> CheckWorthinessResult:
     """
     텍스트의 check-worthiness 평가
@@ -173,11 +230,49 @@ def check_worthiness(
         speculation_threshold: 추측 패턴 매칭 임계값
         human_interest_threshold: 인물 특집/미담 패턴 매칭 임계값
         local_incident_threshold: 로컬 사건 패턴 매칭 임계값
+        sports_threshold: 스포츠 패턴 매칭 임계값 (P0 추가)
+        crime_threshold: 범죄 패턴 매칭 임계값 (P0 추가)
 
     Returns:
         CheckWorthinessResult with is_checkworthy, rejection_reason, confidence
     """
     text_lower = text.lower()
+
+    # ============================================
+    # P0 추가: 스포츠 뉴스 패턴 체크 (최우선)
+    # ============================================
+    sports_matches = []
+    for pattern in SPORTS_NEWS_PATTERNS:
+        if re.search(pattern, text, re.I):
+            sports_matches.append(f"sports:{pattern}")
+    if len(sports_matches) >= sports_threshold:
+        return CheckWorthinessResult(
+            is_checkworthy=False,
+            rejection_reason=RejectionReason.SPORTS_NEWS,
+            confidence=0.95,
+            matched_patterns=sports_matches
+        )
+
+    # ============================================
+    # P0 추가: 로컬 범죄 패턴 체크
+    # ============================================
+    crime_matches = []
+    for pattern in LOCAL_CRIME_PATTERNS:
+        if re.search(pattern, text, re.I):
+            crime_matches.append(f"crime:{pattern}")
+    if len(crime_matches) >= crime_threshold:
+        # 국제적 중요성 체크 (override 가능)
+        is_significant, sig_count, sig_patterns = check_significance(text)
+        if is_significant:
+            # 국제적 중요성이 있으면 통과 (예: 대규모 테러, 정치적 암살)
+            pass
+        else:
+            return CheckWorthinessResult(
+                is_checkworthy=False,
+                rejection_reason=RejectionReason.LOCAL_CRIME,
+                confidence=0.90,
+                matched_patterns=crime_matches
+            )
 
     # 연예 패턴 체크
     entertainment_matches = []

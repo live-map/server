@@ -11,10 +11,13 @@ Priority-based search strategy (based on expert research):
 - search_news_ddg: DuckDuckGo NEWS search (FREE, recent news only)
 - search_web_free: DuckDuckGo search (FREE, general web, filtered)
 - search_web: Tavily-based web search (PAID, high quality)
+
+P1 Enhancement: Non-English query translation support
 """
 
 import logging
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -25,6 +28,167 @@ from langchain_core.tools import tool
 from app.agent.config import agent_settings
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# NON-ENGLISH QUERY TRANSLATION (P1 Enhancement)
+# =============================================================================
+
+def _is_non_latin(text: str) -> bool:
+    """Check if text contains non-Latin characters (Korean, Chinese, Arabic, etc.)."""
+    for char in text:
+        if char.isalpha():
+            # Get the Unicode category/script
+            name = unicodedata.name(char, "")
+            if any(script in name for script in [
+                "HANGUL", "CJK", "HIRAGANA", "KATAKANA",
+                "ARABIC", "CYRILLIC", "THAI", "HEBREW"
+            ]):
+                return True
+    return False
+
+
+def _detect_language(text: str) -> str:
+    """Simple language detection based on character analysis.
+
+    Returns:
+        ISO 639-1 language code (ko, zh, ja, ar, ru, th, he, en)
+    """
+    hangul_count = 0
+    cjk_count = 0
+    hiragana_count = 0
+    arabic_count = 0
+    cyrillic_count = 0
+    total_alpha = 0
+
+    for char in text:
+        if char.isalpha():
+            total_alpha += 1
+            name = unicodedata.name(char, "")
+            if "HANGUL" in name:
+                hangul_count += 1
+            elif "CJK" in name:
+                cjk_count += 1
+            elif "HIRAGANA" in name or "KATAKANA" in name:
+                hiragana_count += 1
+            elif "ARABIC" in name:
+                arabic_count += 1
+            elif "CYRILLIC" in name:
+                cyrillic_count += 1
+
+    if total_alpha == 0:
+        return "en"
+
+    # Determine dominant script
+    threshold = 0.3  # 30% of characters
+    if hangul_count / total_alpha > threshold:
+        return "ko"
+    if cjk_count / total_alpha > threshold:
+        return "zh"
+    if hiragana_count / total_alpha > threshold:
+        return "ja"
+    if arabic_count / total_alpha > threshold:
+        return "ar"
+    if cyrillic_count / total_alpha > threshold:
+        return "ru"
+
+    return "en"
+
+
+async def _translate_query(query: str, source_lang: str = "auto") -> str:
+    """
+    Translate non-English query to English for better search results.
+
+    Uses free translation services. Falls back to original query on failure.
+
+    Args:
+        query: Search query to translate
+        source_lang: Source language code (auto-detect if "auto")
+
+    Returns:
+        Translated query in English, or original query on failure
+    """
+    # Detect language if auto
+    if source_lang == "auto":
+        source_lang = _detect_language(query)
+
+    # Skip if already English
+    if source_lang == "en" or not _is_non_latin(query):
+        return query
+
+    try:
+        # Use LibreTranslate API (free, self-hosted available)
+        # Fallback: Use Google Translate's unofficial endpoint
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Try LibreTranslate first (if configured)
+            libre_url = agent_settings.libre_translate_url if hasattr(agent_settings, 'libre_translate_url') else None
+
+            if libre_url:
+                response = await client.post(
+                    f"{libre_url}/translate",
+                    json={
+                        "q": query,
+                        "source": source_lang,
+                        "target": "en",
+                        "format": "text",
+                    },
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    translated = data.get("translatedText", query)
+                    logger.info(f"Translated '{query}' -> '{translated}' ({source_lang} -> en)")
+                    return translated
+
+            # Fallback: Use MyMemory Translation API (free, 1000 chars/day)
+            response = await client.get(
+                "https://api.mymemory.translated.net/get",
+                params={
+                    "q": query[:500],  # Limit to 500 chars
+                    "langpair": f"{source_lang}|en",
+                },
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("responseStatus") == 200:
+                    translated = data.get("responseData", {}).get("translatedText", query)
+                    # Clean up potential HTML entities
+                    translated = translated.replace("&#39;", "'").replace("&quot;", '"')
+                    logger.info(f"Translated '{query}' -> '{translated}' ({source_lang} -> en)")
+                    return translated
+
+    except Exception as e:
+        logger.warning(f"Translation failed for '{query}': {e}")
+
+    # Return original query on failure
+    return query
+
+
+async def _prepare_search_query(query: str, translate: bool = True) -> str:
+    """
+    Prepare search query for optimal results.
+
+    1. Detect language
+    2. Translate if non-English
+    3. Clean up query
+
+    Args:
+        query: Original search query
+        translate: Whether to translate non-English queries
+
+    Returns:
+        Prepared query string
+    """
+    if not translate:
+        return query
+
+    # Translate if non-Latin characters detected
+    if _is_non_latin(query):
+        translated = await _translate_query(query)
+        # Return both translated and original for broader results
+        if translated != query:
+            return f"{translated} OR {query}"
+
+    return query
 
 # =============================================================================
 # DOMAINS TO EXCLUDE FROM EVIDENCE (not news sources)
@@ -204,17 +368,25 @@ def _is_evidence_recent(doc: dict, max_age_days: int = 30) -> bool:
 
 
 @tool
-async def search_news_ddg(query: str, max_results: int = 15, max_age_days: int = 7) -> list[dict]:
+async def search_news_ddg(
+    query: str,
+    max_results: int = 15,
+    max_age_days: int = 7,
+    translate_query: bool = True,
+) -> list[dict]:
     """
     FREE news search using DuckDuckGo News. Use for RECENT news only.
 
     This searches DuckDuckGo's news index which only returns recent articles.
     Use this for evidence gathering on current events.
 
+    P1 Enhancement: Automatically translates non-English queries for better results.
+
     Args:
         query: Search query (news topics, events, breaking news)
         max_results: Maximum number of results (default 15)
         max_age_days: Maximum age of articles in days (default 7)
+        translate_query: Whether to translate non-English queries (default True)
 
     Returns:
         List of news results [{title, url, content, source, source_name, published}]
@@ -222,10 +394,14 @@ async def search_news_ddg(query: str, max_results: int = 15, max_age_days: int =
     try:
         from ddgs import DDGS
 
+        # P1: Translate query if needed
+        search_query = await _prepare_search_query(query, translate=translate_query)
+        logger.debug(f"DDG News search: original='{query}' prepared='{search_query}'")
+
         results = []
         with DDGS() as ddgs:
             # Use news() instead of text() for recent news only
-            for r in ddgs.news(query, max_results=max_results * 2):  # Fetch more to account for filtering
+            for r in ddgs.news(search_query, max_results=max_results * 2):  # Fetch more to account for filtering
                 url = r.get("url", r.get("link", ""))
 
                 # Validate URL
@@ -420,12 +596,19 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
 
 
 @tool
-async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int = 20) -> list[dict]:
+async def search_news_gdelt(
+    query: str,
+    timespan: str = "24h",
+    max_results: int = 20,
+    translate_query: bool = True,
+) -> list[dict]:
     """
     FREE global news search from GDELT. PRIMARY tool for news/events.
 
     ALWAYS use this FIRST for breaking news, conflicts, protests, disasters.
     Covers 100,000+ news sources worldwide in 100+ languages.
+
+    P1 Enhancement: Automatically translates non-English queries for better results.
 
     Examples:
     - "Iran protest Tehran" -> Global coverage on Tehran protests
@@ -436,16 +619,21 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
         query: Search query (keywords, locations, topics)
         timespan: Search period (1h, 6h, 12h, 24h, 48h, 72h)
         max_results: Maximum number of results
+        translate_query: Whether to translate non-English queries (default True)
 
     Returns:
         News list [{title, url, source, published, language, country}]
     """
     try:
+        # P1: Translate query if needed
+        search_query = await _prepare_search_query(query, translate=translate_query)
+        logger.debug(f"GDELT search: original='{query}' prepared='{search_query}'")
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 "https://api.gdeltproject.org/api/v2/doc/doc",
                 params={
-                    "query": query,
+                    "query": search_query,  # P1: Use translated query
                     "mode": "artlist",
                     "maxrecords": str(max_results * 2),  # Fetch more to account for filtering
                     "format": "json",

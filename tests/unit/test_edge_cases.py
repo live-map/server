@@ -345,10 +345,12 @@ class TestConcurrentOperations:
     @pytest.mark.asyncio
     async def test_multiple_concurrent_verifications(self, mock_llm_yes):
         """Multiple concurrent verifications should work."""
+        # Use texts that won't trigger zero-shot strict rejection
+        # (avoid texts that zero-shot might classify as "local news")
         texts = [
-            "Iran attacks US bases",
-            "North Korea fires missile",
-            "Earthquake hits Turkey",
+            "Iran attacks US military bases in Iraq",
+            "North Korea fires ballistic missile toward Japan",
+            "Putin and Xi meet in Beijing for summit talks",
         ]
 
         results = await asyncio.gather(*[

@@ -96,6 +96,64 @@ def _log_scan_summary(
 
 
 # ============================================
+# 카테고리 제외 패턴 (오분류 방지)
+# ============================================
+# 이 패턴이 매칭되면 특정 카테고리로 분류하지 않음
+CATEGORY_EXCLUSION_PATTERNS = {
+    # 스포츠 관련 패턴 - 이 패턴이 있으면 diplomacy, war, conflict 등으로 분류하지 않음
+    "sports": [
+        r"\b(cyclist|cycling|bicycle|bike race|velodrome)\b",
+        r"\b(rally|dakar|wrc|formula|f1|motorsport|racing)\b",
+        r"\b(triumphs?|wins?|defeats?|victory|victories|champion)\b",
+        r"\b(tournament|championship|league|playoffs|final)\b",
+        r"\b(athlete|player|coach|team|squad)\b",
+        r"\b(match|game|score|scored|goal)\b",
+        r"\b(premier league|la liga|serie a|bundesliga|champions league)\b",
+        r"\b(tennis|golf|cricket|rugby|boxing|mma|ufc)\b",
+    ],
+    # 범죄 관련 패턴 - 이 패턴이 있으면 diplomacy, politics 등으로 분류하지 않음
+    "crime": [
+        r"\b(murder|homicide|killing|manslaughter|stabbing|stabbed)\b",
+        r"\b(robbery|burglary|theft|stolen|assault|battery)\b",
+        r"\b(child abuse|child neglect|domestic violence)\b",
+        r"\b(arraigned|sentenced|convicted|plea|bail)\b",
+        r"\b(suspect|perpetrator|victim|witness)\b(?!.*(?:war|conflict|attack))",
+        r"\b(police arrested|police charged|police investigate)\b(?!.*(?:protest|riot))",
+    ],
+    # 엔터테인먼트 관련 패턴
+    "entertainment": [
+        r"\b(actor|actress|celebrity|singer|musician)\b",
+        r"\b(movie|film|album|concert|premiere)\b",
+        r"\b(grammy|oscar|emmy|golden globe)\b",
+    ],
+}
+
+# 컴파일된 제외 패턴
+COMPILED_EXCLUSION_PATTERNS = {
+    category: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for category, patterns in CATEGORY_EXCLUSION_PATTERNS.items()
+}
+
+
+def _matches_exclusion_patterns(text: str, pattern_type: str) -> bool:
+    """
+    텍스트가 특정 제외 패턴에 매칭되는지 확인.
+
+    Args:
+        text: 검사할 텍스트
+        pattern_type: 패턴 타입 ("sports", "crime", "entertainment")
+
+    Returns:
+        매칭되면 True
+    """
+    patterns = COMPILED_EXCLUSION_PATTERNS.get(pattern_type, [])
+    for pattern in patterns:
+        if pattern.search(text):
+            return True
+    return False
+
+
+# ============================================
 # 국제 정세 카테고리 키워드 매핑
 # ============================================
 INTERNATIONAL_AFFAIRS_KEYWORDS = {
@@ -802,7 +860,13 @@ class MultiSourceScanner:
         return results
 
     def _infer_category_from_event(self, event: TriggerEvent) -> str:
-        """TriggerEvent에서 카테고리 추론 (국제 정세 세분화)"""
+        """TriggerEvent에서 카테고리 추론 (국제 정세 세분화)
+
+        개선된 분류 로직:
+        1. 먼저 스포츠/범죄/엔터테인먼트 제외 패턴 확인
+        2. 제외 패턴 매칭 시 해당 카테고리로 분류하지 않음
+        3. 국제 정세 키워드 매핑 기반 분류
+        """
         text = f"{event.title} {event.content}".lower()
 
         # 소스 기반 카테고리
@@ -811,18 +875,58 @@ class MultiSourceScanner:
         if event.source == TriggerSource.NOAA:
             return "natural_disaster"
 
+        # ============================================
+        # P0 개선: 제외 패턴 확인 (스포츠/범죄/엔터테인먼트)
+        # ============================================
+        is_sports = _matches_exclusion_patterns(text, "sports")
+        is_crime = _matches_exclusion_patterns(text, "crime")
+        is_entertainment = _matches_exclusion_patterns(text, "entertainment")
+
+        # 스포츠/엔터테인먼트는 항상 "other"로 분류 (발행 안 됨)
+        if is_sports:
+            logger.debug(f"[CATEGORY] Sports content detected: {event.title[:50]}...")
+            return "other"
+
+        if is_entertainment:
+            logger.debug(f"[CATEGORY] Entertainment content detected: {event.title[:50]}...")
+            return "other"
+
+        # 범죄 뉴스는 국제적 맥락이 있는지 추가 확인
+        if is_crime:
+            # 국제적 맥락 키워드 확인
+            international_context = _keyword_matches_word_boundary(
+                text,
+                ["international", "cross-border", "embassy", "foreign", "diplomat",
+                 "war crime", "genocide", "terror", "mass shooting", "political"]
+            )
+            if not international_context:
+                logger.debug(f"[CATEGORY] Local crime detected: {event.title[:50]}...")
+                return "other"
+
         # 국제 정세 키워드 매핑 기반 분류 (우선순위 순)
         # 단어 경계 사용하여 "Warsaw"가 "war"로 분류되는 문제 방지
         for category, keywords in INTERNATIONAL_AFFAIRS_KEYWORDS.items():
             if _keyword_matches_word_boundary(text, keywords):
+                # diplomacy 카테고리 추가 검증
+                if category == "diplomacy":
+                    # 스포츠/범죄 컨텍스트에서 diplomacy 키워드가 나오면 거부
+                    if is_crime:
+                        logger.debug(f"[CATEGORY] Crime context blocking diplomacy: {event.title[:50]}...")
+                        continue
                 return category
 
         # 기타 카테고리 (국제 정세 외) - 단어 경계 매칭 사용
         if _keyword_matches_word_boundary(text, ["earthquake", "tsunami", "flood", "hurricane", "wildfire", "tornado"]):
             return "natural_disaster"
         if _keyword_matches_word_boundary(text, ["protest", "demonstration", "riot", "rally"]):
+            # "rally" 단어가 스포츠 맥락인지 확인
+            if is_sports:
+                return "other"
             return "protest"
         if _keyword_matches_word_boundary(text, ["violence", "killed", "casualties", "shooting"]):
+            # 로컬 범죄면 거부
+            if is_crime:
+                return "other"
             return "violence"
 
         return "other"
@@ -912,8 +1016,30 @@ class MultiSourceScanner:
         return results
 
     def _infer_category(self, event_dict: dict, score: SignificanceScore = None) -> str:
-        """키워드 기반 카테고리 추론 (dict용) - 단어 경계 매칭 사용"""
+        """키워드 기반 카테고리 추론 (dict용) - 단어 경계 매칭 사용
+
+        P0 개선: 스포츠/범죄/엔터테인먼트 제외 패턴 적용
+        """
         text = f"{event_dict['title']} {event_dict.get('content', '')}".lower()
+
+        # 제외 패턴 확인
+        is_sports = _matches_exclusion_patterns(text, "sports")
+        is_crime = _matches_exclusion_patterns(text, "crime")
+        is_entertainment = _matches_exclusion_patterns(text, "entertainment")
+
+        # 스포츠/엔터테인먼트는 항상 "other"
+        if is_sports or is_entertainment:
+            return "other"
+
+        # 범죄 뉴스는 국제적 맥락 확인
+        if is_crime:
+            international_context = _keyword_matches_word_boundary(
+                text,
+                ["international", "cross-border", "embassy", "foreign", "diplomat",
+                 "war crime", "genocide", "terror", "mass shooting", "political"]
+            )
+            if not international_context:
+                return "other"
 
         if _keyword_matches_word_boundary(text, ["earthquake", "tsunami", "flood", "hurricane"]):
             return "natural_disaster"
@@ -922,10 +1048,14 @@ class MultiSourceScanner:
         if _keyword_matches_word_boundary(text, ["terrorist", "bombing", "hostage"]):
             return "terrorism"
         if _keyword_matches_word_boundary(text, ["protest", "demonstration", "riot"]):
+            if is_sports:  # "rally" could be sports
+                return "other"
             return "protest"
         if _keyword_matches_word_boundary(text, ["military", "army", "navy", "air force"]):
             return "military"
         if _keyword_matches_word_boundary(text, ["violence", "killed", "casualties"]):
+            if is_crime:
+                return "other"
             return "violence"
         return "other"
 

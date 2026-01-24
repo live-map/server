@@ -82,6 +82,58 @@ NOT_EVENT_PATTERNS = [
     r"\b(chapter|episode|season \d+)\b",
 
     # ============================================
+    # 스포츠 확장 패턴 (P0 개선)
+    # ============================================
+    # 사이클/자전거 경기
+    r"\b(cyclist|cycling|bicycle race|bike race|peloton|velodrome)\b",
+    r"\b(tour de france|giro|vuelta|classic|stage race)\b",
+    r"\b(sprint|time trial|breakaway|gruppetto)\b",
+
+    # 모터스포츠/랠리
+    r"\b(rally|rallying|dakar|wrc|formula|f1|motorsport|racing)\b",
+    r"\b(grand prix|pole position|podium finish|pit stop)\b",
+    r"\b(driver|racer|team principal|constructor)\b",
+
+    # 일반 스포츠 결과/승리 패턴
+    r"\b(triumphs?|wins?|defeats?|loses?|victory|victories)\b(?!.*(?:military|war|battle|forces))",
+    r"\b(champion|championship|title|trophy|medal|gold|silver|bronze)\b",
+    r"\b(final|semi.?final|quarter.?final|round of|group stage)\b",
+    r"\b(score|scored|scoring|goal|assist|save)\b(?!.*(?:military|war))",
+    r"\b(athlete|player|coach|manager|captain|striker|goalkeeper)\b",
+    r"\b(team|squad|roster|lineup|starting eleven)\b(?!.*(?:military|special ops))",
+
+    # 리그/대회 이름
+    r"\b(premier league|la liga|serie a|bundesliga|ligue 1)\b",
+    r"\b(champions league|europa league|world series|super bowl)\b",
+    r"\b(australian open|us open|wimbledon|french open|masters)\b",
+
+    # ============================================
+    # 범죄 뉴스 패턴 (로컬 범죄 필터링)
+    # ============================================
+    # 살인/폭력 (국제적 맥락 없음)
+    r"\b(murder|homicide|killing|manslaughter)\b(?!.*(?:war crime|genocide|mass|terror))",
+    r"\b(stabbing|stabbed|knifing|knifed)\b(?!.*(?:terror|mass))",
+    r"\b(shooting|shot|gunman)\b(?!.*(?:military|war|terror|mass|school))",
+    r"\b(assault|assaulted|battery|beaten|beat)\b(?!.*(?:military|police brutality))",
+
+    # 절도/강도 (로컬)
+    r"\b(robbery|robbed|burglary|burglar|theft|thief|stolen)\b(?!.*(?:bank heist|art theft))",
+    r"\b(shoplifting|pickpocket|mugging|mugged|carjacking)\b",
+
+    # 마약/음주 관련 범죄
+    r"\b(drug bust|drug arrest|dui|dwi|drunk driving)\b",
+    r"\b(possession|trafficking)\b(?!.*(?:weapon|nuclear|arms))",
+
+    # 아동 범죄 (로컬)
+    r"\b(child abuse|child neglect|custody dispute|juvenile)\b",
+    r"\b(foster care|social services|cps|child protective)\b",
+
+    # 법원/재판 (로컬)
+    r"\b(arraigned|arraignment|bail|bond hearing|plea)\b",
+    r"\b(sentenced|sentencing|parole|probation)\b(?!.*(?:war crime|tribunal|international))",
+    r"\b(misdemeanor|felony|conviction|convicted)\b(?!.*(?:war crime|corruption|political))",
+
+    # ============================================
     # 로컬 뉴스 / 교통사고 (방어선 1)
     # ============================================
     # Traffic accidents (not internationally significant)
