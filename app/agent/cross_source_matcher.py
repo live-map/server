@@ -111,6 +111,33 @@ class CrossSourceMatcher:
             logger.info("Using fallback text similarity")
             return True
 
+    def generate_embedding_for_text(self, text: str) -> list[float] | None:
+        """
+        Generate embedding for a single text string.
+
+        P0 Fix: This method enables semantic deduplication by providing
+        embeddings for duplicate checking.
+
+        Args:
+            text: Text to generate embedding for
+
+        Returns:
+            Embedding as list of floats, or None if encoder unavailable
+        """
+        if not self._encoder:
+            return None
+
+        try:
+            embedding = self._encoder.encode(
+                [text],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            return embedding[0].tolist()
+        except Exception as e:
+            logger.error(f"Error generating embedding for text: {e}")
+            return None
+
     def match_events(
         self,
         events: list[TriggerEvent],

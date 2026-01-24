@@ -91,6 +91,9 @@ class RedditTrigger(BaseTrigger):
         """
         Search Reddit for breaking news
 
+        P0 Fix: Consolidated API calls - combines keywords with OR operator
+        to reduce from 10 API calls to 1-2 calls.
+
         1. Search across news subreddits for keywords
         2. Filter by engagement (score, comments)
         3. Track cross-posts for velocity
@@ -104,13 +107,22 @@ class RedditTrigger(BaseTrigger):
                 # Build subreddit filter
                 subreddit_filter = "+".join(self.subreddits[:10])
 
-                # Search for each keyword
-                for keyword in self.keywords[:10]:
+                # P0 Fix: Combine keywords using OR operator (Reddit supports this)
+                # Split into chunks of 5 keywords to avoid query length issues
+                keyword_chunks = [
+                    self.keywords[i:i+5]
+                    for i in range(0, min(len(self.keywords), 10), 5)
+                ]
+
+                for chunk in keyword_chunks:
+                    # Build OR query: "keyword1 OR keyword2 OR keyword3"
+                    combined_query = " OR ".join(chunk)
+
                     try:
                         response = await client.get(
                             f"{REDDIT_API_BASE}/r/{subreddit_filter}/search.json",
                             params={
-                                "q": keyword,
+                                "q": combined_query,
                                 "sort": "relevance",
                                 "t": self.time_filter,
                                 "limit": min(self.max_results, 100),
@@ -123,12 +135,11 @@ class RedditTrigger(BaseTrigger):
 
                         if response.status_code == 429:
                             logger.warning("Reddit rate limit reached")
-                            # Wait and retry
                             await self._wait_for_rate_limit()
                             continue
 
                         if response.status_code != 200:
-                            logger.warning(f"Reddit search failed for '{keyword}': {response.status_code}")
+                            logger.warning(f"Reddit search failed for query '{combined_query[:50]}...': {response.status_code}")
                             continue
 
                         data = response.json()
@@ -136,23 +147,34 @@ class RedditTrigger(BaseTrigger):
 
                         for post_wrapper in posts:
                             post = post_wrapper.get("data", {})
-                            event = self._parse_post(post, keyword, current_time)
+                            # Determine which keyword matched
+                            post_text = f"{post.get('title', '')} {post.get('selftext', '')}"
+                            matched_keyword = self._find_matched_keyword(post_text, chunk)
+                            event = self._parse_post(post, matched_keyword or chunk[0], current_time)
                             if event:
                                 events.append(event)
 
                     except Exception as e:
-                        logger.error(f"Reddit search error for '{keyword}': {e}")
+                        logger.error(f"Reddit search error for query '{combined_query[:30]}...': {e}")
                         continue
 
             # Cleanup expired hashes
             self._cleanup_expired_hashes(current_time)
 
-            logger.info(f"Reddit scan: {len(events)} new posts found")
+            logger.info(f"Reddit scan: {len(events)} new posts found (using {len(keyword_chunks)} combined queries)")
 
         except Exception as e:
             logger.error(f"Reddit scan error: {e}")
 
         return events
+
+    def _find_matched_keyword(self, text: str, keywords: list[str]) -> str | None:
+        """Find which keyword matched in the text"""
+        text_lower = text.lower()
+        for keyword in keywords:
+            if keyword.lower() in text_lower:
+                return keyword
+        return None
 
     def _parse_post(
         self, post: dict[str, Any], keyword: str, current_time: float

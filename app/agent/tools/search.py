@@ -88,6 +88,39 @@ def _cleanup_cache() -> None:
 # NON-ENGLISH QUERY TRANSLATION (P1 Enhancement)
 # =============================================================================
 
+# P1 Fix: Translation cache to avoid re-translating the same query
+# Structure: {query_hash: (timestamp, translated_query)}
+_translation_cache: dict[str, tuple[float, str]] = {}
+TRANSLATION_CACHE_TTL = 3600  # 1 hour
+
+
+def _get_translation_cache_key(query: str, source_lang: str) -> str:
+    """Generate cache key for translation."""
+    return hashlib.md5(f"{query}:{source_lang}".encode()).hexdigest()
+
+
+def _get_cached_translation(query: str, source_lang: str) -> str | None:
+    """Get cached translation if valid."""
+    cache_key = _get_translation_cache_key(query, source_lang)
+    cached = _translation_cache.get(cache_key)
+    if cached:
+        timestamp, translated = cached
+        if time.time() - timestamp < TRANSLATION_CACHE_TTL:
+            logger.debug(f"Translation cache hit: '{query[:30]}...'")
+            return translated
+    return None
+
+
+def _set_cached_translation(query: str, source_lang: str, translated: str) -> None:
+    """Cache translation result."""
+    cache_key = _get_translation_cache_key(query, source_lang)
+    _translation_cache[cache_key] = (time.time(), translated)
+    # Cleanup old entries (keep max 100)
+    if len(_translation_cache) > 100:
+        oldest_key = min(_translation_cache.keys(), key=lambda k: _translation_cache[k][0])
+        del _translation_cache[oldest_key]
+
+
 def _is_non_latin(text: str) -> bool:
     """Check if text contains non-Latin characters (Korean, Chinese, Arabic, etc.)."""
     for char in text:
@@ -153,6 +186,9 @@ async def _translate_query(query: str, source_lang: str = "auto") -> str:
     """
     Translate non-English query to English for better search results.
 
+    P1 Fix: Now caches translation results to avoid redundant API calls
+    when the same query is used for multiple search engines.
+
     Uses free translation services. Falls back to original query on failure.
 
     Args:
@@ -169,6 +205,11 @@ async def _translate_query(query: str, source_lang: str = "auto") -> str:
     # Skip if already English
     if source_lang == "en" or not _is_non_latin(query):
         return query
+
+    # P1 Fix: Check translation cache first
+    cached = _get_cached_translation(query, source_lang)
+    if cached is not None:
+        return cached
 
     try:
         # Use LibreTranslate API (free, self-hosted available)
@@ -191,6 +232,8 @@ async def _translate_query(query: str, source_lang: str = "auto") -> str:
                     data = response.json()
                     translated = data.get("translatedText", query)
                     logger.info(f"Translated '{query}' -> '{translated}' ({source_lang} -> en)")
+                    # Cache the translation
+                    _set_cached_translation(query, source_lang, translated)
                     return translated
 
             # Fallback: Use MyMemory Translation API (free, 1000 chars/day)
@@ -208,12 +251,15 @@ async def _translate_query(query: str, source_lang: str = "auto") -> str:
                     # Clean up potential HTML entities
                     translated = translated.replace("&#39;", "'").replace("&quot;", '"')
                     logger.info(f"Translated '{query}' -> '{translated}' ({source_lang} -> en)")
+                    # Cache the translation
+                    _set_cached_translation(query, source_lang, translated)
                     return translated
 
     except Exception as e:
         logger.warning(f"Translation failed for '{query}': {e}")
 
-    # Return original query on failure
+    # Return original query on failure (also cache the failure)
+    _set_cached_translation(query, source_lang, query)
     return query
 
 

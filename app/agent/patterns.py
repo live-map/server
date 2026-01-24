@@ -166,6 +166,13 @@ CATEGORY_EXCLUSION_PATTERNS = {
     "entertainment": ENTERTAINMENT_PATTERNS,
 }
 
+# P0 Fix: Pre-compiled exclusion patterns (avoid recompiling on every call)
+COMPILED_CATEGORY_EXCLUSION_PATTERNS = {
+    "sports": COMPILED_SPORTS_PATTERNS,
+    "crime": COMPILED_LOCAL_CRIME_PATTERNS,
+    "entertainment": COMPILED_ENTERTAINMENT_PATTERNS,
+}
+
 # International affairs keywords for category classification
 INTERNATIONAL_AFFAIRS_KEYWORDS = {
     "war": [
@@ -356,15 +363,16 @@ def is_international_affair(text: str) -> tuple[bool, str | None]:
     """
     Check if text relates to international affairs.
 
+    P0 Fix: Uses pre-compiled patterns to avoid recompiling on every call.
+
     Returns:
         Tuple of (is_international, category)
     """
     text_lower = text.lower()
 
-    # First check exclusions
-    for category, patterns in CATEGORY_EXCLUSION_PATTERNS.items():
-        compiled = [re.compile(p, re.IGNORECASE) for p in patterns]
-        if matches_any_pattern(text, compiled):
+    # First check exclusions (P0: use pre-compiled patterns)
+    for category, compiled_patterns in COMPILED_CATEGORY_EXCLUSION_PATTERNS.items():
+        if matches_any_pattern(text, compiled_patterns):
             return False, category
 
     # Then check international keywords

@@ -152,6 +152,11 @@ async def run_scheduled_scan():
                 print(f"[SCANNER] [{i+1}] SKIPPING: Similar to already-published event in this cycle")
                 continue
 
+            # P0 Fix: Generate embedding once for both deduplication and saving
+            event_embedding = None
+            if scanner._matcher_initialized and scanner.cross_source_matcher._encoder:
+                event_embedding = scanner.cross_source_matcher.generate_embedding_for_text(event_desc)
+
             # === STAGE 1.5: DEDUPLICATION CHECK (NEW) ===
             if agent_settings.dedup_enabled:
                 async with AsyncSessionLocal() as db:
@@ -163,7 +168,7 @@ async def run_scheduled_scan():
                     )
                     match_result = await article_service.check_duplicate(
                         event_desc,
-                        embedding=None,  # TODO: Generate embedding for better matching
+                        embedding=event_embedding,  # P0: Now uses actual embedding
                         category=category,
                     )
 
@@ -235,7 +240,7 @@ async def run_scheduled_scan():
                                 "full_text": "",
                             },
                             event_text=event_desc,
-                            embedding=None,  # TODO: Generate embedding
+                            embedding=event_embedding,  # P0: Now uses actual embedding
                             category=category,
                             claims=result.get("claims"),
                             verification_result=verification_result,

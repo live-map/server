@@ -216,10 +216,14 @@ class BreakingNewsDetector:
                 domain_tier = get_domain_tier(source_url)
                 if domain_tier in [DomainTier.TIER_1, DomainTier.TIER_2]:
                     fast_path_eligible = True
-                    gates_to_skip = ["gate2_specificity", "gate3_evidence"]
+                    # P1 Fix: High-confidence breaking news can also skip Gate 0
+                    if confidence >= 0.8:
+                        gates_to_skip = ["gate0_verification", "gate2_specificity", "gate3_evidence"]
+                    else:
+                        gates_to_skip = ["gate2_specificity", "gate3_evidence"]
                     logger.info(
                         f"[BREAKING] Fast-path enabled: {title[:50]}... "
-                        f"(tier={domain_tier.value}, signals={len(signals)})"
+                        f"(tier={domain_tier.value}, signals={len(signals)}, skip_gates={len(gates_to_skip)})"
                     )
 
             # Determine label

@@ -6,11 +6,26 @@ Check-worthiness 감지 모듈
 Based on 2026 fact-checking research:
 - Check-worthiness = "claims the general public would want to know the truth of"
 - Filter out: entertainment, speculation, promotional, background content
+
+P1 Fix: Uses centralized patterns from patterns.py to reduce duplication.
 """
 
 import re
 from dataclasses import dataclass
 from enum import Enum
+
+# P1 Fix: Import centralized compiled patterns
+from .patterns import (
+    COMPILED_ENTERTAINMENT_PATTERNS,
+    COMPILED_SPECULATION_PATTERNS,
+    COMPILED_PROMOTIONAL_PATTERNS,
+    COMPILED_HUMAN_INTEREST_PATTERNS,
+    COMPILED_LOCAL_INCIDENT_PATTERNS,
+    COMPILED_SPORTS_PATTERNS,
+    COMPILED_LOCAL_CRIME_PATTERNS,
+    COMPILED_SIGNIFICANCE_PATTERNS,
+    matches_any_pattern,
+)
 
 
 class RejectionReason(Enum):
@@ -33,171 +48,18 @@ class CheckWorthinessResult:
     matched_patterns: list[str]
 
 
-# 연예/스포츠 키워드
-# Note: "interview" alone is too broad - must combine with celebrity context
-ENTERTAINMENT_PATTERNS = [
-    r"\b(actor|actress|celebrity|star|singer|musician|athlete)\b",
-    r"\b(celebrity|star|actor|actress).*(interview|talks about|shares|reveals)\b",
-    r"\b(interview|talks about|shares|reveals|opens up).*(celebrity|star|actor|actress)\b",
-    r"\b(movie|film|album|concert|tour|premiere|red carpet)\b",
-    r"\b(dating|relationship|married|divorced|breakup)\b",
-    r"\b(fashion|style|outfit|looks|wearing)\b",
-    r"\b(reality tv|talk show)\b",
-    # Personal sharing language (celebrity interview style)
-    r"\b(shared|reveals|opens up).*(insights?|thoughts|feelings|experience)\b",
-    r"\b(personal growth|self-discovery|healing journey|lowest point)\b",
-    r"\bduring (an |the )?interview\b",
-]
-
-# 추측/의견 키워드
-SPECULATION_PATTERNS = [
-    r"\b(might|could|may|possibly|potentially|rumor)\b",
-    r"\b(speculates?|speculation|predicted|prediction)\b",
-    r"\b(analysts? (say|believe|think|expect))\b",
-    r"\b(sources? (say|claim|suggest))\b(?!.*confirmed)",
-]
-
-# 일반 배경 패턴
-BACKGROUND_PATTERNS = [
-    r"\b(since \d{4}|for decades?|for years?|historically)\b",
-    r"\b(ongoing|continues to|has been|long-standing)\b",
-    r"\b(context|background|overview|history of)\b",
-]
-
-# 홍보/광고 패턴
-PROMOTIONAL_PATTERNS = [
-    r"\b(sponsored|advertisement|ad|promo)\b",
-    r"\b(buy now|order now|limited time|discount)\b",
-    r"\b(subscribe|sign up|join now)\b",
-]
-
-# 인물 특집/미담 기사 패턴 (Human Interest)
-# 사건이 아닌 개인의 이야기, 커뮤니티 선행 등
-HUMAN_INTEREST_PATTERNS = [
-    # 개인 활동 묘사
-    r"\b(preparing for|prepares for|dedicated (him|her)self)\b",
-    r"\b(his|her) (mission|journey|efforts?|commitment|dedication)\b",
-    r"\b(has been|is) (actively )?(involved in|helping|supporting)\b",
-    # 자선/커뮤니티 활동
-    r"\b(fundraising|charity|humanitarian (efforts?|work))\b",
-    r"\b(community donations?|local (businesses?|residents?))\b",
-    r"\b(aid trip|relief (trip|mission|effort))\b",
-    # 개인 인터뷰/감정 표현
-    r"\b(expressed (his|her) gratitude|hopes? to (make|raise|inspire))\b",
-    r"\b(privilege to help|inspired many|make a difference)\b",
-    r"\b(in (a recent|an) interview|stated|expressed)\b",
-    # 마일스톤/기록
-    r"\b(milestone|final (trip|mission|journey)|20th|10th|first)\b",
-    # 직업 + 지역 묘사 (개인 프로필)
-    r"\b(local|Hambleton|a \w+ man|a \w+ woman)\b.*\b(driver|volunteer|worker)\b",
-]
-
-# ============================================
-# 로컬 사건 패턴 (방어선 3)
-# ============================================
-LOCAL_INCIDENT_PATTERNS = [
-    # Traffic/Road incidents
-    r"\b(traffic|road|highway|street)\s+(accident|crash|collision|incident|closure)\b",
-    r"\b(car|truck|vehicle|bus|lorry|laster)\s+(crash|accident|collision|wreck)\b",
-    r"\b(slid|slipped|skidded|lost\s+control|veered|rutschen)\b",
-
-    # Local authority mentions (without international context)
-    r"\b(local|regional|city|town|county)\s+(police|authorities|fire|emergency)\b",
-    r"\bpolizeiauto\b",  # German: police car
-
-    # Minor incident indicators
-    r"\b(no\s+(?:serious\s+)?injuries?|minor\s+injuries?|non.?fatal)\b",
-    r"\b(weather.?related|icy|snow|rain|fog|glatteis).{0,30}(accident|crash|incident)\b",
-
-    # German local news patterns
-    r"\b(niedersachsen|bremen|bayern|nordrhein.?westfalen|hamburg|berlin).{0,30}(unfall|polizei)\b",
-    r"\b(promenade|autobahn)\s+(unfall|accident|crash)\b",
-]
-
-# ============================================
-# 스포츠 뉴스 패턴 (방어선 - P0 추가)
-# ============================================
-SPORTS_NEWS_PATTERNS = [
-    # 사이클/자전거 경기
-    r"\b(cyclist|cycling|bicycle race|bike race|peloton|velodrome)\b",
-    r"\b(tour de france|giro|vuelta|stage race)\b",
-    r"\b(sprint|time trial|breakaway|gruppetto)\b",
-
-    # 모터스포츠/랠리
-    r"\b(rally|rallying|dakar|wrc|formula|f1|motorsport)\b",
-    r"\b(grand prix|pole position|podium finish|pit stop)\b",
-    r"\b(driver|racer|racing team)\b(?!.*(?:military|attack))",
-
-    # 일반 스포츠 결과/승리
-    r"\b(triumphs?|wins?|defeats?|victory|victories)\b(?!.*(?:military|war|battle))",
-    r"\b(champion|championship|title|trophy|medal)\b",
-    r"\b(final|semi.?final|quarter.?final|knockout)\b",
-    r"\b(score|scored|goal|assist|save)\b(?!.*(?:war|conflict))",
-    r"\b(athlete|player|coach|manager|captain)\b",
-
-    # 리그/대회 이름
-    r"\b(premier league|la liga|serie a|bundesliga|ligue 1)\b",
-    r"\b(champions league|europa league|world series|super bowl)\b",
-    r"\b(australian open|us open|wimbledon|french open)\b",
-
-    # 스포츠 종목
-    r"\b(tennis|golf|cricket|rugby|boxing|mma|ufc)\b",
-    r"\b(basketball|baseball|hockey|volleyball)\b(?!.*(?:violence|riot))",
-]
-
-# ============================================
-# 로컬 범죄 뉴스 패턴 (방어선 - P0 추가)
-# ============================================
-LOCAL_CRIME_PATTERNS = [
-    # 살인/폭력 (국제적 맥락 없음)
-    r"\b(murder|homicide|killing|manslaughter)\b(?!.*(?:war crime|genocide|mass|terror|political))",
-    r"\b(stabbing|stabbed|knifing|knifed)\b(?!.*(?:terror|mass))",
-    r"\b(shooting|shot|gunman)\b(?!.*(?:military|war|terror|mass|school|police brutality))",
-    r"\b(assault|assaulted|battery|beaten)\b(?!.*(?:military|protest))",
-
-    # 절도/강도
-    r"\b(robbery|robbed|burglary|theft|stolen)\b(?!.*(?:art theft|cyber|identity))",
-    r"\b(shoplifting|pickpocket|mugging|carjacking)\b",
-
-    # 아동 범죄
-    r"\b(child abuse|child neglect|domestic violence)\b",
-
-    # 법원/재판 (로컬)
-    r"\b(arraigned|arraignment|bail hearing|plea deal)\b",
-    r"\b(sentenced|sentencing|parole|probation)\b(?!.*(?:war crime|tribunal|political))",
-]
-
-# ============================================
-# 국제적 중요성 지표 (방어선 4)
-# 로컬 사건이라도 이 패턴이 있으면 통과
-# ============================================
-SIGNIFICANCE_INDICATORS = [
-    # Mass casualties (10+) - both "47 killed" and "kills 47" formats
-    r"\b(\d{2,}|dozens|hundreds|thousands)\s+(killed|dead|casualties|injured|died)\b",
-    r"\b(kills?|killed)\s+(\d{2,}|dozens|hundreds|thousands)\b",
-    r"\b(mass\s+casualty|multiple\s+fatalities|death\s+toll|body\s+count)\b",
-    r"\b(massacre|mass\s+shooting|terror)\b",
-
-    # International involvement
-    r"\b(international|cross.?border|multiple\s+countries|foreign)\b",
-    r"\b(embassy|consulate|diplomat|foreign\s+national)\b",
-    r"\b(UN|NATO|EU|G7|G20)\s+(response|statement|meeting)\b",
-
-    # Government/Official response
-    r"\b(president|prime\s+minister|chancellor|minister)\s+(respond|statement|declare|condemn)\b",
-    r"\b(state\s+of\s+emergency|martial\s+law|national\s+security)\b",
-    r"\b(federal|national)\s+(response|investigation|alert)\b",
-
-    # Critical infrastructure
-    r"\b(airport|seaport|border).{0,20}(closed?|shutdown|evacuate)\b",
-    r"\b(power\s+grid|nuclear|dam).{0,20}(attack|failure|breach|collapse)\b",
-    r"\b(cyber.?attack|infrastructure\s+attack)\b",
-]
+# P1 Fix: Pattern definitions moved to patterns.py
+# All patterns now imported from centralized module for:
+# - Single source of truth
+# - Pre-compiled patterns for performance
+# - Reduced code duplication
 
 
 def check_significance(text: str) -> tuple[bool, int, list[str]]:
     """
     Check if event has international significance.
+
+    P1 Fix: Uses pre-compiled patterns from patterns.py.
 
     Args:
         text: Text to check
@@ -206,9 +68,9 @@ def check_significance(text: str) -> tuple[bool, int, list[str]]:
         (is_significant, indicator_count, matched_patterns)
     """
     matched = []
-    for pattern in SIGNIFICANCE_INDICATORS:
-        if re.search(pattern, text, re.IGNORECASE):
-            matched.append(pattern)
+    for pattern in COMPILED_SIGNIFICANCE_PATTERNS:
+        if pattern.search(text):
+            matched.append(pattern.pattern)
     return len(matched) >= 1, len(matched), matched
 
 
@@ -224,6 +86,9 @@ def check_worthiness(
     """
     텍스트의 check-worthiness 평가
 
+    P1 Fix: Uses pre-compiled patterns from patterns.py for better performance
+    and reduced duplication.
+
     Args:
         text: 평가할 텍스트
         entertainment_threshold: 연예 패턴 매칭 임계값
@@ -236,117 +101,102 @@ def check_worthiness(
     Returns:
         CheckWorthinessResult with is_checkworthy, rejection_reason, confidence
     """
-    text_lower = text.lower()
+    # ============================================
+    # P1 Fix: Use pre-compiled patterns from patterns.py
+    # ============================================
+
+    # Helper to count matches using compiled patterns
+    def count_matches(compiled_patterns: list, text: str) -> tuple[int, list[str]]:
+        matches = []
+        for pattern in compiled_patterns:
+            if pattern.search(text):
+                matches.append(pattern.pattern)
+        return len(matches), matches
 
     # ============================================
     # P0 추가: 스포츠 뉴스 패턴 체크 (최우선)
     # ============================================
-    sports_matches = []
-    for pattern in SPORTS_NEWS_PATTERNS:
-        if re.search(pattern, text, re.I):
-            sports_matches.append(f"sports:{pattern}")
-    if len(sports_matches) >= sports_threshold:
+    sports_count, sports_matches = count_matches(COMPILED_SPORTS_PATTERNS, text)
+    if sports_count >= sports_threshold:
         return CheckWorthinessResult(
             is_checkworthy=False,
             rejection_reason=RejectionReason.SPORTS_NEWS,
             confidence=0.95,
-            matched_patterns=sports_matches
+            matched_patterns=[f"sports:{p}" for p in sports_matches]
         )
 
     # ============================================
     # P0 추가: 로컬 범죄 패턴 체크
     # ============================================
-    crime_matches = []
-    for pattern in LOCAL_CRIME_PATTERNS:
-        if re.search(pattern, text, re.I):
-            crime_matches.append(f"crime:{pattern}")
-    if len(crime_matches) >= crime_threshold:
+    crime_count, crime_matches = count_matches(COMPILED_LOCAL_CRIME_PATTERNS, text)
+    if crime_count >= crime_threshold:
         # 국제적 중요성 체크 (override 가능)
-        is_significant, sig_count, sig_patterns = check_significance(text)
-        if is_significant:
-            # 국제적 중요성이 있으면 통과 (예: 대규모 테러, 정치적 암살)
-            pass
-        else:
+        is_significant, sig_count, _ = check_significance(text)
+        if not is_significant:
             return CheckWorthinessResult(
                 is_checkworthy=False,
                 rejection_reason=RejectionReason.LOCAL_CRIME,
                 confidence=0.90,
-                matched_patterns=crime_matches
+                matched_patterns=[f"crime:{p}" for p in crime_matches]
             )
 
     # 연예 패턴 체크
-    entertainment_matches = []
-    for pattern in ENTERTAINMENT_PATTERNS:
-        if re.search(pattern, text_lower):
-            entertainment_matches.append(f"entertainment:{pattern}")
-    if len(entertainment_matches) >= entertainment_threshold:
+    ent_count, ent_matches = count_matches(COMPILED_ENTERTAINMENT_PATTERNS, text)
+    if ent_count >= entertainment_threshold:
         return CheckWorthinessResult(
             is_checkworthy=False,
             rejection_reason=RejectionReason.ENTERTAINMENT,
             confidence=0.9,
-            matched_patterns=entertainment_matches
+            matched_patterns=[f"entertainment:{p}" for p in ent_matches]
         )
 
     # 추측 패턴 체크
-    speculation_matches = []
-    for pattern in SPECULATION_PATTERNS:
-        if re.search(pattern, text_lower):
-            speculation_matches.append(f"speculation:{pattern}")
-    if len(speculation_matches) >= speculation_threshold:
+    spec_count, spec_matches = count_matches(COMPILED_SPECULATION_PATTERNS, text)
+    if spec_count >= speculation_threshold:
         return CheckWorthinessResult(
             is_checkworthy=False,
             rejection_reason=RejectionReason.SPECULATION,
             confidence=0.85,
-            matched_patterns=speculation_matches
+            matched_patterns=[f"speculation:{p}" for p in spec_matches]
         )
 
     # 홍보 패턴 체크
-    promotional_matches = []
-    for pattern in PROMOTIONAL_PATTERNS:
-        if re.search(pattern, text_lower):
-            promotional_matches.append(f"promotional:{pattern}")
-    if len(promotional_matches) >= 1:
+    promo_count, promo_matches = count_matches(COMPILED_PROMOTIONAL_PATTERNS, text)
+    if promo_count >= 1:
         return CheckWorthinessResult(
             is_checkworthy=False,
             rejection_reason=RejectionReason.PROMOTIONAL,
             confidence=0.95,
-            matched_patterns=promotional_matches
+            matched_patterns=[f"promotional:{p}" for p in promo_matches]
         )
 
     # 인물 특집/미담 패턴 체크 (Human Interest)
-    human_interest_matches = []
-    for pattern in HUMAN_INTEREST_PATTERNS:
-        if re.search(pattern, text, re.I):  # case insensitive
-            human_interest_matches.append(f"human_interest:{pattern}")
-    if len(human_interest_matches) >= human_interest_threshold:
+    hi_count, hi_matches = count_matches(COMPILED_HUMAN_INTEREST_PATTERNS, text)
+    if hi_count >= human_interest_threshold:
         return CheckWorthinessResult(
             is_checkworthy=False,
             rejection_reason=RejectionReason.HUMAN_INTEREST,
             confidence=0.85,
-            matched_patterns=human_interest_matches
+            matched_patterns=[f"human_interest:{p}" for p in hi_matches]
         )
 
     # ============================================
     # 로컬 사건 패턴 체크 (방어선 3) + Significance Override (방어선 4)
     # ============================================
-    local_incident_matches = []
-    for pattern in LOCAL_INCIDENT_PATTERNS:
-        if re.search(pattern, text, re.I):  # case insensitive
-            local_incident_matches.append(f"local_incident:{pattern}")
+    local_count, local_matches = count_matches(COMPILED_LOCAL_INCIDENT_PATTERNS, text)
 
-    if len(local_incident_matches) >= local_incident_threshold:
+    if local_count >= local_incident_threshold:
         # 로컬 사건 패턴 매칭됨 - significance 체크
-        is_significant, sig_count, sig_patterns = check_significance(text)
+        is_significant, sig_count, _ = check_significance(text)
 
         if is_significant:
             # Significance indicator가 있으면 통과 (대형 사고 등)
-            # 로그용으로 패턴 정보만 반환
             return CheckWorthinessResult(
                 is_checkworthy=True,
                 rejection_reason=RejectionReason.NONE,
                 confidence=0.8,
                 matched_patterns=[
-                    f"local_patterns:{len(local_incident_matches)}",
+                    f"local_patterns:{local_count}",
                     f"significance_override:{sig_count}",
                 ]
             )
@@ -356,7 +206,7 @@ def check_worthiness(
                 is_checkworthy=False,
                 rejection_reason=RejectionReason.LOCAL_INCIDENT,
                 confidence=0.85,
-                matched_patterns=local_incident_matches
+                matched_patterns=[f"local_incident:{p}" for p in local_matches]
             )
 
     return CheckWorthinessResult(

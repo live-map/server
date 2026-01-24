@@ -96,6 +96,9 @@ class SocialVelocityCalculator:
         self.velocity_cache: dict[str, VelocityScore] = {}
         # Cleanup interval
         self.cache_ttl = timedelta(hours=6)
+        # P0 Fix: Track events added for periodic cleanup
+        self._events_since_cleanup = 0
+        self._cleanup_threshold = 1000  # Cleanup every 1000 events
 
     def add_events(self, events: list[TriggerEvent]) -> None:
         """Add new events to tracking"""
@@ -112,6 +115,12 @@ class SocialVelocityCalculator:
                     "timestamp": event.detected_at,
                     "source": event.source,
                 })
+
+        # P0 Fix: Periodic cleanup to prevent memory leak
+        self._events_since_cleanup += len(events)
+        if self._events_since_cleanup >= self._cleanup_threshold:
+            self.cleanup_old_events()
+            self._events_since_cleanup = 0
 
     def calculate_velocity(self, topic: str) -> VelocityScore:
         """Calculate velocity score for a specific topic"""

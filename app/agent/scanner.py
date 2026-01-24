@@ -502,48 +502,9 @@ class MultiSourceScanner:
             _log_scan_summary(scan_start, filter_stats, [])
             return []
 
-        # ============================================
-        # P2: Early Importance Filter (Goldstein Scale)
-        # Reject low-importance events before expensive operations
-        # ============================================
+        # NOTE: Importance filter moved AFTER cross-source matching (P0 fix)
+        # This allows multi-source clusters to receive proper importance boost
         filter_stats["importance_rejected"] = 0
-        importance_filtered_events = []
-        min_importance_threshold = 0.25  # LOW level minimum
-
-        for event in events:
-            # Calculate importance score
-            importance_result = calculate_importance(
-                title=event.title,
-                content=event.content or "",
-                sources=[event.url] if event.url else [],
-            )
-
-            # Store importance for later use
-            event._importance = importance_result
-
-            # Skip very low importance events early
-            if importance_result.score < min_importance_threshold:
-                filter_stats["importance_rejected"] += 1
-                logger.debug(
-                    f"[P2-IMPORTANCE-REJECT] {importance_result.level.value} "
-                    f"(score={importance_result.score:.2f}): {event.title[:50]}..."
-                )
-                continue
-
-            importance_filtered_events.append(event)
-
-        if filter_stats["importance_rejected"] > 0:
-            logger.info(
-                f"P2 Importance filter: {len(importance_filtered_events)}/{len(events)} events passed "
-                f"(threshold={min_importance_threshold}, {filter_stats['importance_rejected']} rejected)"
-            )
-
-        events = importance_filtered_events
-
-        if not events:
-            logger.info("No events after importance filter")
-            _log_scan_summary(scan_start, filter_stats, [])
-            return []
 
         # LLM으로 최종 분류 및 그룹화
         significant_events = await self._classify_and_group(events, filter_stats)
@@ -686,7 +647,92 @@ class MultiSourceScanner:
             return []
 
         # ============================================
+        # Step 3.3: Importance Filter (AFTER clustering - P0 fix)
+        # Multi-source clusters get importance boost based on source count
+        # ============================================
+        min_importance_threshold = 0.25  # LOW level minimum
+        importance_filtered = []
+
+        for item in publishable_events:
+            event = item["event"]
+            cluster_size = item.get("cluster_size", 1)
+
+            # Get all source URLs for importance calculation
+            sources = [event.url] if event.url else []
+            if "matching_events" in item:
+                sources.extend([e.url for e in item["matching_events"] if e.url])
+
+            # Calculate importance score
+            importance_result = calculate_importance(
+                title=event.title,
+                content=event.content or "",
+                sources=sources,
+            )
+
+            # Apply multi-source boost: +0.1 per additional source (up to +0.3)
+            multi_source_boost = min(0.1 * (cluster_size - 1), 0.3)
+            boosted_score = min(importance_result.score + multi_source_boost, 1.0)
+
+            # Store boosted importance for later use
+            event._importance = importance_result
+            event._importance_boosted = boosted_score
+
+            # Skip low importance events (but use boosted score for threshold)
+            if boosted_score < min_importance_threshold:
+                filter_stats["importance_rejected"] += 1
+                logger.debug(
+                    f"[P0-IMPORTANCE-REJECT] {importance_result.level.value} "
+                    f"(base={importance_result.score:.2f}, boosted={boosted_score:.2f}, "
+                    f"sources={cluster_size}): {event.title[:50]}..."
+                )
+                continue
+
+            if multi_source_boost > 0:
+                logger.debug(
+                    f"[P0-IMPORTANCE-BOOST] Multi-source boost +{multi_source_boost:.2f} "
+                    f"({cluster_size} sources): {event.title[:50]}..."
+                )
+
+            importance_filtered.append(item)
+
+        if filter_stats["importance_rejected"] > 0:
+            logger.info(
+                f"Importance filter (post-clustering): {len(importance_filtered)}/{len(publishable_events)} passed "
+                f"(threshold={min_importance_threshold}, {filter_stats['importance_rejected']} rejected)"
+            )
+
+        publishable_events = importance_filtered
+
+        if not publishable_events:
+            logger.info("No events after importance filter")
+            return []
+
+        # ============================================
+        # Step 3.4: Breaking News Detection (P1 Fix: moved before Gate 0)
+        # Detect early so high-confidence breaking news can skip gates
+        # ============================================
+        breaking_news_detector = get_global_detector()
+
+        for item in publishable_events:
+            event = item["event"]
+            # Detect breaking news
+            breaking_result = breaking_news_detector.detect(
+                title=event.title,
+                content=event.content or "",
+                source_url=event.url,
+                topic_key=event.title[:30].lower(),  # Simple topic key
+            )
+            item["breaking_news"] = breaking_result
+
+            if breaking_result.is_breaking:
+                logger.info(
+                    f"[BREAKING-NEWS] {breaking_result.label}: {event.title[:50]}... "
+                    f"(confidence={breaking_result.confidence:.2f}, fast_path={breaking_result.fast_path_eligible})"
+                )
+
+        # ============================================
         # Step 3.5: 이벤트 검증 (Gate 0) - 하이브리드 방식
+        # P1: Breaking news with high confidence can skip this gate
         # ============================================
         if agent_settings.event_verification_enabled:
             verified_events = []
@@ -696,6 +742,19 @@ class MultiSourceScanner:
 
                 # Tier-1 정부 소스는 검증 면제 (공식 발표)
                 if item["is_tier1_govt"]:
+                    verified_events.append(item)
+                    continue
+
+                # P1 Fix: High-confidence breaking news can skip Gate 0
+                breaking_result: BreakingNewsResult = item.get("breaking_news")
+                if (breaking_result and
+                    breaking_result.fast_path_eligible and
+                    breaking_result.confidence >= 0.8 and
+                    "gate0_verification" in breaking_result.gates_to_skip):
+                    logger.info(
+                        f"[BREAKING-FAST-PATH] Skipping Gate 0 for high-confidence breaking news: "
+                        f"{event.title[:50]}..."
+                    )
                     verified_events.append(item)
                     continue
 
@@ -727,28 +786,6 @@ class MultiSourceScanner:
             if not publishable_events:
                 logger.warning("No events passed event verification (Gate 0)")
                 return []
-
-        # ============================================
-        # Step 3.7: Breaking News Detection (P0 Fast-Path)
-        # ============================================
-        breaking_news_detector = get_global_detector()
-
-        for item in publishable_events:
-            event = item["event"]
-            # Detect breaking news
-            breaking_result = breaking_news_detector.detect(
-                title=event.title,
-                content=event.content or "",
-                source_url=event.url,
-                topic_key=event.title[:30].lower(),  # Simple topic key
-            )
-            item["breaking_news"] = breaking_result
-
-            if breaking_result.is_breaking:
-                logger.info(
-                    f"[BREAKING-NEWS] {breaking_result.label}: {event.title[:50]}... "
-                    f"(confidence={breaking_result.confidence:.2f}, fast_path={breaking_result.fast_path_eligible})"
-                )
 
         # ============================================
         # Step 4: Content Gates 적용 (Tier-1 govt는 일부 면제)
@@ -962,9 +999,13 @@ class MultiSourceScanner:
                     confidence.verification_delay_minutes
                 )
 
-            # P2: Get importance score from event (calculated in early filter)
+            # P0: Get importance score from event (calculated AFTER clustering)
+            # Use boosted score if available (includes multi-source boost)
             importance_result = getattr(event, '_importance', None)
-            importance_score = importance_result.score if importance_result else 0.5
+            importance_boosted = getattr(event, '_importance_boosted', None)
+            importance_score = importance_boosted if importance_boosted else (
+                importance_result.score if importance_result else 0.5
+            )
             importance_level = importance_result.level.value if importance_result else "medium"
 
             result_item = {

@@ -177,19 +177,7 @@ class VerificationResult(BaseModel):
 # Prompts
 # =============================================================================
 
-QUESTION_GENERATION_PROMPT = """Generate 2-4 specific questions that would help verify the following claim.
-
-CLAIM: {claim}
-
-Requirements:
-1. Questions should be answerable from news articles or official sources
-2. Focus on verifiable facts (who, what, when, where, how many)
-3. Avoid yes/no questions - prefer specific factual questions
-
-Output format:
-Q1: [question]
-Q2: [question]
-..."""
+# P1 Fix: QUESTION_GENERATION_PROMPT removed - now using rule-based question generation
 
 VERIFICATION_PROMPT = """You are a professional fact-checker. Verify the following claim based STRICTLY on the evidence provided.
 
@@ -308,8 +296,8 @@ class QAVerifier:
             extra={"claim_id": claim_id, "evidence_count": len(evidence_docs)},
         )
 
-        # Step 1: Generate verification questions
-        questions = await self._generate_questions(claim_text)
+        # Step 1: Generate verification questions (P1: now rule-based, no LLM call)
+        questions = self._generate_questions(claim_text)
 
         # Step 2: Prepare evidence context
         evidence_context = self._prepare_evidence_context(evidence_docs)
@@ -435,43 +423,44 @@ class QAVerifier:
 
         return result
 
-    async def _generate_questions(self, claim: str) -> list[str]:
-        """Generate verification questions for a claim with retry logic."""
-        try:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(3),
-                wait=wait_exponential(multiplier=1, min=1, max=10),
-                retry=retry_if_exception_type((ConnectionError, TimeoutError)),
-                reraise=True,
-            ):
-                with attempt:
-                    response = await asyncio.wait_for(
-                        self.llm.ainvoke([
-                            SystemMessage(content="You are a fact-checker generating verification questions."),
-                            HumanMessage(content=QUESTION_GENERATION_PROMPT.format(claim=claim)),
-                        ]),
-                        timeout=self.llm_timeout,
-                    )
+    def _generate_questions(self, claim: str) -> list[str]:
+        """
+        Generate verification questions for a claim using rule-based approach.
 
-            questions = []
-            for line in response.content.split("\n"):
-                line = line.strip()
-                if line.startswith("Q") and ":" in line:
-                    question = line.split(":", 1)[1].strip()
-                    if question:
-                        questions.append(question)
+        P1 Fix: Removed separate LLM call for question generation.
+        Uses rule-based approach instead, saving ~10-20% LLM costs.
 
-            return questions[:4] if questions else [f"Is the following claim true: {claim}?"]
+        The verification LLM still receives these questions as guidance,
+        but the questions are generated deterministically based on claim content.
+        """
+        questions = []
+        claim_lower = claim.lower()
 
-        except RetryError:
-            logger.warning(f"Question generation failed after retries")
-            return [f"Is the following claim true: {claim}?"]
-        except asyncio.TimeoutError:
-            logger.warning(f"Question generation timed out after {self.llm_timeout}s")
-            return [f"Is the following claim true: {claim}?"]
-        except Exception as e:
-            logger.warning(f"Question generation failed: {e}")
-            return [f"Is the following claim true: {claim}?"]
+        # Standard 5W1H verification questions based on claim content
+        # Who - for claims involving people/organizations
+        if any(word in claim_lower for word in ["president", "minister", "leader", "official", "government", "company", "organization"]):
+            questions.append(f"Who is involved in this claim and what is their official role?")
+
+        # What - always include a verification of the main claim
+        questions.append(f"What specific event or action is described in this claim?")
+
+        # When - for claims with temporal elements
+        if any(word in claim_lower for word in ["today", "yesterday", "announced", "said", "reported", "happened", "occurred"]):
+            questions.append(f"When did this event occur according to official sources?")
+
+        # Where - for claims with locations
+        if any(word in claim_lower for word in ["in ", "at ", "from ", "to ", "country", "city", "region"]):
+            questions.append(f"Where exactly did this take place?")
+
+        # Numbers/quantities
+        if any(char.isdigit() for char in claim):
+            questions.append(f"Are the numbers and statistics in this claim accurate according to official sources?")
+
+        # If we have fewer than 2 questions, add generic ones
+        if len(questions) < 2:
+            questions.append(f"Is there official confirmation of this claim from credible sources?")
+
+        return questions[:4]  # Max 4 questions
 
     def _prepare_evidence_context(self, evidence_docs: list[dict]) -> str:
         """Prepare evidence context within token limit, with credibility labels."""

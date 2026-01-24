@@ -8,6 +8,9 @@ Stage 3: LLM 기반 검증 (edge cases만, $0.001/건)
 목적:
 - 키워드 매칭으로 수집된 콘텐츠 중 실제 이벤트만 통과
 - False Positive 제거: 영화, 게임, 역사, 추측, 스포츠 등
+
+Note: This module has comprehensive patterns optimized for Gate 0.
+See patterns.py for shared patterns used in checkworthiness (Gate 1).
 """
 
 import re
