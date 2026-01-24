@@ -310,56 +310,7 @@ class CrossSourceMatcher:
             parts.append(event.content[:500])
         return " ".join(parts)
 
-    def is_duplicate_of_existing(
-        self,
-        new_event: TriggerEvent,
-        existing_events: list[TriggerEvent],
-        strict_threshold: float = 0.85,
-    ) -> tuple[bool, TriggerEvent | None, float]:
-        """
-        P2 Enhancement: Check if a new event is a duplicate of existing events.
-
-        Uses a stricter threshold (0.85) than regular matching to ensure
-        we only flag true duplicates.
-
-        Args:
-            new_event: The new event to check
-            existing_events: List of already published/processed events
-            strict_threshold: Similarity threshold for duplicate detection (default 0.85)
-
-        Returns:
-            (is_duplicate, matched_event, similarity_score)
-        """
-        if not existing_events:
-            return False, None, 0.0
-
-        if not self._encoder:
-            # Fallback to text similarity
-            new_text = self._get_event_text(new_event)
-            for event in existing_events:
-                sim = self._text_similarity(new_text, self._get_event_text(event))
-                if sim >= strict_threshold:
-                    return True, event, sim
-            return False, None, 0.0
-
-        # Use embeddings
-        new_emb = self._encoder.encode(
-            [self._get_event_text(new_event)],
-            normalize_embeddings=True,
-        )[0]
-
-        existing_embs = self._generate_embeddings(existing_events)
-        if existing_embs is None:
-            return False, None, 0.0
-
-        similarities = np.dot(existing_embs, new_emb)
-        max_idx = np.argmax(similarities)
-        max_sim = float(similarities[max_idx])
-
-        if max_sim >= strict_threshold:
-            return True, existing_events[max_idx], max_sim
-
-        return False, None, max_sim
+    # P2: Removed is_duplicate_of_existing() - dead code, never called
 
     def find_matching_events_for_query(
         self,

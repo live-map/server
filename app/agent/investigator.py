@@ -6,12 +6,18 @@
 2. 필요한 정보를 수집
 3. 교차 검증
 4. 리포트 생성
+
+P2: Added LLM timeout support to prevent pipeline blocking.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
 from typing import Annotated, Literal
+
+# P2: LLM timeout constant (seconds)
+LLM_TIMEOUT_SECONDS = 60.0
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -208,12 +214,20 @@ SOURCES:
 SEARCH_STRATEGY:
 [Brief description of how to search - what keywords, in what order]"""
 
-        response = await self.llm_no_tools.ainvoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Create investigation plan for: {event}"),
-            ]
-        )
+        # P2: Added timeout to prevent blocking
+        try:
+            response = await asyncio.wait_for(
+                self.llm_no_tools.ainvoke(
+                    [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=f"Create investigation plan for: {event}"),
+                    ]
+                ),
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM timeout in _plan_node after {LLM_TIMEOUT_SECONDS}s")
+            return {**state, "status": "failed", "error": "LLM timeout in planning"}
 
         # 계획 파싱 및 저장
         plan = self._parse_plan(response.content)
@@ -288,7 +302,15 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
         messages = state.get("messages", [])
         messages.append(SystemMessage(content=system_prompt))
 
-        response = await self.llm.ainvoke(messages)
+        # P2: Added timeout to prevent blocking
+        try:
+            response = await asyncio.wait_for(
+                self.llm.ainvoke(messages),
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM timeout in _execute_node after {LLM_TIMEOUT_SECONDS}s")
+            return {**state, "status": "failed", "error": "LLM timeout in execution"}
 
         # 디버깅: LLM 응답 확인
         if hasattr(response, 'tool_calls') and response.tool_calls:
@@ -384,12 +406,20 @@ UNVERIFIED_CLAIMS:
 CONFLICTS:
 - [any conflicting information found]"""
 
-        response = await self.llm_no_tools.ainvoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content="Verify the collected information"),
-            ]
-        )
+        # P2: Added timeout to prevent blocking
+        try:
+            response = await asyncio.wait_for(
+                self.llm_no_tools.ainvoke(
+                    [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content="Verify the collected information"),
+                    ]
+                ),
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM timeout in _verify_node after {LLM_TIMEOUT_SECONDS}s")
+            return {**state, "status": "failed", "error": "LLM timeout in verification"}
 
         verified_facts = self._parse_verification(response.content)
         print(f"[VERIFIER] Found {len(verified_facts)} verified facts")
@@ -453,12 +483,20 @@ Create a professional news report with:
 
 Keep it factual and cite sources."""
 
-        response = await self.llm_no_tools.ainvoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content="Generate the final report"),
-            ]
-        )
+        # P2: Added timeout to prevent blocking
+        try:
+            response = await asyncio.wait_for(
+                self.llm_no_tools.ainvoke(
+                    [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content="Generate the final report"),
+                    ]
+                ),
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM timeout in _publish_node after {LLM_TIMEOUT_SECONDS}s")
+            return {**state, "status": "failed", "error": "LLM timeout in publishing"}
 
         print(f"[PUBLISHER] Generating final report...")
 

@@ -92,8 +92,7 @@ class SocialVelocityCalculator:
     def __init__(self):
         # Topic tracking: topic -> list of events with timestamps
         self.topic_events: dict[str, list[dict]] = {}
-        # Cache for velocity scores
-        self.velocity_cache: dict[str, VelocityScore] = {}
+        # P2: Removed velocity_cache - was defined but never used
         # Cleanup interval
         self.cache_ttl = timedelta(hours=6)
         # P0 Fix: Track events added for periodic cleanup

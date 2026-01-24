@@ -42,6 +42,73 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# P2: SEARCH ERROR TRACKING
+# =============================================================================
+# Tracks recent search errors to distinguish "no results" from "API failure"
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class SearchErrorType(Enum):
+    """Type of search error for better debugging."""
+    NONE = "none"
+    TIMEOUT = "timeout"
+    RATE_LIMIT = "rate_limit"
+    API_ERROR = "api_error"
+    NETWORK_ERROR = "network_error"
+
+
+@dataclass
+class SearchStats:
+    """Track search statistics for debugging."""
+    total_queries: int = 0
+    successful_queries: int = 0
+    failed_queries: int = 0
+    empty_results: int = 0
+    errors_by_type: dict = field(default_factory=dict)
+
+    def record_success(self, result_count: int):
+        self.total_queries += 1
+        self.successful_queries += 1
+        if result_count == 0:
+            self.empty_results += 1
+
+    def record_error(self, error_type: SearchErrorType, error_msg: str):
+        self.total_queries += 1
+        self.failed_queries += 1
+        type_name = error_type.value
+        if type_name not in self.errors_by_type:
+            self.errors_by_type[type_name] = []
+        # Keep last 10 errors per type
+        self.errors_by_type[type_name].append(error_msg[:100])
+        if len(self.errors_by_type[type_name]) > 10:
+            self.errors_by_type[type_name] = self.errors_by_type[type_name][-10:]
+
+
+# Global search stats tracker
+_search_stats: dict[str, SearchStats] = {}
+
+
+def get_search_stats(tool_name: str) -> SearchStats:
+    """Get search stats for a tool."""
+    if tool_name not in _search_stats:
+        _search_stats[tool_name] = SearchStats()
+    return _search_stats[tool_name]
+
+
+def get_all_search_stats() -> dict:
+    """Get all search stats for debugging."""
+    return {name: {
+        "total": stats.total_queries,
+        "success": stats.successful_queries,
+        "failed": stats.failed_queries,
+        "empty": stats.empty_results,
+        "error_types": list(stats.errors_by_type.keys()),
+    } for name, stats in _search_stats.items()}
+
+
+# =============================================================================
 # P1: SEARCH RESULT CACHING (15 min TTL)
 # =============================================================================
 
@@ -537,8 +604,14 @@ async def search_news_ddg(
         return results
 
     except Exception as e:
-        logger.error(f"DuckDuckGo News search error: {e}")
-        return []  # Return empty list on error
+        error_type = SearchErrorType.API_ERROR
+        if "timeout" in str(e).lower():
+            error_type = SearchErrorType.TIMEOUT
+        elif "rate" in str(e).lower() or "429" in str(e):
+            error_type = SearchErrorType.RATE_LIMIT
+        logger.error(f"DuckDuckGo News search error ({error_type.value}): {e}")
+        get_search_stats("ddg_news").record_error(error_type, str(e))
+        return []  # P2: Empty list but error is tracked
 
 
 @tool
@@ -604,8 +677,14 @@ async def search_web_free(query: str, max_results: int = 10, filter_old: bool = 
         return results
 
     except Exception as e:
-        logger.error(f"DuckDuckGo search error: {e}")
-        return []  # Return empty list on error
+        error_type = SearchErrorType.API_ERROR
+        if "timeout" in str(e).lower():
+            error_type = SearchErrorType.TIMEOUT
+        elif "rate" in str(e).lower() or "429" in str(e):
+            error_type = SearchErrorType.RATE_LIMIT
+        logger.error(f"DuckDuckGo search error ({error_type.value}): {e}")
+        get_search_stats("ddg_web").record_error(error_type, str(e))
+        return []  # P2: Empty list but error is tracked
 
 
 # =============================================================================
@@ -798,10 +877,15 @@ async def search_news_gdelt(
 
     except httpx.TimeoutException:
         logger.warning("GDELT request timed out")
-        return []
+        get_search_stats("gdelt").record_error(SearchErrorType.TIMEOUT, "Request timed out")
+        return []  # P2: Empty list but error is tracked
     except Exception as e:
-        logger.error(f"GDELT search error: {e}")
-        return []
+        error_type = SearchErrorType.API_ERROR
+        if "rate" in str(e).lower() or "429" in str(e):
+            error_type = SearchErrorType.RATE_LIMIT
+        logger.error(f"GDELT search error ({error_type.value}): {e}")
+        get_search_stats("gdelt").record_error(error_type, str(e))
+        return []  # P2: Empty list but error is tracked
 
 
 # =============================================================================
@@ -914,10 +998,15 @@ async def search_news_brave(
 
     except httpx.TimeoutException:
         logger.warning("Brave Search request timed out")
-        return []
+        get_search_stats("brave").record_error(SearchErrorType.TIMEOUT, "Request timed out")
+        return []  # P2: Empty list but error is tracked
     except Exception as e:
-        logger.error(f"Brave Search error: {e}")
-        return []
+        error_type = SearchErrorType.API_ERROR
+        if "rate" in str(e).lower() or "429" in str(e):
+            error_type = SearchErrorType.RATE_LIMIT
+        logger.error(f"Brave Search error ({error_type.value}): {e}")
+        get_search_stats("brave").record_error(error_type, str(e))
+        return []  # P2: Empty list but error is tracked
 
 
 # =============================================================================
