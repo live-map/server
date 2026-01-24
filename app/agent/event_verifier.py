@@ -80,6 +80,25 @@ NOT_EVENT_PATTERNS = [
     # 소설/픽션
     r"\b(novel|fiction|story|tale|book review)\b",
     r"\b(chapter|episode|season \d+)\b",
+
+    # ============================================
+    # 로컬 뉴스 / 교통사고 (방어선 1)
+    # ============================================
+    # Traffic accidents (not internationally significant)
+    r"\b(traffic accident|car crash|road accident|vehicle collision|car accident)\b",
+    r"\b(traffic jam|road closure|roadblock|traffic congestion)\b",
+    r"\b(fender bender|minor accident|single.?vehicle)\b",
+    r"\b(slip|slide|slid|skid|skidded).{0,20}(road|street|highway|promenade)\b",
+    r"\b(icy road|icy conditions|black ice|winter driving)\b",
+    r"\bno\s+(serious\s+)?injuries?\s+reported\b",
+
+    # German local news patterns
+    r"\b(rutschen|unfall|autobahn.?unfall|verkehrsunfall|glatteis)\b",
+    r"\b(niedersachsen|bremen|bayern|nordrhein.?westfalen).{0,30}(unfall|polizei)\b",
+
+    # Local authority mentions (without international context)
+    r"\b(local police|local authorities|regional police|city police)\b",
+    r"\b(local incident|local crime|petty crime|street crime)\b",
 ]
 
 # 컴파일된 패턴 (성능 최적화)
@@ -265,6 +284,14 @@ async def verify_event_with_llm(
 ZERO_SHOT_HIGH_CONFIDENCE = 0.8  # 이 이상이면 바로 결정
 ZERO_SHOT_LOW_CONFIDENCE = 0.5   # 이 이하면 LLM 검증
 
+# 낮은 신뢰도로도 거부할 레이블 (방어선 2)
+# "local news"는 0.15 이상이면 거부 (더 적극적인 필터링)
+REJECT_LABELS_STRICT = {
+    "local news": 0.15,
+    "local incident": 0.15,
+    "traffic news": 0.20,
+}
+
 
 async def verify_event_hybrid(
     text: str,
@@ -298,6 +325,16 @@ async def verify_event_hybrid(
     # Stage 2: Zero-shot 분류 (선택적)
     if use_zero_shot:
         is_intl, confidence, label = classify_with_zero_shot(text)
+
+        # 방어선 2: "local news" 등 특정 레이블은 낮은 신뢰도로도 거부
+        label_lower = label.lower() if label else ""
+        for reject_label, min_confidence in REJECT_LABELS_STRICT.items():
+            if reject_label in label_lower and confidence >= min_confidence:
+                logger.debug(
+                    f"[GATE0-ZEROSHOT] Strict reject: {label} ({confidence:.2f}) "
+                    f"[threshold={min_confidence}]"
+                )
+                return False, f"ZERO_SHOT_STRICT_REJECT: {label} ({confidence:.2f})"
 
         if is_intl is not None and confidence >= ZERO_SHOT_HIGH_CONFIDENCE:
             # 확신도 높으면 바로 결정

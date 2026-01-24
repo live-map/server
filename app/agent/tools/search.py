@@ -15,10 +15,11 @@ Priority-based search strategy (based on expert research):
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
+from dateutil.parser import parse as parse_date
 from langchain_core.tools import tool
 
 from app.agent.config import agent_settings
@@ -130,6 +131,73 @@ def _is_recent_url(url: str, max_age_days: int = 7) -> bool:
     return url_date >= cutoff
 
 
+def _parse_published_date(date_str: str) -> datetime | None:
+    """
+    Parse published date from API response.
+
+    Handles various formats:
+    - ISO 8601: "2026-01-23T15:30:00Z"
+    - Human readable: "Jan 23, 2026"
+    - Relative: "2 hours ago" (via dateutil fuzzy parsing)
+    - GDELT seendate: "20260123T153000Z"
+
+    Returns:
+        datetime object if parsing succeeds, None otherwise.
+    """
+    if not date_str:
+        return None
+    try:
+        return parse_date(date_str, fuzzy=True)
+    except Exception:
+        return None
+
+
+def _is_evidence_recent(doc: dict, max_age_days: int = 30) -> bool:
+    """
+    Check if evidence document is recent using 3-layer validation.
+
+    Layer 1: API published date field (GDELT seendate, DDG date)
+    Layer 2: URL date pattern extraction
+    Layer 3: No date info → REJECT (conservative approach)
+
+    Args:
+        doc: Evidence document with url, published fields
+        max_age_days: Maximum age in days (default 30)
+
+    Returns:
+        True if document is recent, False otherwise
+    """
+    url = doc.get("url", "")
+
+    # Layer 1: Check API published date field
+    published = doc.get("published", "")
+    pub_date = _parse_published_date(published)
+
+    if pub_date:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        if pub_date.tzinfo is None:
+            pub_date = pub_date.replace(tzinfo=timezone.utc)
+        is_recent = pub_date >= cutoff
+        if not is_recent:
+            logger.debug(f"Rejected by published date ({published}): {url[:60]}...")
+        return is_recent
+
+    # Layer 2: Extract date from URL pattern
+    url_date = _extract_date_from_url(url)
+
+    if url_date:
+        cutoff = datetime.now() - timedelta(days=max_age_days)
+        is_recent = url_date >= cutoff
+        if not is_recent:
+            logger.debug(f"Rejected by URL date: {url[:60]}...")
+        return is_recent
+
+    # Layer 3: No date info → REJECT (conservative approach)
+    # This prevents old articles without dates from being used as evidence
+    logger.warning(f"No date info found - REJECTING: {url[:60]}...")
+    return False
+
+
 # =============================================================================
 # FREE SEARCH TOOLS (Use these first!)
 # =============================================================================
@@ -157,7 +225,7 @@ async def search_news_ddg(query: str, max_results: int = 15, max_age_days: int =
         results = []
         with DDGS() as ddgs:
             # Use news() instead of text() for recent news only
-            for r in ddgs.news(query, max_results=max_results):
+            for r in ddgs.news(query, max_results=max_results * 2):  # Fetch more to account for filtering
                 url = r.get("url", r.get("link", ""))
 
                 # Validate URL
@@ -170,20 +238,24 @@ async def search_news_ddg(query: str, max_results: int = 15, max_age_days: int =
                     logger.debug(f"Skipping excluded domain: {url}")
                     continue
 
-                # Filter by URL date if present
-                if not _is_recent_url(url, max_age_days=max_age_days):
-                    logger.debug(f"Skipping old URL: {url}")
-                    continue
-
                 domain = _extract_domain(url)
-                results.append({
+                doc = {
                     "title": r.get("title", ""),
                     "url": url,
                     "content": r.get("body", "")[:500],
                     "source": domain,
                     "source_name": f"DDGNews:{domain}",
-                    "published": r.get("date", ""),
-                })
+                    "published": r.get("date", ""),  # DDG News provides date field
+                }
+
+                # 3-Layer date validation (published date → URL date → reject)
+                if not _is_evidence_recent(doc, max_age_days=max_age_days):
+                    continue
+
+                results.append(doc)
+
+                if len(results) >= max_results:
+                    break
 
         logger.info(f"DuckDuckGo News: {len(results)} articles for '{query[:30]}...'")
         return results
@@ -217,7 +289,7 @@ async def search_web_free(query: str, max_results: int = 10, filter_old: bool = 
 
         results = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results * 2):  # Fetch more to account for filtering
+            for r in ddgs.text(query, max_results=max_results * 3):  # Fetch more to account for filtering
                 # New ddgs package uses 'link' instead of 'href'
                 url = r.get("link", r.get("href", ""))
 
@@ -231,19 +303,23 @@ async def search_web_free(query: str, max_results: int = 10, filter_old: bool = 
                     logger.debug(f"Skipping excluded domain: {url}")
                     continue
 
-                # Filter by URL date if present
-                if filter_old and not _is_recent_url(url, max_age_days=30):
-                    logger.debug(f"Skipping old URL: {url}")
-                    continue
-
                 domain = _extract_domain(url)
-                results.append({
+                doc = {
                     "title": r.get("title", ""),
                     "url": url,
                     "content": r.get("body", "")[:500],
                     "source": domain,
                     "source_name": f"DuckDuckGo:{domain}",
-                })
+                    "published": "",  # DDG text search doesn't provide date
+                }
+
+                # 3-Layer date validation when filter_old is enabled
+                # Note: DDG web search doesn't have published date, so this will
+                # rely on URL patterns or reject (conservative approach)
+                if filter_old and not _is_evidence_recent(doc, max_age_days=30):
+                    continue
+
+                results.append(doc)
 
                 if len(results) >= max_results:
                     break
@@ -289,7 +365,7 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
                     "api_key": agent_settings.tavily_api_key,
                     "query": query,
                     "search_depth": "advanced",
-                    "max_results": max_results,
+                    "max_results": max_results * 2,  # Fetch more to account for filtering
                     "include_answer": False,
                 },
             )
@@ -302,17 +378,33 @@ async def search_web(query: str, max_results: int = 10) -> list[dict]:
 
                 # Validate URL
                 if not _is_valid_url(url):
+                    logger.debug(f"Skipping invalid URL: {url}")
+                    continue
+
+                # Filter out excluded domains (Wikipedia, etc.)
+                if _is_excluded_domain(url):
+                    logger.debug(f"Skipping excluded domain: {url}")
                     continue
 
                 domain = _extract_domain(url)
-                results.append({
+                doc = {
                     "title": r.get("title", ""),
                     "url": url,
                     "content": r.get("content", "")[:500],
                     "source": domain,
                     "source_name": f"Tavily:{domain}",
                     "score": r.get("score", 0),
-                })
+                    "published": r.get("published_date", ""),  # Tavily may provide this
+                }
+
+                # 3-Layer date validation (published date → URL date → reject)
+                if not _is_evidence_recent(doc, max_age_days=30):
+                    continue
+
+                results.append(doc)
+
+                if len(results) >= max_results:
+                    break
 
             logger.info(f"Tavily: {len(results)} results for '{query[:30]}...'")
             return results
@@ -355,7 +447,7 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
                 params={
                     "query": query,
                     "mode": "artlist",
-                    "maxrecords": str(max_results),
+                    "maxrecords": str(max_results * 2),  # Fetch more to account for filtering
                     "format": "json",
                     "timespan": timespan,
                     "sort": "datedesc",
@@ -387,17 +479,31 @@ async def search_news_gdelt(query: str, timespan: str = "24h", max_results: int 
                 if not _is_valid_url(url):
                     continue
 
+                # Filter out excluded domains (Wikipedia, etc.)
+                if _is_excluded_domain(url):
+                    logger.debug(f"Skipping excluded domain: {url}")
+                    continue
+
                 domain = _extract_domain(url)
-                results.append({
+                doc = {
                     "title": art.get("title", ""),
                     "url": url,
                     "source": domain,
                     "source_name": f"GDELT:{domain}",
                     "content": art.get("title", ""),  # GDELT은 content가 없어서 title 사용
-                    "published": art.get("seendate", ""),
+                    "published": art.get("seendate", ""),  # GDELT seendate field
                     "language": art.get("language", ""),
                     "country": art.get("sourcecountry", ""),
-                })
+                }
+
+                # 3-Layer date validation (seendate → URL date → reject)
+                if not _is_evidence_recent(doc, max_age_days=30):
+                    continue
+
+                results.append(doc)
+
+                if len(results) >= max_results:
+                    break
 
             logger.info(f"GDELT: {len(results)} articles for '{query[:30]}...'")
             return results

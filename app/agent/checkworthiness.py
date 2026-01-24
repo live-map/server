@@ -19,6 +19,7 @@ class RejectionReason(Enum):
     BACKGROUND = "background"            # 일반 배경/역사
     PROMOTIONAL = "promotional"          # 광고/홍보
     HUMAN_INTEREST = "human_interest"    # 인물 특집/미담 기사
+    LOCAL_INCIDENT = "local_incident"    # 로컬 사건 (교통사고, 지역 범죄 등)
     NONE = "none"                        # 거부 사유 없음
 
 
@@ -89,12 +90,79 @@ HUMAN_INTEREST_PATTERNS = [
     r"\b(local|Hambleton|a \w+ man|a \w+ woman)\b.*\b(driver|volunteer|worker)\b",
 ]
 
+# ============================================
+# 로컬 사건 패턴 (방어선 3)
+# ============================================
+LOCAL_INCIDENT_PATTERNS = [
+    # Traffic/Road incidents
+    r"\b(traffic|road|highway|street)\s+(accident|crash|collision|incident|closure)\b",
+    r"\b(car|truck|vehicle|bus|lorry|laster)\s+(crash|accident|collision|wreck)\b",
+    r"\b(slid|slipped|skidded|lost\s+control|veered|rutschen)\b",
+
+    # Local authority mentions (without international context)
+    r"\b(local|regional|city|town|county)\s+(police|authorities|fire|emergency)\b",
+    r"\bpolizeiauto\b",  # German: police car
+
+    # Minor incident indicators
+    r"\b(no\s+(?:serious\s+)?injuries?|minor\s+injuries?|non.?fatal)\b",
+    r"\b(weather.?related|icy|snow|rain|fog|glatteis).{0,30}(accident|crash|incident)\b",
+
+    # German local news patterns
+    r"\b(niedersachsen|bremen|bayern|nordrhein.?westfalen|hamburg|berlin).{0,30}(unfall|polizei)\b",
+    r"\b(promenade|autobahn)\s+(unfall|accident|crash)\b",
+]
+
+# ============================================
+# 국제적 중요성 지표 (방어선 4)
+# 로컬 사건이라도 이 패턴이 있으면 통과
+# ============================================
+SIGNIFICANCE_INDICATORS = [
+    # Mass casualties (10+) - both "47 killed" and "kills 47" formats
+    r"\b(\d{2,}|dozens|hundreds|thousands)\s+(killed|dead|casualties|injured|died)\b",
+    r"\b(kills?|killed)\s+(\d{2,}|dozens|hundreds|thousands)\b",
+    r"\b(mass\s+casualty|multiple\s+fatalities|death\s+toll|body\s+count)\b",
+    r"\b(massacre|mass\s+shooting|terror)\b",
+
+    # International involvement
+    r"\b(international|cross.?border|multiple\s+countries|foreign)\b",
+    r"\b(embassy|consulate|diplomat|foreign\s+national)\b",
+    r"\b(UN|NATO|EU|G7|G20)\s+(response|statement|meeting)\b",
+
+    # Government/Official response
+    r"\b(president|prime\s+minister|chancellor|minister)\s+(respond|statement|declare|condemn)\b",
+    r"\b(state\s+of\s+emergency|martial\s+law|national\s+security)\b",
+    r"\b(federal|national)\s+(response|investigation|alert)\b",
+
+    # Critical infrastructure
+    r"\b(airport|seaport|border).{0,20}(closed?|shutdown|evacuate)\b",
+    r"\b(power\s+grid|nuclear|dam).{0,20}(attack|failure|breach|collapse)\b",
+    r"\b(cyber.?attack|infrastructure\s+attack)\b",
+]
+
+
+def check_significance(text: str) -> tuple[bool, int, list[str]]:
+    """
+    Check if event has international significance.
+
+    Args:
+        text: Text to check
+
+    Returns:
+        (is_significant, indicator_count, matched_patterns)
+    """
+    matched = []
+    for pattern in SIGNIFICANCE_INDICATORS:
+        if re.search(pattern, text, re.IGNORECASE):
+            matched.append(pattern)
+    return len(matched) >= 1, len(matched), matched
+
 
 def check_worthiness(
     text: str,
     entertainment_threshold: int = 2,
     speculation_threshold: int = 2,
     human_interest_threshold: int = 3,
+    local_incident_threshold: int = 2,
 ) -> CheckWorthinessResult:
     """
     텍스트의 check-worthiness 평가
@@ -104,6 +172,7 @@ def check_worthiness(
         entertainment_threshold: 연예 패턴 매칭 임계값
         speculation_threshold: 추측 패턴 매칭 임계값
         human_interest_threshold: 인물 특집/미담 패턴 매칭 임계값
+        local_incident_threshold: 로컬 사건 패턴 매칭 임계값
 
     Returns:
         CheckWorthinessResult with is_checkworthy, rejection_reason, confidence
@@ -161,6 +230,39 @@ def check_worthiness(
             confidence=0.85,
             matched_patterns=human_interest_matches
         )
+
+    # ============================================
+    # 로컬 사건 패턴 체크 (방어선 3) + Significance Override (방어선 4)
+    # ============================================
+    local_incident_matches = []
+    for pattern in LOCAL_INCIDENT_PATTERNS:
+        if re.search(pattern, text, re.I):  # case insensitive
+            local_incident_matches.append(f"local_incident:{pattern}")
+
+    if len(local_incident_matches) >= local_incident_threshold:
+        # 로컬 사건 패턴 매칭됨 - significance 체크
+        is_significant, sig_count, sig_patterns = check_significance(text)
+
+        if is_significant:
+            # Significance indicator가 있으면 통과 (대형 사고 등)
+            # 로그용으로 패턴 정보만 반환
+            return CheckWorthinessResult(
+                is_checkworthy=True,
+                rejection_reason=RejectionReason.NONE,
+                confidence=0.8,
+                matched_patterns=[
+                    f"local_patterns:{len(local_incident_matches)}",
+                    f"significance_override:{sig_count}",
+                ]
+            )
+        else:
+            # 로컬 사건이고 significance 없음 - 거부
+            return CheckWorthinessResult(
+                is_checkworthy=False,
+                rejection_reason=RejectionReason.LOCAL_INCIDENT,
+                confidence=0.85,
+                matched_patterns=local_incident_matches
+            )
 
     return CheckWorthinessResult(
         is_checkworthy=True,

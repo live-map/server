@@ -13,8 +13,10 @@ Score Range: 0.0 - 0.99
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 from .triggers.base import SourceTier
 
@@ -69,6 +71,10 @@ class ConfidenceResult:
     # Two-Source Rule
     two_source_satisfied: bool = False
 
+    # Domain diversity (new)
+    unique_domains: int = 0
+    domain_diverse: bool = False
+
     def to_dict(self) -> dict:
         return {
             "score": round(self.score, 3),
@@ -83,6 +89,10 @@ class ConfidenceResult:
             "sources": self.sources,
             "tier_types": self.tier_types,
             "two_source_satisfied": self.two_source_satisfied,
+            "domain_diversity": {
+                "unique_domains": self.unique_domains,
+                "domain_diverse": self.domain_diverse,
+            },
         }
 
 
@@ -171,8 +181,19 @@ class MultiSourceConfidenceScorer:
         level = self._determine_level(final_score)
         recommendation = self._determine_recommendation(final_score, unique_sources)
 
-        # 7. Check Two-Source Rule
+        # 7. Check Two-Source Rule (with domain diversity)
         two_source_satisfied = self._check_two_source_rule(unique_sources)
+
+        # 8. Check domain diversity
+        domain_diverse, unique_domain_count = self.check_domain_diversity(unique_sources)
+
+        # Log warning if sources are from the same domain
+        if source_count >= 2 and not domain_diverse:
+            logger.warning(
+                f"Sources lack domain diversity: {source_count} sources but only "
+                f"{unique_domain_count} unique domain(s). Two-Source Rule may not "
+                "be truly satisfied."
+            )
 
         return ConfidenceResult(
             score=final_score,
@@ -185,6 +206,8 @@ class MultiSourceConfidenceScorer:
             sources=unique_sources,
             tier_types=tier_types,
             two_source_satisfied=two_source_satisfied,
+            unique_domains=unique_domain_count,
+            domain_diverse=domain_diverse,
         )
 
     def _determine_level(self, score: float) -> ConfidenceLevel:
@@ -222,21 +245,116 @@ class MultiSourceConfidenceScorer:
         else:
             return PublishRecommendation.DO_NOT_PUBLISH
 
-    def _check_two_source_rule(self, sources: list[dict]) -> bool:
+    def _check_two_source_rule(
+        self,
+        sources: list[dict],
+        require_domain_diversity: bool = True,
+    ) -> bool:
         """
         Check if Two-Source Rule is satisfied.
 
         The rule is satisfied if:
-        1. At least 2 independent sources, OR
+        1. At least 2 independent sources from DIFFERENT domains, OR
         2. Single Tier-1 government source (USGS, NOAA, etc.)
+
+        Args:
+            sources: List of source dicts
+            require_domain_diversity: If True, requires sources from different domains
         """
         # Single Tier-1 govt source is sufficient
         if len(sources) == 1:
             tier = sources[0].get("tier", "")
             return tier == SourceTier.TIER1_GOVT.value
 
+        # Need at least 2 sources
+        if len(sources) < 2:
+            return False
+
+        # Check domain diversity if required
+        if require_domain_diversity:
+            unique_domains = self._get_unique_domains(sources)
+            return len(unique_domains) >= 2
+
         # Two or more independent sources
-        return len(sources) >= 2
+        return True
+
+    def _get_unique_domains(self, sources: list[dict]) -> set[str]:
+        """
+        Extract unique domains from sources.
+
+        Handles various source formats:
+        - Sources with 'url' key
+        - Sources with 'domain' key
+        - Sources with 'name' key (fallback)
+        """
+        domains = set()
+
+        for source in sources:
+            domain = self._extract_domain(source)
+            if domain:
+                domains.add(domain)
+
+        return domains
+
+    def _extract_domain(self, source: dict) -> str | None:
+        """
+        Extract domain from a source dict.
+
+        Returns normalized domain (without www prefix).
+        """
+        # Try URL first
+        url = source.get("url", "")
+        if url:
+            try:
+                parsed = urlparse(url)
+                domain = parsed.netloc.lower()
+                # Remove www prefix
+                if domain.startswith("www."):
+                    domain = domain[4:]
+                # Group related domains (e.g., bbc.co.uk, bbc.com -> bbc)
+                domain = self._normalize_domain(domain)
+                return domain
+            except Exception:
+                pass
+
+        # Try domain key
+        if "domain" in source:
+            return self._normalize_domain(source["domain"].lower())
+
+        # Fall back to name (treat each name as unique domain)
+        name = source.get("name", "")
+        if name:
+            return name.lower()
+
+        return None
+
+    def _normalize_domain(self, domain: str) -> str:
+        """
+        Normalize domain to detect same-source articles.
+
+        Groups together:
+        - bbc.co.uk, bbc.com -> bbc
+        - reuters.com -> reuters
+        - nytimes.com -> nytimes
+        """
+        # Remove common TLDs
+        for suffix in [".com", ".co.uk", ".org", ".net", ".io", ".gov"]:
+            if domain.endswith(suffix):
+                domain = domain[:-len(suffix)]
+                break
+
+        return domain
+
+    def check_domain_diversity(self, sources: list[dict]) -> tuple[bool, int]:
+        """
+        Check if sources come from diverse domains.
+
+        Returns:
+            Tuple of (is_diverse, unique_domain_count)
+        """
+        unique_domains = self._get_unique_domains(sources)
+        is_diverse = len(unique_domains) >= 2
+        return is_diverse, len(unique_domains)
 
     def is_publishable(self, sources: list[dict[str, str]]) -> bool:
         """Quick check if sources meet publication threshold"""

@@ -15,6 +15,7 @@
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Callable
 
@@ -27,6 +28,7 @@ from .event_verifier import verify_event_hybrid
 from .specificity import check_specificity
 from .triggers import TriggerEvent, TriggerManager, TriggerSource
 from .triggers.base import SourceTier, SOURCE_TIER_MAP
+from .triggers.date_extractor import extract_date_from_content, contains_past_year
 from .significance import (
     calculate_significance,
     filter_significant_events,
@@ -38,6 +40,59 @@ from .cross_source_matcher import CrossSourceMatcher, MatchedEvent
 from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult, PublishRecommendation
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# 스캔 요약 로깅 (야간 디버깅용)
+# ============================================
+def _log_scan_summary(
+    scan_start: datetime,
+    filter_stats: dict,
+    published_events: list[dict],
+) -> None:
+    """Log scan cycle summary for overnight debugging.
+
+    Outputs:
+    - FILTER-STATS: Shows how many events passed/rejected at each filter stage
+    - SCAN-SUMMARY: Shows published articles with confidence scores
+    """
+    scan_duration = (datetime.utcnow() - scan_start).total_seconds()
+
+    # Filter stats line
+    logger.info(
+        f"[FILTER-STATS] initial={filter_stats['initial']} → "
+        f"recency={filter_stats['recency_rejected']} rejected → "
+        f"content-date={filter_stats['content_date_rejected']} rejected → "
+        f"confidence={filter_stats['confidence_passed']} passed → "
+        f"gates={filter_stats['gate0_rejected'] + filter_stats['gate1_rejected'] + filter_stats['gate2_rejected']} rejected → "
+        f"published={filter_stats['final_published']}"
+    )
+
+    # Detailed summary block
+    summary_lines = [
+        "",
+        "=" * 60,
+        f"[SCAN-SUMMARY] {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"  Duration: {scan_duration:.1f}s",
+        f"  Published: {len(published_events)} articles",
+    ]
+
+    if published_events:
+        for e in published_events[:5]:  # Max 5 shown
+            conf = e.get("confidence_score", 0.0)
+            sources = e.get("source_count", 1)
+            desc = e.get("description", "N/A")[:60]
+            cat = e.get("category", "other")
+            summary_lines.append(
+                f"    ✓ [{cat}] {desc}... (conf={conf:.2f}, sources={sources})"
+            )
+        if len(published_events) > 5:
+            summary_lines.append(f"    ... and {len(published_events) - 5} more")
+    else:
+        summary_lines.append("    (no articles published this cycle)")
+
+    summary_lines.append("=" * 60)
+    logger.info("\n".join(summary_lines))
 
 
 # ============================================
@@ -89,6 +144,28 @@ INTERNATIONAL_AFFAIRS_KEYWORDS = {
         "peace talks", "agreement", "accord",
     ],
 }
+
+
+def _keyword_matches_word_boundary(text: str, keywords: list[str]) -> bool:
+    """
+    단어 경계를 사용한 정확한 키워드 매칭.
+
+    "Warsaw summit" + ["war"] → False (부분문자열)
+    "Ukraine war" + ["war"] → True (완전한 단어)
+
+    Args:
+        text: 검색 대상 텍스트 (이미 lowercase 처리된 것으로 가정)
+        keywords: 매칭할 키워드 목록
+
+    Returns:
+        키워드가 단어 경계에서 매칭되면 True
+    """
+    for kw in keywords:
+        # \b = word boundary, re.IGNORECASE for safety
+        pattern = rf'\b{re.escape(kw)}\b'
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
 
 
 class MultiSourceScanner:
@@ -251,15 +328,32 @@ class MultiSourceScanner:
         Returns:
             감지된 중요 사건 목록
         """
-        logger.info("Starting multi-source scan...")
-        self.last_scan = datetime.utcnow()
+        scan_start = datetime.utcnow()
+        logger.info("[SCAN-START] Initiating multi-source scan...")
+        self.last_scan = scan_start
+
+        # Filter statistics for overnight debugging
+        filter_stats = {
+            "initial": 0,
+            "recency_passed": 0,
+            "recency_rejected": 0,
+            "content_date_rejected": 0,
+            "confidence_passed": 0,
+            "gate0_rejected": 0,
+            "gate1_rejected": 0,
+            "gate2_rejected": 0,
+            "final_published": 0,
+        }
 
         # 모든 트리거에서 병렬 스캔
         events = await self.trigger_manager.scan_all()
 
         if not events:
             logger.info("No events detected")
+            _log_scan_summary(scan_start, filter_stats, [])
             return []
+
+        filter_stats["initial"] = len(events)
 
         # ============================================
         # Recency Filter - Reject old articles
@@ -267,34 +361,81 @@ class MultiSourceScanner:
         max_age_hours = agent_settings.max_event_age_hours
         current_time = datetime.utcnow()
         recent_events = []
-        rejected_count = 0
 
         for event in events:
             age_hours = (current_time - event.detected_at).total_seconds() / 3600
             if age_hours <= max_age_hours:
                 recent_events.append(event)
+                filter_stats["recency_passed"] += 1
             else:
-                rejected_count += 1
+                filter_stats["recency_rejected"] += 1
                 logger.warning(
                     f"[RECENCY-FILTER] Rejected old event (age={age_hours:.1f}h): "
                     f"{event.title[:50]}..."
                 )
 
-        if rejected_count > 0:
+        if filter_stats["recency_rejected"] > 0:
             logger.info(
-                f"Recency filter: {len(recent_events)}/{len(events)} events within "
-                f"{max_age_hours}h window ({rejected_count} rejected)"
+                f"Recency filter: {len(recent_events)}/{filter_stats['initial']} events within "
+                f"{max_age_hours}h window ({filter_stats['recency_rejected']} rejected)"
             )
 
         events = recent_events
 
         if not events:
             logger.info("No recent events after recency filter")
+            _log_scan_summary(scan_start, filter_stats, [])
+            return []
+
+        # ============================================
+        # Content-based Past Year Filter (2차 검증)
+        # ============================================
+        current_year = current_time.year
+        content_verified_events = []
+
+        for event in events:
+            # Tier-1 정부 소스 (USGS, NOAA)는 검증 면제
+            source_tier = SOURCE_TIER_MAP.get(event.source, SourceTier.TIER2_NEWS)
+            if source_tier == SourceTier.TIER1_GOVT:
+                content_verified_events.append(event)
+                continue
+
+            # 콘텐츠에서 과거 연도 감지
+            full_text = f"{event.title} {event.content or ''}"
+            has_past_year, past_year = contains_past_year(full_text, current_year)
+
+            if has_past_year:
+                filter_stats["content_date_rejected"] += 1
+                logger.warning(
+                    f"[CONTENT-DATE-REJECT] Content mentions past year ({past_year}): "
+                    f"{event.title[:50]}..."
+                )
+                continue
+
+            content_verified_events.append(event)
+
+        if filter_stats["content_date_rejected"] > 0:
+            logger.info(
+                f"Content date filter: {len(content_verified_events)}/{len(events)} events passed "
+                f"({filter_stats['content_date_rejected']} rejected for mentioning past years)"
+            )
+
+        events = content_verified_events
+
+        if not events:
+            logger.info("No events after content date filter")
+            _log_scan_summary(scan_start, filter_stats, [])
             return []
 
         # LLM으로 최종 분류 및 그룹화
-        significant_events = await self._classify_and_group(events)
+        significant_events = await self._classify_and_group(events, filter_stats)
         logger.info(f"Significant events: {len(significant_events)}")
+
+        # Update final published count
+        filter_stats["final_published"] = len(significant_events)
+
+        # Log scan summary for overnight debugging
+        _log_scan_summary(scan_start, filter_stats, significant_events)
 
         # 콜백 호출
         for event in significant_events:
@@ -306,7 +447,11 @@ class MultiSourceScanner:
 
         return significant_events
 
-    async def _classify_and_group(self, events: list[TriggerEvent]) -> list[dict]:
+    async def _classify_and_group(
+        self,
+        events: list[TriggerEvent],
+        filter_stats: dict | None = None,
+    ) -> list[dict]:
         """
         이벤트 분류 및 그룹화 (v4: 멀티소스 교차검증 + Two-Source Rule)
 
@@ -315,9 +460,22 @@ class MultiSourceScanner:
         3. ConfidenceScorer로 신뢰도 계산 + Two-Source Rule 적용
         4. 발행 가능 이벤트에 대해 Content Gates 적용
         5. 최종 significance 점수 계산
+
+        Args:
+            events: List of trigger events to classify
+            filter_stats: Optional dict to track filter statistics for logging
         """
         if not events:
             return []
+
+        # Initialize filter_stats if not provided
+        if filter_stats is None:
+            filter_stats = {
+                "confidence_passed": 0,
+                "gate0_rejected": 0,
+                "gate1_rejected": 0,
+                "gate2_rejected": 0,
+            }
 
         # ============================================
         # Step 1: Tier-1 정부 소스 분리 (USGS, NOAA는 신뢰도 0.99)
@@ -394,6 +552,7 @@ class MultiSourceScanner:
                     "is_tier1_govt": False,
                 })
 
+        filter_stats["confidence_passed"] = len(publishable_events)
         logger.info(
             f"Confidence filter: {len(publishable_events)} events passed "
             f"(threshold={agent_settings.min_confidence_score})"
@@ -408,7 +567,6 @@ class MultiSourceScanner:
         # ============================================
         if agent_settings.event_verification_enabled:
             verified_events = []
-            rejected_count = 0
 
             for item in publishable_events:
                 event = item["event"]
@@ -431,7 +589,7 @@ class MultiSourceScanner:
                 if is_event:
                     verified_events.append(item)
                 else:
-                    rejected_count += 1
+                    filter_stats["gate0_rejected"] += 1
                     if agent_settings.log_gate_rejections:
                         logger.info(
                             f"[GATE0-REJECT] {reason}: {event.title[:50]}..."
@@ -439,7 +597,7 @@ class MultiSourceScanner:
 
             logger.info(
                 f"Event verification (Gate 0): {len(verified_events)}/{len(publishable_events)} passed "
-                f"({rejected_count} rejected)"
+                f"({filter_stats['gate0_rejected']} rejected)"
             )
             publishable_events = verified_events
 
@@ -467,6 +625,7 @@ class MultiSourceScanner:
                         human_interest_threshold=agent_settings.human_interest_pattern_threshold,
                     )
                     if not cw_result.is_checkworthy:
+                        filter_stats["gate1_rejected"] += 1
                         if agent_settings.log_gate_rejections:
                             logger.info(
                                 f"[GATE1-REJECT] {cw_result.rejection_reason.value}: "
@@ -480,6 +639,7 @@ class MultiSourceScanner:
             if agent_settings.specificity_enabled and is_english and not item["is_tier1_govt"]:
                 spec_result = check_specificity(text, min_score=agent_settings.min_specificity_score)
                 if not spec_result.is_specific:
+                    filter_stats["gate2_rejected"] += 1
                     if agent_settings.log_gate_rejections:
                         logger.info(
                             f"[GATE2-REJECT] Low specificity ({spec_result.score:.2f}): "
@@ -504,6 +664,15 @@ class MultiSourceScanner:
         for item in gate_passed:
             event = item["event"]
             category = self._infer_category_from_event(event)
+
+            # 방어선 5: 키워드 매칭이 실패해서 "other"가 나오면 발행하지 않음
+            # 국제 정세 키워드가 하나도 매칭되지 않은 기사는 로컬 뉴스일 가능성 높음
+            if category == "other":
+                logger.info(
+                    f"[CATEGORY-REJECT] No international affairs keywords matched: "
+                    f"{event.title[:50]}..."
+                )
+                continue  # Skip - not international affairs
 
             # 카테고리별 제한 적용
             current_count = category_counts.get(category, 0)
@@ -643,16 +812,17 @@ class MultiSourceScanner:
             return "natural_disaster"
 
         # 국제 정세 키워드 매핑 기반 분류 (우선순위 순)
+        # 단어 경계 사용하여 "Warsaw"가 "war"로 분류되는 문제 방지
         for category, keywords in INTERNATIONAL_AFFAIRS_KEYWORDS.items():
-            if any(kw in text for kw in keywords):
+            if _keyword_matches_word_boundary(text, keywords):
                 return category
 
-        # 기타 카테고리 (국제 정세 외)
-        if any(kw in text for kw in ["earthquake", "tsunami", "flood", "hurricane", "wildfire", "tornado"]):
+        # 기타 카테고리 (국제 정세 외) - 단어 경계 매칭 사용
+        if _keyword_matches_word_boundary(text, ["earthquake", "tsunami", "flood", "hurricane", "wildfire", "tornado"]):
             return "natural_disaster"
-        if any(kw in text for kw in ["protest", "demonstration", "riot", "rally"]):
+        if _keyword_matches_word_boundary(text, ["protest", "demonstration", "riot", "rally"]):
             return "protest"
-        if any(kw in text for kw in ["violence", "killed", "casualties", "shooting"]):
+        if _keyword_matches_word_boundary(text, ["violence", "killed", "casualties", "shooting"]):
             return "violence"
 
         return "other"
@@ -742,20 +912,20 @@ class MultiSourceScanner:
         return results
 
     def _infer_category(self, event_dict: dict, score: SignificanceScore = None) -> str:
-        """키워드 기반 카테고리 추론 (dict용)"""
+        """키워드 기반 카테고리 추론 (dict용) - 단어 경계 매칭 사용"""
         text = f"{event_dict['title']} {event_dict.get('content', '')}".lower()
 
-        if any(kw in text for kw in ["earthquake", "tsunami", "flood", "hurricane"]):
+        if _keyword_matches_word_boundary(text, ["earthquake", "tsunami", "flood", "hurricane"]):
             return "natural_disaster"
-        if any(kw in text for kw in ["war", "invasion", "airstrike", "troops"]):
+        if _keyword_matches_word_boundary(text, ["war", "invasion", "airstrike", "troops"]):
             return "war"
-        if any(kw in text for kw in ["terrorist", "bombing", "hostage"]):
+        if _keyword_matches_word_boundary(text, ["terrorist", "bombing", "hostage"]):
             return "terrorism"
-        if any(kw in text for kw in ["protest", "demonstration", "riot"]):
+        if _keyword_matches_word_boundary(text, ["protest", "demonstration", "riot"]):
             return "protest"
-        if any(kw in text for kw in ["military", "army", "navy", "air force"]):
+        if _keyword_matches_word_boundary(text, ["military", "army", "navy", "air force"]):
             return "military"
-        if any(kw in text for kw in ["violence", "killed", "casualties"]):
+        if _keyword_matches_word_boundary(text, ["violence", "killed", "casualties"]):
             return "violence"
         return "other"
 

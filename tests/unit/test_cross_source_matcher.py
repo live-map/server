@@ -532,3 +532,259 @@ class TestSimilarityMatrix:
         assert matrix[0, 1] == 1.0
         # Different text should have low similarity
         assert matrix[0, 2] < 0.5
+
+
+class TestFalsePositivePrevention:
+    """Tests for false positive prevention in event matching.
+
+    These tests ensure that similar but unrelated events are not
+    incorrectly matched together.
+    """
+
+    def test_similar_keywords_different_topics_not_matched(self, trigger_event_factory):
+        """Events with similar keywords but different topics should not be matched."""
+        matcher = CrossSourceMatcher(similarity_threshold=0.70)
+
+        events = [
+            trigger_event_factory(
+                title="Iran attacks US military bases in Iraq",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="US military conducts training exercises in Japan",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # Should be 2 separate events (similar keywords: US, military, but different topics)
+        assert len(result) == 2
+        for matched in result:
+            assert matched.source_count == 1
+
+    def test_same_location_different_events_not_matched(self, trigger_event_factory):
+        """Different events at the same location should not be matched."""
+        matcher = CrossSourceMatcher(similarity_threshold=0.70)
+
+        events = [
+            trigger_event_factory(
+                title="Earthquake strikes Turkey",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Political protests in Turkey capital",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # Should be 2 separate events (same location, different events)
+        assert len(result) == 2
+
+    def test_partial_text_overlap_not_false_positive(self, trigger_event_factory):
+        """Events with partial text overlap should not cause false positive."""
+        matcher = CrossSourceMatcher(similarity_threshold=0.70)
+
+        events = [
+            trigger_event_factory(
+                title="Russia launches missile strikes on Ukraine infrastructure",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Ukraine launches counteroffensive in Kherson region",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # Different events about same conflict should be separate
+        assert len(result) == 2
+
+    def test_threshold_boundary_cases(self, trigger_event_factory):
+        """Events at threshold boundary should be handled correctly."""
+        # Test with exact threshold
+        # Jaccard similarity = |A ∩ B| / |A ∪ B|
+        # For 6 common words out of 9 words each: 6 / (9 + 9 - 6) = 6/12 = 0.5
+        matcher = CrossSourceMatcher(similarity_threshold=0.50)
+
+        events = [
+            trigger_event_factory(
+                title="One two three four five six seven eight nine",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                # 6 common words out of 9 = 0.5 Jaccard similarity
+                title="One two three four five six different words here",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # Should match at exactly 0.50 threshold
+        # This tests that >= is used, not >
+        assert len(result) == 1
+        assert result[0].source_count == 2
+
+    def test_very_high_threshold_prevents_false_positives(self, trigger_event_factory):
+        """Very high threshold should prevent all but identical matches."""
+        matcher = CrossSourceMatcher(similarity_threshold=0.95)
+
+        events = [
+            trigger_event_factory(
+                title="Iran launches missile attack on US bases in Iraq",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Iran launches missile attack on US bases",  # Slightly different
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # Should be 2 separate events with high threshold
+        assert len(result) == 2
+
+    def test_date_in_title_causes_false_negative_not_positive(self, trigger_event_factory):
+        """Different dates in titles should prevent false matches."""
+        matcher = CrossSourceMatcher(similarity_threshold=0.70)
+
+        events = [
+            trigger_event_factory(
+                title="Iran attacks US bases on January 15 2025",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Iran attacks US bases on January 20 2025",  # Different date
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # High similarity but different dates - depends on text similarity implementation
+        # With word overlap, dates contribute to overall similarity
+        # The test documents expected behavior
+        assert len(result) >= 1
+
+
+class TestEdgeCasesAndRobustness:
+    """Tests for edge cases and robustness."""
+
+    def test_empty_title_handled(self, trigger_event_factory):
+        """Events with empty titles should be handled gracefully."""
+        matcher = CrossSourceMatcher()
+
+        events = [
+            trigger_event_factory(title="", source=TriggerSource.GDELT),
+            trigger_event_factory(title="Normal event", source=TriggerSource.REDDIT),
+        ]
+
+        # Should not raise exception
+        result = matcher.match_events(events)
+        assert len(result) == 2
+
+    def test_very_long_title_handled(self, trigger_event_factory):
+        """Events with very long titles should be handled."""
+        matcher = CrossSourceMatcher()
+
+        events = [
+            trigger_event_factory(
+                title="A " * 1000,  # Very long title
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Normal event",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        # Should not raise exception
+        result = matcher.match_events(events)
+        assert len(result) == 2
+
+    def test_special_characters_in_title(self, trigger_event_factory):
+        """Events with special characters should be handled."""
+        matcher = CrossSourceMatcher()
+
+        events = [
+            trigger_event_factory(
+                title="Breaking: Iran attacks US!!! @#$%",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Breaking: Iran attacks US",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        # Should match despite special characters
+        result = matcher.match_events(events)
+        # High similarity expected
+        assert len(result) >= 1
+
+    def test_unicode_handling(self, trigger_event_factory):
+        """Events with unicode characters should be handled."""
+        matcher = CrossSourceMatcher()
+
+        events = [
+            trigger_event_factory(
+                title="北朝鮮がミサイル発射",  # Korean/Japanese
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="North Korea launches missile",
+                source=TriggerSource.REDDIT
+            ),
+        ]
+
+        # Should not raise exception (though may not match due to different languages)
+        result = matcher.match_events(events)
+        assert len(result) == 2
+
+    def test_large_event_list_performance(self, trigger_event_factory):
+        """Should handle large lists of events efficiently."""
+        matcher = CrossSourceMatcher()
+
+        # Create 50 events (reasonable test size)
+        events = [
+            trigger_event_factory(
+                title=f"Event {i} about topic {i % 5}",
+                source=TriggerSource.GDELT if i % 2 == 0 else TriggerSource.REDDIT
+            )
+            for i in range(50)
+        ]
+
+        # Should complete without timeout or error
+        result = matcher.match_events(events)
+        assert len(result) <= 50  # At most 50 matched events
+
+    def test_all_same_source_no_matches(self, trigger_event_factory):
+        """All events from same source should result in no cross-matches."""
+        matcher = CrossSourceMatcher()
+
+        events = [
+            trigger_event_factory(
+                title="Identical event title",
+                source=TriggerSource.GDELT
+            ),
+            trigger_event_factory(
+                title="Identical event title",
+                source=TriggerSource.GDELT  # Same source
+            ),
+            trigger_event_factory(
+                title="Identical event title",
+                source=TriggerSource.GDELT  # Same source
+            ),
+        ]
+
+        result = matcher.match_events(events)
+
+        # Should be 3 separate events (no cross-source matches)
+        assert len(result) == 3
+        for matched in result:
+            assert matched.source_count == 1

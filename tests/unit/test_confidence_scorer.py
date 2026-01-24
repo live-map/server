@@ -437,3 +437,160 @@ class TestDuplicateSourceHandling:
         # Should count as 1 source, not 2
         assert result.source_count == 1
         assert result.base_score == 0.50
+
+
+class TestDomainDiversityVerification:
+    """Tests for domain diversity verification in Two-Source Rule."""
+
+    def test_different_domains_is_diverse(self):
+        """Sources from different domains should be diverse."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters", "tier": SourceTier.TIER1_NEWS.value, "url": "https://www.reuters.com/article/123"},
+            {"name": "AP", "tier": SourceTier.TIER1_NEWS.value, "url": "https://apnews.com/article/456"},
+        ]
+
+        is_diverse, count = scorer.check_domain_diversity(sources)
+
+        assert is_diverse is True
+        assert count == 2
+
+    def test_same_domain_not_diverse(self):
+        """Sources from the same domain should not be diverse."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters1", "tier": SourceTier.TIER1_NEWS.value, "url": "https://www.reuters.com/article/123"},
+            {"name": "Reuters2", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/456"},
+        ]
+
+        is_diverse, count = scorer.check_domain_diversity(sources)
+
+        assert is_diverse is False
+        assert count == 1
+
+    def test_www_prefix_normalized(self):
+        """www prefix should be normalized."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "BBC1", "tier": SourceTier.TIER1_NEWS.value, "url": "https://www.bbc.com/article/123"},
+            {"name": "BBC2", "tier": SourceTier.TIER1_NEWS.value, "url": "https://bbc.com/article/456"},
+        ]
+
+        is_diverse, count = scorer.check_domain_diversity(sources)
+
+        assert is_diverse is False  # Same domain (bbc)
+        assert count == 1
+
+    def test_domain_key_used(self):
+        """Domain key should be used if URL is not provided."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters", "tier": SourceTier.TIER1_NEWS.value, "domain": "reuters.com"},
+            {"name": "AP", "tier": SourceTier.TIER1_NEWS.value, "domain": "apnews.com"},
+        ]
+
+        is_diverse, count = scorer.check_domain_diversity(sources)
+
+        assert is_diverse is True
+        assert count == 2
+
+    def test_name_fallback_for_diversity(self):
+        """Name should be used as fallback if no URL or domain."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters", "tier": SourceTier.TIER1_NEWS.value},
+            {"name": "AP", "tier": SourceTier.TIER1_NEWS.value},
+        ]
+
+        is_diverse, count = scorer.check_domain_diversity(sources)
+
+        assert is_diverse is True
+        assert count == 2
+
+    def test_two_source_rule_requires_domain_diversity(self):
+        """Two-Source Rule should require domain diversity by default."""
+        scorer = MultiSourceConfidenceScorer()
+        # Two sources from same domain
+        sources = [
+            {"name": "Reuters1", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/123"},
+            {"name": "Reuters2", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/456"},
+        ]
+
+        result = scorer.calculate_confidence(sources)
+
+        # Should NOT satisfy two-source rule due to same domain
+        assert result.two_source_satisfied is False
+        assert result.domain_diverse is False
+
+    def test_two_source_satisfied_with_diverse_domains(self):
+        """Two-Source Rule should be satisfied with diverse domains."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/123"},
+            {"name": "AP", "tier": SourceTier.TIER1_NEWS.value, "url": "https://apnews.com/article/456"},
+        ]
+
+        result = scorer.calculate_confidence(sources)
+
+        assert result.two_source_satisfied is True
+        assert result.domain_diverse is True
+        assert result.unique_domains == 2
+
+    def test_result_includes_domain_diversity_info(self):
+        """ConfidenceResult should include domain diversity information."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/123"},
+            {"name": "AP", "tier": SourceTier.TIER1_NEWS.value, "url": "https://apnews.com/article/456"},
+        ]
+
+        result = scorer.calculate_confidence(sources)
+        data = result.to_dict()
+
+        assert "domain_diversity" in data
+        assert "unique_domains" in data["domain_diversity"]
+        assert "domain_diverse" in data["domain_diversity"]
+        assert data["domain_diversity"]["unique_domains"] == 2
+        assert data["domain_diversity"]["domain_diverse"] is True
+
+    def test_bbc_uk_and_com_same_domain(self):
+        """bbc.co.uk and bbc.com should be normalized to same domain."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "BBC UK", "tier": SourceTier.TIER1_NEWS.value, "url": "https://www.bbc.co.uk/news/123"},
+            {"name": "BBC Intl", "tier": SourceTier.TIER1_NEWS.value, "url": "https://www.bbc.com/news/456"},
+        ]
+
+        is_diverse, count = scorer.check_domain_diversity(sources)
+
+        # Both should normalize to "bbc"
+        assert is_diverse is False
+        assert count == 1
+
+    def test_single_govt_source_bypasses_domain_check(self):
+        """Single Tier-1 govt source should satisfy rule regardless of domain."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "USGS", "tier": SourceTier.TIER1_GOVT.value, "url": "https://earthquake.usgs.gov/123"},
+        ]
+
+        result = scorer.calculate_confidence(sources)
+
+        # Single govt source bypasses two-source requirement
+        assert result.two_source_satisfied is True
+
+    def test_mixed_sources_with_duplicates(self):
+        """Mixed sources with some duplicates should be handled correctly."""
+        scorer = MultiSourceConfidenceScorer()
+        sources = [
+            {"name": "Reuters1", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/123"},
+            {"name": "Reuters2", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/456"},
+            {"name": "AP", "tier": SourceTier.TIER1_NEWS.value, "url": "https://apnews.com/article/789"},
+        ]
+
+        result = scorer.calculate_confidence(sources)
+
+        # Should have 2 unique domains (reuters, apnews)
+        assert result.unique_domains == 2
+        assert result.domain_diverse is True
+        assert result.two_source_satisfied is True
