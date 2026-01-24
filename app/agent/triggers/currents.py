@@ -188,9 +188,21 @@ class CurrentsTrigger(BaseTrigger):
                 max_age_hours=self.max_age_hours,
             )
 
+            # P0: Date Fallback - Allow API date if within 24 hours
             if not is_recent:
-                logger.info(f"[CURRENTS-RECENCY] Rejected: {reason} | {title[:50]}...")
-                return None
+                if "NO_DATE_INFO" in reason and api_date:
+                    api_age_hours = (datetime.utcnow() - api_date.replace(tzinfo=None)).total_seconds() / 3600
+                    if api_age_hours <= 24:
+                        is_recent = True
+                        validated_date = api_date.replace(tzinfo=None)
+                        reason = f"DATE_FALLBACK: Using API published {api_date.date()} (age: {api_age_hours:.1f}h)"
+                        logger.warning(f"[DATE-FALLBACK] {title[:50]}... | {reason}")
+                    else:
+                        logger.info(f"[CURRENTS-RECENCY] Rejected (API date too old): {reason} | {title[:50]}...")
+                        return None
+                else:
+                    logger.info(f"[CURRENTS-RECENCY] Rejected: {reason} | {title[:50]}...")
+                    return None
 
             # Use validated date
             detected_at = validated_date if validated_date else datetime.utcnow()

@@ -72,11 +72,11 @@ class AgentSettings(BaseSettings):
     google_trends_enabled: bool = False  # 429 rate limit 심함 - 비활성화
     google_trends_geo: str = "US"
 
-    # News APIs (Tier-2)
-    currents_enabled: bool = False
+    # News APIs (Tier-2) - P1: Enabled by default (requires API keys)
+    currents_enabled: bool = True  # P1: Enable if API key provided
     currents_api_key: str = ""
 
-    worldnews_enabled: bool = False
+    worldnews_enabled: bool = True  # P1: Enable if API key provided
     worldnews_api_key: str = ""
 
     # Specialized APIs (Tier-1/2)
