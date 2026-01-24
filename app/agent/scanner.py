@@ -42,6 +42,9 @@ from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult, Pu
 # P1: Importance Scoring
 from .importance_scorer import calculate_importance, ImportanceLevel
 
+# P2: Metrics System
+from .metrics import get_global_metrics
+
 # P0: Breaking News Fast-Path
 from .breaking_news import (
     BreakingNewsDetector,
@@ -551,6 +554,11 @@ class MultiSourceScanner:
 
         # Log scan summary for overnight debugging
         _log_scan_summary(scan_start, filter_stats, significant_events)
+
+        # P2: Record metrics
+        scan_duration = (datetime.utcnow() - scan_start).total_seconds()
+        metrics = get_global_metrics()
+        metrics.record_scan_cycle(filter_stats, significant_events, scan_duration)
 
         # 콜백 호출
         for event in significant_events:
