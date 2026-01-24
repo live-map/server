@@ -6,7 +6,7 @@
 
 ## What is LiveMap?
 
-LiveMap is an autonomous news intelligence system that monitors global events across 14+ sources, verifies information through multi-source cross-checking, and generates bilingual (Korean/English) news articles in real-time.
+LiveMap is an autonomous news intelligence system that monitors global events across multiple sources (12 implemented, 2 currently active), verifies information through multi-source cross-checking, and generates bilingual (Korean/English) news articles in real-time.
 
 **Mission**: *"Faster than anyone, verified, unbiased international affairs news"*
 
@@ -26,43 +26,63 @@ LiveMap is an autonomous news intelligence system that monitors global events ac
 
 ## How It Works
 
-### 7-Stage Pipeline
+### 8-Stage Pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ 1. TRIGGER COLLECTION                                           │
-│    GDELT, Reddit, USGS, NOAA → 14+ sources in parallel          │
+│    Currently: GDELT, Reddit (12 sources implemented)            │
 ├─────────────────────────────────────────────────────────────────┤
-│ 2. SEMANTIC CLUSTERING                                          │
+│ 2. 4-LAYER DATE FILTERING (NEW)                                 │
+│    URL date → Recency filter → Content date → Past year check   │
+├─────────────────────────────────────────────────────────────────┤
+│ 3. SEMANTIC CLUSTERING                                          │
 │    Group similar events using embeddings (BGE-M3)               │
 ├─────────────────────────────────────────────────────────────────┤
-│ 3. SOURCE CLASSIFICATION                                        │
+│ 4. SOURCE CLASSIFICATION                                        │
 │    Tier-1 Govt | Tier-1 News | Tier-2 | Tier-3 Social           │
 ├─────────────────────────────────────────────────────────────────┤
-│ 4. EVENT VERIFICATION (Gate 0)                                  │
+│ 5. EVENT VERIFICATION (Gate 0)                                  │
 │    Rules → Zero-shot ML → LLM (3-stage hybrid, 91% cost saving) │
 ├─────────────────────────────────────────────────────────────────┤
-│ 5. CONFIDENCE SCORING                                           │
+│ 6. CONFIDENCE SCORING                                           │
 │    Two-Source Rule, tier-weighted scoring                       │
 ├─────────────────────────────────────────────────────────────────┤
-│ 6. CONTENT GATES (Gate 1-2)                                     │
+│ 7. CONTENT GATES (Gate 1-2)                                     │
 │    Check-worthiness, Specificity filters                        │
 ├─────────────────────────────────────────────────────────────────┤
-│ 7. CLAIM VERIFICATION & ARTICLE GENERATION                      │
+│ 8. CLAIM VERIFICATION & ARTICLE GENERATION                      │
 │    VeriScore-style claims → QA verification → AP Style article  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### 4-Layer Date Filtering System
+
+Prevents old articles from being published as new:
+
+| Layer | Function | Example |
+|-------|----------|---------|
+| **URL Date Extraction** | Extract date from article URLs | `/2023/10/15/article` → 2023-10-15 |
+| **Recency Filter** | Reject events older than threshold | > 48h → rejected |
+| **Content Date Detection** | Find dates in article text | "October 15, 2023" detected |
+| **Past Year Check** | Detect mentions of past years | "In 2023..." → rejected |
+
+**Key functions:**
+- `extract_date_from_content()` - Extract dates from article text
+- `contains_past_year()` - Detect historical year mentions
+- `validate_trigger_recency()` - URL-based date validation
+
 ### Source Tier System
 
-| Tier | Sources | Credibility | Trust Level |
-|------|---------|-------------|-------------|
-| **Tier-1 Govt** | USGS, NOAA | 0.99 | Immediate publish |
-| **Tier-1 News** | GDELT (Reuters, AP, BBC) | 0.90 | Publishable |
-| **Tier-2 Data** | ACLED | 0.85 | Needs corroboration |
-| **Tier-2 News** | Currents, WorldNews | 0.75 | Needs corroboration |
-| **Tier-3 Social** | Reddit, Bluesky | 0.40 | Signal only |
-| **Tier-3 Msg** | Telegram | 0.35 | Signal only |
+| Tier | Sources | Credibility | Trust Level | Status |
+|------|---------|-------------|-------------|--------|
+| **Tier-1 Govt** | USGS, NOAA | 0.99 | Immediate publish | Disabled (out of scope) |
+| **Tier-1 News** | GDELT (Reuters, AP, BBC) | 0.90 | Publishable | **Active** |
+| **Tier-2 Data** | ACLED | 0.85 | Needs corroboration | Disabled (API key needed) |
+| **Tier-2 News** | Currents, WorldNews | 0.75 | Needs corroboration | Disabled (API keys needed) |
+| **Tier-3 Social** | Reddit | 0.40 | Signal only | **Active** |
+| **Tier-3 Social** | Bluesky, Google Trends | 0.40 | Signal only | Disabled (auth/rate issues) |
+| **Tier-3 Msg** | Telegram | 0.35 | Signal only | Disabled (setup needed) |
 
 ---
 
@@ -164,11 +184,11 @@ Currently focused on 7 categories:
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| Detection latency | < 15 min | In development |
-| False positive rate | < 5% | In development |
-| Source coverage | 14+ sources | Implementing |
-| Verification accuracy | > 90% | In development |
-| LLM cost reduction | > 80% | **91% achieved** |
+| Detection latency | < 15 min | 15 min (polling-based) |
+| False positive rate | < 5% | Not yet measured |
+| Source coverage | 12 sources | 2 active (GDELT, Reddit) |
+| Verification accuracy | > 90% | Not yet measured |
+| LLM cost reduction | > 80% | Theoretical (needs measurement) |
 
 ---
 

@@ -67,12 +67,14 @@ Every article shows exactly **why** we trust it:
 2. **Zero-shot ML** (free): Local model classifies 20% more
 3. **LLM** (paid): Only 10% of events need API calls
 
-**Cost comparison**:
+**Cost comparison** (theoretical projections):
 | Approach | Cost/day |
 |----------|----------|
-| LLM-only | $16.13 |
-| Rules + LLM | $4.80 |
-| **Rules + ML + LLM** | **$1.44** |
+| LLM-only | ~$16 |
+| Rules + LLM | ~$5 |
+| **Rules + ML + LLM** | **Estimated savings** |
+
+*Note: Actual cost figures require measurement with production traffic. Estimates shown are theoretical projections.*
 
 ---
 
@@ -116,10 +118,10 @@ Every article shows exactly **why** we trust it:
 
 ### Technical Advantages
 
-1. **Multi-source pipeline**: Complex to replicate integration of 14+ sources
+1. **Multi-source pipeline**: 12 sources implemented (2 currently active: GDELT, Reddit)
 2. **Verification algorithm**: Proprietary confidence scoring tuned over time
 3. **SOTA claim verification**: Based on 2026 research (VeriScore, AIC CTU methods)
-4. **Cost structure**: Near-zero marginal cost per article
+4. **Cost structure**: Near-zero marginal cost per article (pending verification)
 
 ### Network Effects
 

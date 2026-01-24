@@ -168,14 +168,16 @@ The Open Source Intelligence (OSINT) and real-time news intelligence market is g
 
 ### 1. Cost Leadership
 
-**99% cost reduction** vs enterprise competitors:
-- Dataminr: $200K → LiveMap: $2.4K = **83x cheaper**
-- Bloomberg: $24K → LiveMap: $2.4K = **10x cheaper**
+**Significant cost reduction** vs enterprise competitors:
+- Dataminr: $200K → LiveMap: Estimated ~$2.4K = **Potential 83x cheaper**
+- Bloomberg: $24K → LiveMap: Estimated ~$2.4K = **Potential 10x cheaper**
 
 **How we achieve this**:
-- Free data sources (GDELT, USGS, Reddit)
-- 3-stage verification pipeline (91% LLM cost reduction)
+- Free data sources (GDELT, Reddit currently active)
+- 3-stage verification pipeline (cost reduction pending measurement)
 - No expensive data licenses
+
+*Note: LiveMap cost figures are estimates. Actual operating costs require measurement with production traffic to verify the 99% cost reduction claim.*
 
 ### 2. Transparency
 
@@ -253,7 +255,7 @@ We follow the [International Fact-Checking Network](https://www.ifcncodeofprinci
 
 ### Why Competitors Can't Easily Replicate
 
-1. **Multi-source integration**: 14+ sources with different APIs, formats, rates
+1. **Multi-source integration**: 12 sources implemented (2 active) with different APIs, formats, rates
 2. **Verification pipeline**: Tuned thresholds, claim extraction, confidence scoring
 3. **Cost structure**: Our free-source approach is harder to monetize for incumbents
 4. **Open methodology**: Transparency is a feature, not a bug

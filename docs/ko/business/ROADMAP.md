@@ -7,14 +7,24 @@
 ## 개요
 
 현재 구현 완료:
-- [x] 다중 소스 트리거 (GDELT + X + Telegram)
+- [x] 다중 소스 트리거 (GDELT + Reddit 활성화, 나머지 구현됨 but 비활성화)
 - [x] Anomaly Detection 레이어
 - [x] Semantic Clustering 레이어
 - [x] LLM 분류 (GPT-4o-mini)
+- [x] **4-Layer 날짜 필터링** (2026-01-24 완료)
+  - URL 날짜 추출
+  - 최신성 필터 (최대 48시간)
+  - 콘텐츠 날짜 감지
+  - 과거 연도 체크 (2023, 2024 등 필터링)
+- [x] **야간 디버깅 로그** (2026-01-24 완료)
+  - 파일 로깅 + 로테이션 (logs/livemap.log)
+  - 필터 통계 포함 스캔 요약
 
 향후 구현 예정:
-- [ ] Event-Driven Streaming (폴링 → 푸시)
-- [ ] Tiered Autonomy (계층별 자율성)
+- [ ] Event-Driven Streaming (폴링 → 푸시) - **진행률: 0%** (설계만 완료)
+- [ ] Tiered Autonomy (계층별 자율성) - **진행률: 0%** (설계만 완료)
+
+*참고: 위 기능들은 상세 설계 문서가 있지만 구현 코드는 아직 작성되지 않았습니다.*
 
 ---
 
@@ -345,4 +355,5 @@ async def list_pending_reviews():
 ---
 
 *작성일: 2026-01-12*
-*상태: 계획 단계*
+*업데이트: 2026-01-24*
+*상태: 계획 단계 (구현 0%)*

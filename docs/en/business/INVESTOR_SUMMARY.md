@@ -89,10 +89,21 @@ Every article includes a **transparent confidence score** based on:
 
 ### 1. Multi-Source Architecture
 
-**14+ integrated sources** across 3 tiers:
-- Tier-1: GDELT, USGS, NOAA, EMSC (authoritative)
-- Tier-2: Currents API, World News API, ACLED (secondary)
-- Tier-3: Reddit, Bluesky, Telegram, Google Trends (signals)
+**12 sources implemented**, currently **2 active** (GDELT, Reddit):
+
+| Tier | Source | Status |
+|------|--------|--------|
+| Tier-1 | GDELT | **Active** |
+| Tier-1 | USGS, NOAA, EMSC | Implemented (disabled - natural disasters not in scope) |
+| Tier-2 | Currents API, World News API | Implemented (API keys required) |
+| Tier-2 | ACLED | Implemented (API key required) |
+| Tier-3 | Reddit | **Active** |
+| Tier-3 | Bluesky | Implemented (auth issues) |
+| Tier-3 | Telegram | Implemented (setup required) |
+| Tier-3 | Google Trends | Implemented (rate limit issues) |
+| Tier-3 | X/Twitter | Implemented (disabled) |
+
+*Note: Additional sources can be enabled as needed with API credentials.*
 
 ### 2. GDELT Anomaly Detection
 
@@ -116,7 +127,9 @@ Hybrid verification pipeline for cost efficiency:
 2. **Zero-shot classification** ($0): Local ML model (BART-MNLI) classifies remaining events
 3. **LLM verification** ($0.001/event): Only uncertain edge cases use paid LLM
 
-**Result**: 90% cost reduction vs LLM-only approach ($1.44/day vs $16.13/day)
+**Result**: Significant cost reduction vs LLM-only approach.
+
+*Note: Cost estimates (e.g., $1.44/day) are theoretical projections based on expected event volume. Actual costs require measurement with production traffic.*
 
 ### 5. Social Velocity Algorithm
 
@@ -139,10 +152,12 @@ Early detection through social media velocity measurement:
 | Government APIs | **$0** |
 | **Total Source Cost** | **$0/month** |
 
-Variable costs:
-- LLM API (OpenAI): ~$40-150/month (90% reduced via 3-stage verification)
+Variable costs (estimates - actual measurement pending):
+- LLM API (OpenAI): ~$40-150/month (reduced via 3-stage verification)
 - Cloud hosting: ~$50-200/month
 - Vector database: ~$50/month
+
+*Note: Cost figures are theoretical estimates. Actual costs will be measured and documented once production traffic is established.*
 
 ### Revenue Opportunities
 
@@ -178,10 +193,10 @@ Variable costs:
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Detection Latency | < 15 min | In development |
-| False Positive Rate | < 5% | In development |
-| Source Coverage | 14+ sources | Implementing |
-| Verification Accuracy | > 90% | In development |
+| Detection Latency | < 15 min | 15 min (polling-based) |
+| False Positive Rate | < 5% | Not yet measured |
+| Source Coverage | 12 sources | 2 active (GDELT, Reddit) |
+| Verification Accuracy | > 90% | Not yet measured |
 
 ---
 
@@ -267,10 +282,10 @@ To scale this system, we need:
 
 LiveMap delivers **verified breaking news at zero source cost** through:
 
-1. **Multi-source detection** (14+ sources)
+1. **Multi-source detection** (12 sources implemented, 2 currently active)
 2. **AI-powered verification** (claim-level)
 3. **Transparent confidence scoring** (IFCN-compliant)
-4. **Real-time processing** (15-minute cycles)
+4. **Real-time processing** (15-minute polling cycles)
 
 **Key differentiators**:
 - Cost: $0 vs $20,000+/month competitors

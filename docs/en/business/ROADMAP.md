@@ -7,14 +7,24 @@
 ## Overview
 
 Currently implemented:
-- [x] Multi-source triggers (GDELT + X + Telegram)
+- [x] Multi-source triggers (GDELT + Reddit active, others implemented but disabled)
 - [x] Anomaly Detection layer
 - [x] Semantic Clustering layer
 - [x] LLM classification (GPT-4o-mini)
+- [x] **4-Layer Date Filtering** (2026-01-24 completed)
+  - URL date extraction
+  - Recency filter (max 48h)
+  - Content date detection
+  - Past year check (filters 2023, 2024, etc.)
+- [x] **Overnight Debugging Logs** (2026-01-24 completed)
+  - File logging with rotation (logs/livemap.log)
+  - Scan summary with filter statistics
 
 Planned for future implementation:
-- [ ] Event-Driven Streaming (polling → push)
-- [ ] Tiered Autonomy (autonomy levels by tier)
+- [ ] Event-Driven Streaming (polling → push) - **Progress: 0%** (design only)
+- [ ] Tiered Autonomy (autonomy levels by tier) - **Progress: 0%** (design only)
+
+*Note: The features above have detailed design documents but no implementation code has been written yet.*
 
 ---
 
@@ -345,4 +355,5 @@ async def list_pending_reviews():
 ---
 
 *Created: 2026-01-12*
-*Status: Planning stage*
+*Updated: 2026-01-24*
+*Status: Planning stage (0% implemented)*
