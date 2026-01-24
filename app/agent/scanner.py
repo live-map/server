@@ -39,6 +39,9 @@ from .significance import (
 from .cross_source_matcher import CrossSourceMatcher, MatchedEvent
 from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult, PublishRecommendation
 
+# P1: Importance Scoring
+from .importance_scorer import calculate_importance, ImportanceLevel
+
 # P0: Breaking News Fast-Path
 from .breaking_news import (
     BreakingNewsDetector,
@@ -67,10 +70,13 @@ def _log_scan_summary(
     scan_duration = (datetime.utcnow() - scan_start).total_seconds()
 
     # Filter stats line
+    # P2: Include importance filter in stats
+    importance_rejected = filter_stats.get('importance_rejected', 0)
     logger.info(
         f"[FILTER-STATS] initial={filter_stats['initial']} → "
         f"recency={filter_stats['recency_rejected']} rejected → "
         f"content-date={filter_stats['content_date_rejected']} rejected → "
+        f"importance={importance_rejected} rejected → "
         f"confidence={filter_stats['confidence_passed']} passed → "
         f"gates={filter_stats['gate0_rejected'] + filter_stats['gate1_rejected'] + filter_stats['gate2_rejected']} rejected → "
         f"published={filter_stats['final_published']}"
@@ -493,6 +499,49 @@ class MultiSourceScanner:
             _log_scan_summary(scan_start, filter_stats, [])
             return []
 
+        # ============================================
+        # P2: Early Importance Filter (Goldstein Scale)
+        # Reject low-importance events before expensive operations
+        # ============================================
+        filter_stats["importance_rejected"] = 0
+        importance_filtered_events = []
+        min_importance_threshold = 0.25  # LOW level minimum
+
+        for event in events:
+            # Calculate importance score
+            importance_result = calculate_importance(
+                title=event.title,
+                content=event.content or "",
+                sources=[event.url] if event.url else [],
+            )
+
+            # Store importance for later use
+            event._importance = importance_result
+
+            # Skip very low importance events early
+            if importance_result.score < min_importance_threshold:
+                filter_stats["importance_rejected"] += 1
+                logger.debug(
+                    f"[P2-IMPORTANCE-REJECT] {importance_result.level.value} "
+                    f"(score={importance_result.score:.2f}): {event.title[:50]}..."
+                )
+                continue
+
+            importance_filtered_events.append(event)
+
+        if filter_stats["importance_rejected"] > 0:
+            logger.info(
+                f"P2 Importance filter: {len(importance_filtered_events)}/{len(events)} events passed "
+                f"(threshold={min_importance_threshold}, {filter_stats['importance_rejected']} rejected)"
+            )
+
+        events = importance_filtered_events
+
+        if not events:
+            logger.info("No events after importance filter")
+            _log_scan_summary(scan_start, filter_stats, [])
+            return []
+
         # LLM으로 최종 분류 및 그룹화
         significant_events = await self._classify_and_group(events, filter_stats)
         logger.info(f"Significant events: {len(significant_events)}")
@@ -905,6 +954,11 @@ class MultiSourceScanner:
                     confidence.verification_delay_minutes
                 )
 
+            # P2: Get importance score from event (calculated in early filter)
+            importance_result = getattr(event, '_importance', None)
+            importance_score = importance_result.score if importance_result else 0.5
+            importance_level = importance_result.level.value if importance_result else "medium"
+
             result_item = {
                 "description": event.title,
                 "category": category,
@@ -923,14 +977,17 @@ class MultiSourceScanner:
                 "single_source_allowed": confidence.single_source_allowed,
                 "verification_required": verification_required,
                 "verification_schedule_minutes": verification_schedule_minutes,
+                # P2: Importance scoring (Goldstein Scale)
+                "importance_score": round(importance_score, 3),
+                "importance_level": importance_level,
             }
 
             results.append(result_item)
 
-            # Enhanced logging with breaking news info
+            # Enhanced logging with breaking news and importance info
             breaking_info = f" | {breaking_label}" if breaking_label else ""
             logger.info(
-                f"[PUBLISH] {confidence.score:.2f} | {category} | "
+                f"[PUBLISH] conf={confidence.score:.2f} imp={importance_score:.2f} | {category} | "
                 f"{item['cluster_size']} sources{breaking_info} | {event.title[:50]}..."
             )
 
