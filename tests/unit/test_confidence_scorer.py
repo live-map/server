@@ -508,9 +508,27 @@ class TestDomainDiversityVerification:
         assert count == 2
 
     def test_two_source_rule_requires_domain_diversity(self):
-        """Two-Source Rule should require domain diversity by default."""
+        """Two-Source Rule should require domain diversity for non-Tier-1 sources."""
         scorer = MultiSourceConfidenceScorer()
-        # Two sources from same domain
+        # Two sources from same Tier-3 domain (not a wire service)
+        sources = [
+            {"name": "Reddit1", "tier": SourceTier.TIER3_SOCIAL.value, "url": "https://reddit.com/r/worldnews/123"},
+            {"name": "Reddit2", "tier": SourceTier.TIER3_SOCIAL.value, "url": "https://reddit.com/r/worldnews/456"},
+        ]
+
+        result = scorer.calculate_confidence(sources)
+
+        # Should NOT satisfy two-source rule due to same domain (Tier-3)
+        assert result.two_source_satisfied is False
+        assert result.domain_diverse is False
+
+    def test_tier1_wire_service_single_domain_allowed(self):
+        """Tier-1 wire service (Reuters, AP, AFP) can satisfy rule from single domain.
+
+        P0 Enhancement: Source Tier system allows single-source publishing for Tier-1 wire services.
+        """
+        scorer = MultiSourceConfidenceScorer()
+        # Two sources from same Tier-1 wire service domain
         sources = [
             {"name": "Reuters1", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/123"},
             {"name": "Reuters2", "tier": SourceTier.TIER1_NEWS.value, "url": "https://reuters.com/article/456"},
@@ -518,9 +536,11 @@ class TestDomainDiversityVerification:
 
         result = scorer.calculate_confidence(sources)
 
-        # Should NOT satisfy two-source rule due to same domain
-        assert result.two_source_satisfied is False
-        assert result.domain_diverse is False
+        # P0: Tier-1 wire service can publish even from single domain
+        assert result.two_source_satisfied is True
+        assert result.domain_diverse is False  # Same domain
+        assert result.single_source_allowed is False  # Not single source (2 articles)
+        assert result.highest_domain_tier == "tier_1_wire"
 
     def test_two_source_satisfied_with_diverse_domains(self):
         """Two-Source Rule should be satisfied with diverse domains."""

@@ -280,9 +280,25 @@ class GDELTTrigger(BaseTrigger):
                 max_age_hours=48,
             )
 
+            # P0: Date Fallback - Allow API date (seendate) if within 24 hours
+            # This handles cases where URL/content date extraction fails
+            # but the GDELT seendate is trustworthy for recent articles
             if not is_recent:
-                logger.info(f"[GDELT-RECENCY] Rejected: {reason} | {title[:50]}...")
-                continue
+                # Check if rejection is due to NO_DATE_INFO and API date is recent
+                if "NO_DATE_INFO" in reason and seendate:
+                    api_age_hours = (datetime.utcnow() - seendate).total_seconds() / 3600
+                    if api_age_hours <= 24:
+                        # Accept with API date fallback (24h threshold for safety)
+                        is_recent = True
+                        validated_date = seendate
+                        reason = f"DATE_FALLBACK: Using API seendate {seendate.date()} (age: {api_age_hours:.1f}h)"
+                        logger.warning(f"[DATE-FALLBACK] {title[:50]}... | {reason}")
+                    else:
+                        logger.info(f"[GDELT-RECENCY] Rejected (API date too old): {reason} | {title[:50]}...")
+                        continue
+                else:
+                    logger.info(f"[GDELT-RECENCY] Rejected: {reason} | {title[:50]}...")
+                    continue
 
             # Use validated date (conservative: require a valid date)
             detected_at = validated_date if validated_date else datetime.utcnow()

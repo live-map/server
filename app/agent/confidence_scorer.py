@@ -9,6 +9,11 @@ Score Range: 0.0 - 0.99
 - 0.50-0.69: Medium (review required)
 - 0.70-0.84: High (publishable)
 - 0.85-0.99: Very High (immediate publish)
+
+P0 Enhancement:
+- Domain-based Source Tier system integration
+- Single-source publishing for Tier-1 wire services (AP, Reuters, AFP)
+- Delayed verification for Tier-2 major outlets (BBC, NYT, etc.)
 """
 
 import logging
@@ -19,6 +24,13 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .triggers.base import SourceTier
+from .source_tiers import (
+    DomainTier,
+    evaluate_source_mix,
+    get_domain_tier,
+    get_credibility_weight,
+    normalize_domain,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +87,13 @@ class ConfidenceResult:
     unique_domains: int = 0
     domain_diverse: bool = False
 
+    # P0: Domain Tier System
+    domain_tier_evaluation: dict = field(default_factory=dict)
+    highest_domain_tier: str = ""
+    single_source_allowed: bool = False
+    verification_required: bool = False
+    verification_delay_minutes: int = 0
+
     def to_dict(self) -> dict:
         return {
             "score": round(self.score, 3),
@@ -92,6 +111,14 @@ class ConfidenceResult:
             "domain_diversity": {
                 "unique_domains": self.unique_domains,
                 "domain_diverse": self.domain_diverse,
+            },
+            # P0: Domain Tier System
+            "domain_tier": {
+                "highest_tier": self.highest_domain_tier,
+                "single_source_allowed": self.single_source_allowed,
+                "verification_required": self.verification_required,
+                "verification_delay_minutes": self.verification_delay_minutes,
+                "evaluation": self.domain_tier_evaluation,
             },
         }
 
@@ -129,6 +156,7 @@ class MultiSourceConfidenceScorer:
         Args:
             sources: List of source dicts with 'name' and 'tier' keys
                     e.g., [{"name": "GDELT", "tier": "tier1_news"}, ...]
+                    Can also include 'url' or 'domain' for domain tier evaluation
 
         Returns:
             ConfidenceResult with score and recommendation
@@ -149,19 +177,43 @@ class MultiSourceConfidenceScorer:
         unique_sources = list({s["name"]: s for s in sources}.values())
         source_count = len(unique_sources)
 
+        # P0: Evaluate domain tiers for single-source publishing
+        domain_tier_eval = evaluate_source_mix(unique_sources)
+        highest_domain_tier = domain_tier_eval.get("highest_tier")
+        highest_tier_str = highest_domain_tier.value if highest_domain_tier else ""
+        single_source_allowed = domain_tier_eval.get("can_publish", False) and source_count == 1
+        verification_required = domain_tier_eval.get("verification_required", False)
+        verification_delay = domain_tier_eval.get("verification_delay_minutes", 0)
+
         # 2. Calculate base score from source count
+        # P0: Boost base score for high-tier single sources
         if source_count == 1:
-            base_score = 0.50
+            if highest_tier_str == DomainTier.TIER_1.value:
+                base_score = 0.75  # Wire service single source gets higher base
+            elif highest_tier_str == DomainTier.TIER_2.value:
+                base_score = 0.65  # Major outlet single source
+            else:
+                base_score = 0.50  # Standard single source
         elif source_count == 2:
             base_score = 0.70
         else:
             base_score = 0.85
 
-        # 3. Calculate tier weight average
+        # 3. Calculate tier weight average (combine trigger tier and domain tier)
         tier_scores = []
         for source in unique_sources:
-            tier = source.get("tier", "tier2_news")
-            weight = self.tier_weights.get(tier, 0.50)
+            trigger_tier = source.get("tier", "tier2_news")
+            trigger_weight = self.tier_weights.get(trigger_tier, 0.50)
+
+            # P0: Also consider domain credibility weight
+            url = source.get("url", source.get("domain", ""))
+            if url:
+                domain_weight = get_credibility_weight(url)
+                # Use the higher of trigger tier or domain tier
+                weight = max(trigger_weight, domain_weight)
+            else:
+                weight = trigger_weight
+
             tier_scores.append(weight)
 
         tier_average = sum(tier_scores) / len(tier_scores) if tier_scores else 0.50
@@ -179,20 +231,32 @@ class MultiSourceConfidenceScorer:
 
         # 6. Determine level and recommendation
         level = self._determine_level(final_score)
-        recommendation = self._determine_recommendation(final_score, unique_sources)
+        recommendation = self._determine_recommendation(
+            final_score, unique_sources, domain_tier_eval
+        )
 
         # 7. Check Two-Source Rule (with domain diversity)
-        two_source_satisfied = self._check_two_source_rule(unique_sources)
+        # P0: Single-source Tier-1 wire services satisfy Two-Source Rule
+        two_source_satisfied = self._check_two_source_rule(
+            unique_sources, domain_tier_eval
+        )
 
         # 8. Check domain diversity
         domain_diverse, unique_domain_count = self.check_domain_diversity(unique_sources)
 
-        # Log warning if sources are from the same domain
+        # Log warning if sources are from the same domain (but not for single-source allowed)
         if source_count >= 2 and not domain_diverse:
             logger.warning(
                 f"Sources lack domain diversity: {source_count} sources but only "
                 f"{unique_domain_count} unique domain(s). Two-Source Rule may not "
                 "be truly satisfied."
+            )
+
+        # P0: Log single-source publishing decisions
+        if single_source_allowed and source_count == 1:
+            logger.info(
+                f"[SOURCE-TIER] Single-source publishing allowed: "
+                f"tier={highest_tier_str}, domain={domain_tier_eval.get('tier_breakdown', {})}"
             )
 
         return ConfidenceResult(
@@ -208,6 +272,12 @@ class MultiSourceConfidenceScorer:
             two_source_satisfied=two_source_satisfied,
             unique_domains=unique_domain_count,
             domain_diverse=domain_diverse,
+            # P0: Domain Tier System
+            domain_tier_evaluation=domain_tier_eval,
+            highest_domain_tier=highest_tier_str,
+            single_source_allowed=single_source_allowed,
+            verification_required=verification_required,
+            verification_delay_minutes=verification_delay,
         )
 
     def _determine_level(self, score: float) -> ConfidenceLevel:
@@ -225,8 +295,13 @@ class MultiSourceConfidenceScorer:
         self,
         score: float,
         sources: list[dict],
+        domain_tier_eval: dict | None = None,
     ) -> PublishRecommendation:
-        """Determine publication recommendation"""
+        """
+        Determine publication recommendation.
+
+        P0 Enhancement: Consider domain tier for single-source publishing.
+        """
         # Check for Tier-1 government source (always publishable)
         has_govt_source = any(
             s.get("tier") == SourceTier.TIER1_GOVT.value
@@ -234,6 +309,20 @@ class MultiSourceConfidenceScorer:
         )
         if has_govt_source:
             return PublishRecommendation.IMMEDIATE_PUBLISH
+
+        # P0: Check domain tier evaluation for single-source publishing
+        if domain_tier_eval and domain_tier_eval.get("can_publish"):
+            recommended_action = domain_tier_eval.get("recommended_action", "")
+
+            if recommended_action == "PUBLISH_IMMEDIATE":
+                # Tier-1 wire service - immediate publish
+                return PublishRecommendation.IMMEDIATE_PUBLISH
+            elif recommended_action == "PUBLISH_WITH_VERIFICATION":
+                # Tier-2 major outlet - publishable but needs verification
+                return PublishRecommendation.PUBLISHABLE
+            elif recommended_action == "PUBLISH_STANDARD":
+                # Standard Two-Source Rule satisfied
+                pass  # Fall through to score-based
 
         # Score-based recommendation
         if score >= self.THRESHOLD_VERY_HIGH:
@@ -248,6 +337,7 @@ class MultiSourceConfidenceScorer:
     def _check_two_source_rule(
         self,
         sources: list[dict],
+        domain_tier_eval: dict | None = None,
         require_domain_diversity: bool = True,
     ) -> bool:
         """
@@ -255,16 +345,26 @@ class MultiSourceConfidenceScorer:
 
         The rule is satisfied if:
         1. At least 2 independent sources from DIFFERENT domains, OR
-        2. Single Tier-1 government source (USGS, NOAA, etc.)
+        2. Single Tier-1 government source (USGS, NOAA, etc.), OR
+        3. P0: Single Tier-1 wire service source (AP, Reuters, AFP)
 
         Args:
             sources: List of source dicts
+            domain_tier_eval: Domain tier evaluation result
             require_domain_diversity: If True, requires sources from different domains
         """
         # Single Tier-1 govt source is sufficient
         if len(sources) == 1:
             tier = sources[0].get("tier", "")
-            return tier == SourceTier.TIER1_GOVT.value
+            if tier == SourceTier.TIER1_GOVT.value:
+                return True
+
+        # P0: Check if domain tier evaluation allows single-source publishing
+        if domain_tier_eval and domain_tier_eval.get("can_publish"):
+            recommended_action = domain_tier_eval.get("recommended_action", "")
+            if recommended_action in ("PUBLISH_IMMEDIATE", "PUBLISH_WITH_VERIFICATION"):
+                # Tier-1 or Tier-2 source with sufficient credibility
+                return True
 
         # Need at least 2 sources
         if len(sources) < 2:

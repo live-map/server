@@ -39,6 +39,14 @@ from .significance import (
 from .cross_source_matcher import CrossSourceMatcher, MatchedEvent
 from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult, PublishRecommendation
 
+# P0: Breaking News Fast-Path
+from .breaking_news import (
+    BreakingNewsDetector,
+    BreakingNewsResult,
+    detect_breaking_news,
+    get_global_detector,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -664,7 +672,30 @@ class MultiSourceScanner:
                 return []
 
         # ============================================
+        # Step 3.7: Breaking News Detection (P0 Fast-Path)
+        # ============================================
+        breaking_news_detector = get_global_detector()
+
+        for item in publishable_events:
+            event = item["event"]
+            # Detect breaking news
+            breaking_result = breaking_news_detector.detect(
+                title=event.title,
+                content=event.content or "",
+                source_url=event.url,
+                topic_key=event.title[:30].lower(),  # Simple topic key
+            )
+            item["breaking_news"] = breaking_result
+
+            if breaking_result.is_breaking:
+                logger.info(
+                    f"[BREAKING-NEWS] {breaking_result.label}: {event.title[:50]}... "
+                    f"(confidence={breaking_result.confidence:.2f}, fast_path={breaking_result.fast_path_eligible})"
+                )
+
+        # ============================================
         # Step 4: Content Gates 적용 (Tier-1 govt는 일부 면제)
+        # P0: Breaking News Fast-Path can skip certain gates
         # ============================================
         gate_passed = []
 
@@ -672,9 +703,17 @@ class MultiSourceScanner:
             event = item["event"]
             text = f"{event.title} {event.content}"
 
+            # P0: Check if breaking news fast-path is eligible
+            breaking_result: BreakingNewsResult = item.get("breaking_news")
+            is_breaking_fast_path = (
+                breaking_result and
+                breaking_result.fast_path_eligible and
+                "gate1_checkworthiness" not in breaking_result.gates_to_skip
+            )
+
             # Tier-1 정부 소스는 checkworthiness 면제 (공식 발표)
             if not item["is_tier1_govt"]:
-                # Gate 1: Check-worthiness
+                # Gate 1: Check-worthiness (Breaking news does NOT skip this)
                 if agent_settings.checkworthiness_enabled:
                     cw_result = check_worthiness(
                         text,
@@ -693,8 +732,15 @@ class MultiSourceScanner:
 
             # Gate 2: Specificity (영어 기사만 적용 - 패턴이 영어 전용)
             # Tier-1 govt 또는 비영어 기사는 스킵
+            # P0: Breaking news with fast-path can skip this gate
             is_english = getattr(event, 'language', 'en') in ['en', 'english', '']
-            if agent_settings.specificity_enabled and is_english and not item["is_tier1_govt"]:
+            skip_specificity = (
+                item["is_tier1_govt"] or
+                (breaking_result and breaking_result.fast_path_eligible and
+                 "gate2_specificity" in breaking_result.gates_to_skip)
+            )
+
+            if agent_settings.specificity_enabled and is_english and not skip_specificity:
                 spec_result = check_specificity(text, min_score=agent_settings.min_specificity_score)
                 if not spec_result.is_specific:
                     filter_stats["gate2_rejected"] += 1
@@ -704,6 +750,10 @@ class MultiSourceScanner:
                             f"{event.title[:50]}..."
                         )
                     continue
+            elif skip_specificity and breaking_result and breaking_result.is_breaking:
+                logger.info(
+                    f"[BREAKING-FAST-PATH] Skipping Gate 2 (specificity) for: {event.title[:50]}..."
+                )
 
             gate_passed.append(item)
 
@@ -837,7 +887,25 @@ class MultiSourceScanner:
             if "matching_events" in item:
                 sources.extend([e.source_name for e in item["matching_events"]])
 
-            results.append({
+            # P0: Breaking News label and verification schedule
+            breaking_result: BreakingNewsResult = item.get("breaking_news")
+            breaking_label = ""
+            verification_required = False
+            verification_schedule_minutes = 0
+
+            if breaking_result and breaking_result.is_breaking:
+                breaking_label = breaking_result.label
+                verification_schedule_minutes = breaking_result.verification_schedule_minutes
+
+            # P0: Also check domain tier for verification requirement
+            if confidence.verification_required:
+                verification_required = True
+                verification_schedule_minutes = max(
+                    verification_schedule_minutes,
+                    confidence.verification_delay_minutes
+                )
+
+            result_item = {
                 "description": event.title,
                 "category": category,
                 "sources": sources,
@@ -850,11 +918,20 @@ class MultiSourceScanner:
                 "two_source_satisfied": confidence.two_source_satisfied,
                 "recommendation": confidence.recommendation.value,
                 "is_tier1_govt": item["is_tier1_govt"],
-            })
+                # P0: Breaking News and Domain Tier fields
+                "breaking_label": breaking_label,
+                "single_source_allowed": confidence.single_source_allowed,
+                "verification_required": verification_required,
+                "verification_schedule_minutes": verification_schedule_minutes,
+            }
 
+            results.append(result_item)
+
+            # Enhanced logging with breaking news info
+            breaking_info = f" | {breaking_label}" if breaking_label else ""
             logger.info(
                 f"[PUBLISH] {confidence.score:.2f} | {category} | "
-                f"{item['cluster_size']} sources | {event.title[:50]}..."
+                f"{item['cluster_size']} sources{breaking_info} | {event.title[:50]}..."
             )
 
         return results
