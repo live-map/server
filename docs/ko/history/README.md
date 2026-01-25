@@ -1,92 +1,105 @@
-# Project History
+# 프로젝트 히스토리
 
 이 섹션은 LiveMap 시스템의 초기 컨셉부터 현재 구현까지의 발전 과정을 문서화합니다.
 
 ---
 
-## Timeline Overview
+## 타임라인 개요
 
 ```
-Jan 10, 2026 ──────────────────────────────────────────────────────────────────►
+2026년 1월 10일 ──────────────────────────────────────────────────► 1월 24일
     │
-    ├── Phase 0: Foundation (Jan 10)
-    │   └── Telegram MCP, 기본 트리거 시스템
+    ├── Phase 0: Foundation (1월 10일)
+    │   └── Telegram MCP, GDELT 트리거, 기본 인프라
     │
-    ├── Phase 1: Verification (Jan 10-11)
-    │   └── 3단계 검증 파이프라인
+    ├── Phase 1: 검증 진화 (1월 10-14일)
+    │   └── 3단계 → RAG → GDELT → Claim-level SOTA
     │
-    ├── Phase 2: Autonomous Agent (Jan 11-13)
-    │   └── 다중 소스 조사, 주장 검증
+    ├── Phase 2: 보안 및 품질 (1월 15-19일)
+    │   └── JWT → JWE 마이그레이션, 중요도 점수
     │
-    ├── Phase 3: Parallel Processing (Jan 13)
-    │   └── LangGraph 에이전트, 병렬 증거 수집
+    ├── Phase 3: 인텔리전스 레이어 (1월 19-23일)
+    │   └── Zero-shot ML, 91% 비용 절감, 게이트 시스템
     │
-    ├── Phase 4: Content Filtering (Jan 15-21)
-    │   └── Gate 0-2, 이벤트 검증, 검토가치 판단
+    ├── Phase 4: 소스 관리 (1월 23-24일)
+    │   └── 최신성 필터, 카테고리 분류
     │
-    ├── Phase 5: Integration (Jan 21-22)
-    │   └── Scanner-Agent 통합, DB 영속화
-    │
-    ├── Phase 6: International Focus (Jan 23)
-    │   └── 7개 카테고리 집중, 리소스 최적화
-    │
-    └── Phase 7: Zero-shot ML (Jan 23)
-        └── BART-MNLI 분류기, 91% 비용 절감
+    └── Phase 5: 최적화 (1월 24일)
+        └── 속보 패스트패스, P0/P1/P2 최적화
 ```
 
 ---
 
-## Version History
+## 버전 히스토리
 
-| Version | Date | Milestone |
-|---------|------|-----------|
-| v0.1 | Jan 10 | 기본 트리거 시스템 |
-| v1.0 | Jan 11 | 3단계 검증 |
-| v2.0 | Jan 13 | 심층 검증 에이전트 |
-| v3.0 | Jan 14 | 주장 수준 검증 (SOTA) |
-| v3.1 | Jan 14 | 프로덕션 준비 완료 품질 |
-| v3.2 | Jan 21 | Gate 시스템 통합 |
-| v3.3 | Jan 23 | Zero-shot ML 분류기 |
-
----
-
-## Phase Documentation
-
-### Current Architecture (Phase 7)
-
-시스템은 현재 3단계 하이브리드 검증을 포함한 7단계 파이프라인을 사용합니다:
-
-1. [Phase 0: Foundation](PHASE_0_FOUNDATION.md) - 초기 Telegram MCP
-2. [Phase 1: Verification](PHASE_1_VERIFICATION.md) - 3단계 파이프라인
-3. [Phase 2: Autonomous Agent](PHASE_2_AUTONOMOUS.md) - 다중 소스 조사
-4. [Phase 3: Parallel Processing](PHASE_3_PARALLEL.md) - LangGraph 에이전트
-5. [Phase 4: Content Filtering](PHASE_4_FILTERING.md) - Gate 시스템
-6. [Phase 5: Integration](PHASE_5_INTEGRATION.md) - 전체 파이프라인
-7. [Phase 6: International Focus](PHASE_6_INTERNATIONAL.md) - 카테고리 집중
-8. [Phase 7: Zero-shot ML](PHASE_7_ZERO_SHOT.md) - ML 분류기
+| 버전 | 날짜 | 마일스톤 |
+|------|------|----------|
+| v0.1 | 1월 10일 | 기본 트리거 시스템 |
+| v1.0 | 1월 11일 | 3단계 검증 |
+| v2.0 | 1월 13일 | 심층 검증 에이전트 |
+| v3.0 | 1월 14일 | Claim-level 검증 (SOTA) |
+| v3.1 | 1월 14일 | 프로덕션 준비 완료 품질 |
+| v3.2 | 1월 21일 | Gate 시스템 통합 |
+| v3.3 | 1월 23일 | Zero-shot ML 분류기 |
+| v3.4 | 1월 24일 | 속보 패스트패스 |
+| v3.5 | 1월 24일 | P0/P1/P2 최적화 |
 
 ---
 
-## Archived Documents
+## Phase 문서
+
+### 현재 아키텍처 (Phase 5)
+
+시스템은 현재 속보 패스트패스와 6차원 중요도 점수를 갖춘 최적화된 파이프라인을 사용합니다:
+
+| Phase | 문서 | 요약 |
+|-------|------|------|
+| 0 | [Foundation](PHASE_0_FOUNDATION.md) | Telegram MCP, GDELT, 기본 설정 |
+| 1 | [검증 진화](PHASE_1_VERIFICATION_EVOLUTION.md) | 3단계 → Claim-level SOTA |
+| 2 | [보안 및 품질](PHASE_2_SECURITY_AND_QUALITY.md) | JWE 인증, 중요도 점수 |
+| 3 | [인텔리전스 레이어](PHASE_3_INTELLIGENCE_LAYER.md) | Zero-shot ML, 91% 비용 절감 |
+| 4 | [소스 관리](PHASE_4_SOURCE_MANAGEMENT.md) | 최신성 필터, 카테고리 |
+| 5 | [최적화](PHASE_5_OPTIMIZATION.md) | 속보, P0/P1/P2 |
+
+---
+
+## 주요 지표
+
+| 지표 | 초기 | 현재 | 개선 |
+|------|------|------|------|
+| LLM 비용/일 | $16.13 | $1.44 | -91% |
+| 검증 시간 | 45초 | 8초 평균 | -82% |
+| 속보 지연 | N/A | 5초 | 신규 |
+| 데이터 소스 | 1 | 12+ | +1100% |
+| 거짓 양성률 | ~20% | ~5% | -75% |
+
+---
+
+## 아카이브 문서
 
 더 이상 사용하지 않는 접근 방식에 대한 문서:
 
+- [Phase 7 Zero-Shot (원본)](archive/PHASE_7_ZERO_SHOT.md) - Phase 3에 통합됨
 - [Deep Verification v2.0](archive/DEEP_VERIFICATION_V2.md) - v3.0 주장 수준 검증으로 대체됨
 - [Claim Verification Plan](archive/CLAIM_VERIFICATION_PLAN.md) - 완료된 계획 문서
+- [Methodology](archive/METHODOLOGY.md) - 원본 방법론
 
 ---
 
-## Key Decisions Timeline
+## 주요 결정 타임라인
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| Jan 10 | Two-Source Rule | IFCN 규정 준수 |
-| Jan 11 | Tier system | 출처 신뢰도 차별화 |
-| Jan 13 | VeriScore claims | 2026 SOTA 구현 |
-| Jan 15 | Gate ordering | 가장 비싼 것에서 가장 저렴한 순으로 |
-| Jan 21 | Hybrid verification | LLM 비용 70% 절감 |
-| Jan 23 | Zero-shot classifier | 추가 70% 절감 |
-| Jan 23 | International focus | 양보다 질 |
+| 날짜 | 결정 | 근거 | ADR |
+|------|------|------|-----|
+| 1월 10일 | Two-Source Rule | IFCN 규정 준수 | [ADR-001](../adr/ADR-001-two-source-rule.md) |
+| 1월 11일 | Tier 시스템 (트리거) | 소스 신뢰도 차별화 | [ADR-003](../adr/ADR-003-tier-system.md) |
+| 1월 13일 | VeriScore claims | 2026 SOTA 구현 | - |
+| 1월 15일 | Gate 순서 | 저렴한 것 → 비싼 것 순 | [ADR-002](../adr/ADR-002-gate-ordering.md) |
+| 1월 21일 | 하이브리드 검증 | LLM 비용 70% 절감 | [ADR-004](../adr/ADR-004-hybrid-verification.md) |
+| 1월 23일 | Zero-shot 분류기 | 추가 70% 절감 | [ADR-004](../adr/ADR-004-hybrid-verification.md) |
+| 1월 23일 | 국제 문제 집중 | 양보다 질 | - |
+| 1월 24일 | 속보 패스트패스 | Tier-1 소스 속도 | [ADR-007](../adr/ADR-007-breaking-news.md) |
+| 1월 24일 | 도메인 티어 시스템 | 도메인별 신뢰도 | [ADR-011](../adr/ADR-011-domain-tiers.md) |
+| 1월 24일 | Goldstein Scale 중요도 | 다차원 점수 | [ADR-008](../adr/ADR-008-importance-scoring.md) |
 
 ---
 
@@ -96,7 +109,8 @@ Jan 10, 2026 ──────────────────────�
 
 ---
 
-## Related Documentation
+## 관련 문서
 
-- [Architecture Decisions](../adr/README.md) - ADRs
-- [Architecture](../architecture/README.md) - 현재 설계
+- [아키텍처 결정](../adr/README.md) - ADRs
+- [아키텍처](../architecture/README.md) - 현재 설계
+- [알고리즘](../algorithms/README.md) - 핵심 알고리즘

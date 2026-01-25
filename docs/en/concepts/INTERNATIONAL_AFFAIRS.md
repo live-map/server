@@ -44,6 +44,7 @@ The current system's throughput is limited:
 | **military** | Military operations, weapons, exercises | military, army, navy, air force, defense, weapons, deployment | NATO expansion, joint exercises |
 | **terrorism** | Terror attacks, terrorist organizations | terrorist, terrorism, extremist, hostage, attack | ISIS attacks, Al-Qaeda |
 | **diplomacy** | Diplomatic negotiations, treaties, embassies | diplomat, embassy, treaty, negotiation, ambassador | Peace agreements, ambassador expulsion |
+| **humanitarian** | Humanitarian crises, refugee emergencies | refugee, humanitarian, famine, epidemic, displacement | Syrian refugee crisis, Yemen famine |
 
 ### 2.2 Keyword Mapping
 
@@ -86,6 +87,12 @@ INTERNATIONAL_AFFAIRS_KEYWORDS = {
         "ambassador", "envoy", "bilateral",
         "multilateral", "UN", "United Nations"
     ],
+    "humanitarian": [
+        "refugee", "refugees", "humanitarian",
+        "famine", "epidemic", "displacement",
+        "displaced", "asylum", "migration",
+        "aid worker", "humanitarian crisis"
+    ],
 }
 ```
 
@@ -120,7 +127,7 @@ international_affairs_categories: list[str] = [
 
 | Phase | Categories | Conditions |
 |-------|----------|------|
-| A (Current) | 7 international affairs categories | M1/M2 MacBook |
+| A (Current) | 8 international affairs categories | M1/M2 MacBook |
 | B | + natural_disaster | When GPU server is secured |
 | C | + economy, society | When Kubernetes distributed processing is available |
 
@@ -142,7 +149,7 @@ class AgentSettings(BaseSettings):
     # Define international affairs categories
     international_affairs_categories: list[str] = [
         "war", "conflict", "politics", "security",
-        "military", "terrorism", "diplomacy"
+        "military", "terrorism", "diplomacy", "humanitarian"
     ]
 
     # International affairs focus mode
@@ -207,6 +214,7 @@ security      - Terrorism, nuclear, cyberattacks
 military      - Military operations, weapons, exercises
 terrorism     - Terror attacks, terrorist organizations
 diplomacy     - Diplomatic negotiations, treaties, embassies
+humanitarian  - Refugee crises, famine, epidemics
 ```
 
 ---
@@ -240,7 +248,7 @@ diplomacy     - Diplomatic negotiations, treaties, embassies
 | Item | Setting |
 |------|------|
 | Sources | GDELT + Reddit only enabled |
-| Categories | 7 international affairs categories only |
+| Categories | 8 international affairs categories only |
 | Throughput | 5 articles per 15 minutes |
 | Cost | $100-200/month |
 
@@ -280,14 +288,15 @@ diplomacy     - Diplomatic negotiations, treaties, embassies
 ```
 Log per scan:
 [CATEGORY DISTRIBUTION]
-- war: 15 events (18%)
-- conflict: 12 events (15%)
-- politics: 25 events (31%)
-- security: 8 events (10%)
+- war: 15 events (17%)
+- conflict: 12 events (14%)
+- politics: 25 events (29%)
+- security: 8 events (9%)
 - military: 10 events (12%)
 - terrorism: 5 events (6%)
 - diplomacy: 5 events (6%)
-- excluded: 83 events (natural_disaster, economy, etc.)
+- humanitarian: 6 events (7%)
+- excluded: 77 events (natural_disaster, economy, etc.)
 ```
 
 ### 7.2 Investigation Success Rate

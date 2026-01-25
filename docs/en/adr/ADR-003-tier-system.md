@@ -1,11 +1,20 @@
-# ADR-003: Tier Classification System
+# ADR-003: Trigger Tier Classification System
 
 ## Status
-Accepted
+Accepted (Updated January 2026)
+
+## Note on Tier Systems
+
+This ADR describes the **Trigger Tier System** for classifying data source APIs (GDELT, USGS, Reddit, etc.).
+
+A separate **Domain Tier System** was introduced in [ADR-011](ADR-011-domain-tiers.md) for classifying individual news domains (reuters.com, bbc.com, etc.). The two systems work together:
+
+- **Trigger Tiers**: Classify the data source/API (where we get data from)
+- **Domain Tiers**: Classify the content publisher (who wrote the article)
 
 ## Context
 
-Our system aggregates news from multiple sources with vastly different credibility levels:
+Our system aggregates news from multiple trigger sources with vastly different credibility levels:
 - Government agencies (USGS, NOAA) publish authoritative data
 - Major news aggregators (GDELT via Reuters, AP) have editorial oversight
 - News APIs aggregate from various publishers
@@ -132,3 +141,8 @@ TIER_WEIGHTS = {
 - Implementation: `app/agent/triggers/base.py`
 - Confidence scoring: `app/agent/confidence_scorer.py`
 - Project docs: `docs/concepts/README.md`
+
+## Related ADRs
+- [ADR-011: Domain Tiers](ADR-011-domain-tiers.md) - Per-domain credibility (complements this ADR)
+- [ADR-007: Breaking News](ADR-007-breaking-news.md) - Uses both tier systems
+- [ADR-001: Two-Source Rule](ADR-001-two-source-rule.md) - Publication requirements

@@ -10,12 +10,15 @@ Architecture Decision Record (ADR)는 중요한 아키텍처 결정과 그 맥�
 
 | ADR | 제목 | 상태 | 날짜 |
 |-----|-------|--------|------|
-| [ADR-001](ADR-001-two-source-rule.md) | Two-Source Rule | Accepted | 2024-01 |
-| [ADR-002](ADR-002-gate-ordering.md) | Gate Ordering | Accepted | 2024-01 |
-| [ADR-003](ADR-003-tier-system.md) | Tier Classification System | Accepted | 2024-01 |
-| [ADR-004](ADR-004-hybrid-verification.md) | Hybrid Event Verification | Accepted | 2024-01 |
-| [ADR-005](ADR-005-bilingual-generation.md) | Bilingual Article Generation | Accepted | 2024-01 |
-| [ADR-006](ADR-006-deduplication.md) | Two-Layer Deduplication | Accepted | 2024-01 |
+| [ADR-001](ADR-001-two-source-rule.md) | Two-Source Rule | Accepted | 2026-01-10 |
+| [ADR-002](ADR-002-gate-ordering.md) | Gate Ordering | Accepted | 2026-01-15 |
+| [ADR-003](ADR-003-tier-system.md) | 트리거 티어 시스템 | Accepted | 2026-01-11 |
+| [ADR-004](ADR-004-hybrid-verification.md) | Hybrid Event Verification | Accepted | 2026-01-21 |
+| [ADR-005](ADR-005-bilingual-generation.md) | Bilingual Article Generation | Accepted | 2026-01-23 |
+| [ADR-006](ADR-006-deduplication.md) | Two-Layer Deduplication | Accepted | 2026-01-21 |
+| [ADR-007](ADR-007-breaking-news.md) | 속보 패스트패스 | Accepted | 2026-01-24 |
+| [ADR-008](ADR-008-importance-scoring.md) | Goldstein Scale 중요도 | Accepted | 2026-01-24 |
+| [ADR-011](ADR-011-domain-tiers.md) | 도메인 티어 시스템 | Accepted | 2026-01-24 |
 
 ## ADR 템플릿
 

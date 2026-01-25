@@ -7,31 +7,25 @@ This section documents the evolution of the LiveMap system from initial concept 
 ## Timeline Overview
 
 ```
-Jan 10, 2026 ──────────────────────────────────────────────────────────────────►
+Jan 10, 2026 ──────────────────────────────────────────────────────► Jan 24
     │
     ├── Phase 0: Foundation (Jan 10)
-    │   └── Telegram MCP, basic trigger system
+    │   └── Telegram MCP, GDELT trigger, basic infrastructure
     │
-    ├── Phase 1: Verification (Jan 10-11)
-    │   └── 3-stage verification pipeline
+    ├── Phase 1: Verification Evolution (Jan 10-14)
+    │   └── 3-stage → RAG → GDELT → Claim-level SOTA
     │
-    ├── Phase 2: Autonomous Agent (Jan 11-13)
-    │   └── Multi-source investigation, claim verification
+    ├── Phase 2: Security and Quality (Jan 15-19)
+    │   └── JWT → JWE migration, significance scoring
     │
-    ├── Phase 3: Parallel Processing (Jan 13)
-    │   └── LangGraph agents, parallel evidence gathering
+    ├── Phase 3: Intelligence Layer (Jan 19-23)
+    │   └── Zero-shot ML, 91% cost reduction, gate system
     │
-    ├── Phase 4: Content Filtering (Jan 15-21)
-    │   └── Gate 0-2, event verification, checkworthiness
+    ├── Phase 4: Source Management (Jan 23-24)
+    │   └── Recency filters, category classification
     │
-    ├── Phase 5: Integration (Jan 21-22)
-    │   └── Scanner-Agent integration, DB persistence
-    │
-    ├── Phase 6: International Focus (Jan 23)
-    │   └── 7 category focus, resource optimization
-    │
-    └── Phase 7: Zero-shot ML (Jan 23)
-        └── BART-MNLI classifier, 91% cost reduction
+    └── Phase 5: Optimization (Jan 24)
+        └── Breaking news fast-path, P0/P1/P2 optimizations
 ```
 
 ---
@@ -47,23 +41,37 @@ Jan 10, 2026 ──────────────────────�
 | v3.1 | Jan 14 | Production-ready quality |
 | v3.2 | Jan 21 | Gate system integration |
 | v3.3 | Jan 23 | Zero-shot ML classifier |
+| v3.4 | Jan 24 | Breaking news fast-path |
+| v3.5 | Jan 24 | P0/P1/P2 optimizations |
 
 ---
 
 ## Phase Documentation
 
-### Current Architecture (Phase 7)
+### Current Architecture (Phase 5)
 
-The system now uses a 7-stage pipeline with 3-stage hybrid verification:
+The system now uses an optimized pipeline with breaking news fast-path and 6-dimension importance scoring:
 
-1. [Phase 0: Foundation](PHASE_0_FOUNDATION.md) - Initial Telegram MCP
-2. [Phase 1: Verification](PHASE_1_VERIFICATION.md) - 3-stage pipeline
-3. [Phase 2: Autonomous Agent](PHASE_2_AUTONOMOUS.md) - Multi-source investigation
-4. [Phase 3: Parallel Processing](PHASE_3_PARALLEL.md) - LangGraph agents
-5. [Phase 4: Content Filtering](PHASE_4_FILTERING.md) - Gate system
-6. [Phase 5: Integration](PHASE_5_INTEGRATION.md) - Full pipeline
-7. [Phase 6: International Focus](PHASE_6_INTERNATIONAL.md) - Category focus
-8. [Phase 7: Zero-shot ML](PHASE_7_ZERO_SHOT.md) - ML classifier
+| Phase | Document | Summary |
+|-------|----------|---------|
+| 0 | [Foundation](PHASE_0_FOUNDATION.md) | Telegram MCP, GDELT, basic setup |
+| 1 | [Verification Evolution](PHASE_1_VERIFICATION_EVOLUTION.md) | 3-stage → Claim-level SOTA |
+| 2 | [Security and Quality](PHASE_2_SECURITY_AND_QUALITY.md) | JWE auth, significance scoring |
+| 3 | [Intelligence Layer](PHASE_3_INTELLIGENCE_LAYER.md) | Zero-shot ML, 91% cost reduction |
+| 4 | [Source Management](PHASE_4_SOURCE_MANAGEMENT.md) | Recency filters, categories |
+| 5 | [Optimization](PHASE_5_OPTIMIZATION.md) | Breaking news, P0/P1/P2 |
+
+---
+
+## Key Metrics
+
+| Metric | Initial | Current | Improvement |
+|--------|---------|---------|-------------|
+| LLM cost/day | $16.13 | $1.44 | -91% |
+| Verification time | 45s | 8s avg | -82% |
+| Breaking news latency | N/A | 5s | New |
+| Data sources | 1 | 12+ | +1100% |
+| False positive rate | ~20% | ~5% | -75% |
 
 ---
 
@@ -71,22 +79,27 @@ The system now uses a 7-stage pipeline with 3-stage hybrid verification:
 
 Documents for deprecated approaches:
 
+- [Phase 7 Zero-Shot (Original)](archive/PHASE_7_ZERO_SHOT.md) - Merged into Phase 3
 - [Deep Verification v2.0](archive/DEEP_VERIFICATION_V2.md) - Replaced by v3.0 claim-level
 - [Claim Verification Plan](archive/CLAIM_VERIFICATION_PLAN.md) - Completed planning doc
+- [Methodology](archive/METHODOLOGY.md) - Original methodology
 
 ---
 
 ## Key Decisions Timeline
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| Jan 10 | Two-Source Rule | IFCN compliance |
-| Jan 11 | Tier system | Differentiate source credibility |
-| Jan 13 | VeriScore claims | 2026 SOTA implementation |
-| Jan 15 | Gate ordering | Most → least expensive |
-| Jan 21 | Hybrid verification | 70% LLM cost reduction |
-| Jan 23 | Zero-shot classifier | Additional 70% reduction |
-| Jan 23 | International focus | Quality over quantity |
+| Date | Decision | Rationale | ADR |
+|------|----------|-----------|-----|
+| Jan 10 | Two-Source Rule | IFCN compliance | [ADR-001](../adr/ADR-001-two-source-rule.md) |
+| Jan 11 | Tier system (Triggers) | Differentiate source credibility | [ADR-003](../adr/ADR-003-tier-system.md) |
+| Jan 13 | VeriScore claims | 2026 SOTA implementation | - |
+| Jan 15 | Gate ordering | Most → least expensive | [ADR-002](../adr/ADR-002-gate-ordering.md) |
+| Jan 21 | Hybrid verification | 70% LLM cost reduction | [ADR-004](../adr/ADR-004-hybrid-verification.md) |
+| Jan 23 | Zero-shot classifier | Additional 70% reduction | [ADR-004](../adr/ADR-004-hybrid-verification.md) |
+| Jan 23 | International focus | Quality over quantity | - |
+| Jan 24 | Breaking news fast-path | Speed for Tier-1 sources | [ADR-007](../adr/ADR-007-breaking-news.md) |
+| Jan 24 | Domain tier system | Per-domain credibility | [ADR-011](../adr/ADR-011-domain-tiers.md) |
+| Jan 24 | Goldstein Scale importance | Multi-dimension scoring | [ADR-008](../adr/ADR-008-importance-scoring.md) |
 
 ---
 
@@ -100,3 +113,4 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 - [Architecture Decisions](../adr/README.md) - ADRs
 - [Architecture](../architecture/README.md) - Current design
+- [Algorithms](../algorithms/README.md) - Core algorithms

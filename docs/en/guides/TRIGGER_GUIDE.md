@@ -344,6 +344,134 @@ class TestNewsAPITrigger:
 - [ ] Write unit tests
 - [ ] Document API limits and rate limiting
 
+## Available Triggers
+
+### Tier-1 Triggers
+
+#### GDELT (Global Database of Events, Language, and Tone)
+
+Primary news aggregation from global media.
+
+```python
+# Configuration
+gdelt_enabled: bool = True
+gdelt_keywords: list[str] = ["conflict", "war", "attack", ...]
+gdelt_max_records: int = 100
+```
+
+**API:** `https://api.gdeltproject.org/api/v2/doc/doc`
+**Tier:** `tier1_news` (0.90 credibility)
+
+#### GDELT Anomaly Detection
+
+Detects unusual event spikes in GDELT data.
+
+```python
+# Configuration
+gdelt_anomaly_enabled: bool = True
+gdelt_anomaly_threshold: float = 2.0  # Standard deviations
+```
+
+**Detects:** Volume spikes indicating breaking news
+**Tier:** `tier1_news` (0.90 credibility)
+
+#### USGS (US Geological Survey)
+
+Official earthquake data.
+
+```python
+# Configuration
+usgs_enabled: bool = True
+usgs_min_magnitude: float = 4.5
+```
+
+**API:** `https://earthquake.usgs.gov/fdsnws/event/1/query`
+**Tier:** `tier1_govt` (0.99 credibility)
+
+#### NOAA (National Oceanic and Atmospheric Administration)
+
+Weather and climate events.
+
+```python
+# Configuration
+noaa_enabled: bool = True
+noaa_event_types: list[str] = ["hurricane", "tornado", ...]
+```
+
+**Tier:** `tier1_govt` (0.99 credibility)
+
+#### EMSC (European-Mediterranean Seismological Centre)
+
+European earthquake monitoring.
+
+```python
+# Configuration
+emsc_enabled: bool = True
+emsc_min_magnitude: float = 4.0
+emsc_region: str = "euro-med"
+```
+
+**API:** `https://www.seismicportal.eu/fdsnws/event/1/query`
+**Tier:** `tier1_govt` (0.99 credibility)
+
+### Tier-2 Triggers
+
+#### Currents API
+
+Multi-source news aggregation.
+
+```python
+# Configuration
+currents_enabled: bool = True
+currents_api_key: str = "YOUR_API_KEY"
+currents_language: str = "en"
+```
+
+**API:** `https://api.currentsapi.services/v1/search`
+**Tier:** `tier2_news` (0.75 credibility)
+
+#### WorldNews API
+
+Multi-language news aggregation.
+
+```python
+# Configuration
+worldnews_enabled: bool = True
+worldnews_api_key: str = "YOUR_API_KEY"
+worldnews_languages: list[str] = ["en", "es", "fr", "de"]
+```
+
+**API:** `https://api.worldnewsapi.com/search-news`
+**Tier:** `tier2_news` (0.75 credibility)
+
+### Tier-3 Triggers (Social)
+
+#### Reddit
+
+Social media news aggregation.
+
+```python
+# Configuration
+reddit_enabled: bool = True
+reddit_subreddits: list[str] = ["worldnews", "news", "geopolitics"]
+```
+
+**Tier:** `tier3_social` (0.40 credibility)
+
+#### Telegram
+
+Messaging platform monitoring.
+
+```python
+# Configuration
+telegram_enabled: bool = True
+telegram_channels: list[str] = ["channel1", "channel2"]
+```
+
+**Tier:** `tier3_msg` (0.35 credibility)
+
+---
+
 ## Best Practices
 
 1. **Rate Limiting**: Respect API rate limits

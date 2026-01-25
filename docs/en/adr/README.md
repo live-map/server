@@ -10,12 +10,15 @@ An Architecture Decision Record (ADR) captures an important architectural decisi
 
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
-| [ADR-001](ADR-001-two-source-rule.md) | Two-Source Rule | Accepted | 2024-01 |
-| [ADR-002](ADR-002-gate-ordering.md) | Gate Ordering | Accepted | 2024-01 |
-| [ADR-003](ADR-003-tier-system.md) | Tier Classification System | Accepted | 2024-01 |
-| [ADR-004](ADR-004-hybrid-verification.md) | Hybrid Event Verification | Accepted | 2024-01 |
-| [ADR-005](ADR-005-bilingual-generation.md) | Bilingual Article Generation | Accepted | 2024-01 |
-| [ADR-006](ADR-006-deduplication.md) | Two-Layer Deduplication | Accepted | 2024-01 |
+| [ADR-001](ADR-001-two-source-rule.md) | Two-Source Rule | Accepted | 2026-01-10 |
+| [ADR-002](ADR-002-gate-ordering.md) | Gate Ordering | Accepted | 2026-01-15 |
+| [ADR-003](ADR-003-tier-system.md) | Trigger Tier System | Accepted | 2026-01-11 |
+| [ADR-004](ADR-004-hybrid-verification.md) | Hybrid Event Verification | Accepted | 2026-01-21 |
+| [ADR-005](ADR-005-bilingual-generation.md) | Bilingual Article Generation | Accepted | 2026-01-23 |
+| [ADR-006](ADR-006-deduplication.md) | Two-Layer Deduplication | Accepted | 2026-01-21 |
+| [ADR-007](ADR-007-breaking-news.md) | Breaking News Fast-Path | Accepted | 2026-01-24 |
+| [ADR-008](ADR-008-importance-scoring.md) | Goldstein Scale Importance | Accepted | 2026-01-24 |
+| [ADR-011](ADR-011-domain-tiers.md) | Domain Tier System | Accepted | 2026-01-24 |
 
 ## ADR Template
 

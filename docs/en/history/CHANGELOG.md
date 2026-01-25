@@ -4,17 +4,61 @@ All notable changes to the LiveMap backend are documented here.
 
 ---
 
+## [3.5.0] - 2026-01-24
+
+### Added
+- **P2 Pipeline Metrics System**: Per-stage tracking with pass/reject rates
+- **Centralized Patterns Module**: Consolidated regex patterns for maintainability
+- **Early Importance Filter**: Filter low-importance events before gate processing
+
+### Changed
+- LLM timeout reduced to 30 seconds for faster failure recovery
+- Error tracking improved with structured logging
+
+### Removed
+- Dead code cleanup: ~500 lines of unused code removed
+
+### Performance
+- Pipeline visibility: Full observability across 7 filter stages
+
+---
+
+## [3.4.0] - 2026-01-24
+
+### Added
+- **Breaking News Fast-Path (P0)**: Tier-1/2 sources can skip verification gates
+- **Domain Tier System**: 4-tier domain-based credibility (Tier-1 to Tier-4)
+- **Goldstein Scale Importance Scoring (P1)**: 6-dimension event importance evaluation
+- **Multi-Search Engine Support**: DuckDuckGo, Google, Bing with fallback
+- **Currents API Trigger**: New Tier-2 news source
+- **WorldNews API Trigger**: Multi-language news aggregation
+
+### Changed
+- Confidence scoring now integrates domain tier evaluation
+- Two-Source Rule: Tier-1/2 domains can publish with single source
+- Cross-source matching threshold: 0.70 → 0.75
+
+### Performance
+- Breaking news latency: 45s → 5s (-89%)
+- Low-importance events filtered: +40% reduction in processing
+
+---
+
 ## [3.3.0] - 2026-01-23
 
 ### Added
 - **Zero-shot classifier** (BART-MNLI) for event verification Stage 2
 - 3-stage hybrid verification pipeline (Rules → Zero-shot → LLM)
-- International affairs focus with 7 categories
+- International affairs focus with 8 categories
 - Multilingual sports pattern detection (Korean, Arabic, Chinese)
+- Related sources section for legal compliance
+- URL date extraction for recency filtering
+- Wikipedia/archive source blocking
 
 ### Changed
 - Event verification cost reduced from $4.80/day to $1.44/day (91% total reduction)
 - Scanner now filters non-international events early
+- Categories expanded from 7 to 8 (added Nuclear/WMD)
 
 ### Performance
 - LLM calls reduced by 90% through zero-shot pre-filtering
@@ -27,6 +71,11 @@ All notable changes to the LiveMap backend are documented here.
 - Gate 0: Rule-based event verification
 - Gate 1: Check-worthiness filter
 - Gate 2: Specificity filter
+- Gate 3: Evidence sufficiency gate
+- DBSCAN event clustering for story grouping
+- Evidence grounding enforcement
+- Source credibility weighting
+- Two-source minimum requirement
 - Scanner-Agent integration
 
 ### Changed

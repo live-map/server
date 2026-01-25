@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Confidence Scorer calculates a 0.0-0.99 score representing how trustworthy an event is based on its sources. This implements the Two-Source Rule from journalism.
+The Confidence Scorer calculates a 0.0-0.99 score representing how trustworthy an event is based on its sources. This implements the Two-Source Rule from journalism with domain tier integration.
 
 ## Score Components
 
@@ -12,16 +12,20 @@ The final score is computed from three components:
 final_score = (base_score × 0.5) + (tier_average × 0.5) + diversity_bonus
 ```
 
-### 1. Base Score (Source Count)
+### 1. Base Score (Source Count + Domain Tier)
 
-| Source Count | Base Score |
-|--------------|------------|
-| 0 | 0.00 |
-| 1 | 0.50 |
-| 2 | 0.70 |
-| 3+ | 0.85 |
+The base score now considers domain tier for single-source events:
 
-**Rationale:** More sources provide more verification.
+| Source Count | Domain Tier | Base Score |
+|--------------|-------------|------------|
+| 0 | - | 0.00 |
+| 1 | Tier-1 (wire) | 0.75 |
+| 1 | Tier-2 (major) | 0.65 |
+| 1 | Tier-3/4 | 0.50 |
+| 2 | - | 0.70 |
+| 3+ | - | 0.85 |
+
+**Rationale:** Tier-1 wire services (Reuters, AP) have higher credibility even as single sources.
 
 ### 2. Tier Average (Source Quality)
 
@@ -99,17 +103,73 @@ final = (0.85 × 0.5) + (0.683 × 0.5) + 0.06
 | 0.50 - 0.69 | MEDIUM | review_required |
 | 0.00 - 0.49 | LOW | do_not_publish |
 
-## Two-Source Rule
+## Domain Tier Integration
 
-The Two-Source Rule is satisfied when:
-1. **2+ independent sources**, OR
-2. **Single Tier-1 government source** (USGS, NOAA)
+The confidence scorer integrates with the domain tier system for enhanced single-source handling:
+
+### Domain Tier Evaluation
 
 ```python
-def _check_two_source_rule(sources: list[dict]) -> bool:
+def evaluate_with_domain_tier(sources: list[dict]) -> dict:
+    # Get domain tier for each source
+    for source in sources:
+        source["domain_tier"] = get_domain_tier(source["url"])
+        source["credibility_weight"] = get_credibility_weight(source["url"])
+
+    # Evaluate publication eligibility
+    return evaluate_source_mix(sources)
+```
+
+### Enhanced Two-Source Rule
+
+The Two-Source Rule is now satisfied when:
+1. **Single Tier-1 domain source** (Reuters, AP, AFP, government)
+2. **Single Tier-2 domain source** (with 60-min verification)
+3. **Single Tier-1 trigger source** (USGS, NOAA)
+4. **2+ independent sources from different domains**
+
+```python
+def _check_two_source_rule(
+    sources: list[dict],
+    domain_tier_eval: dict | None = None,
+) -> bool:
+    # Single Tier-1 government trigger source
     if len(sources) == 1:
-        return sources[0].get("tier") == "tier1_govt"
-    return len(sources) >= 2
+        if sources[0].get("tier") == "tier1_govt":
+            return True
+
+    # Domain tier allows single-source publishing
+    if domain_tier_eval and domain_tier_eval.get("can_publish"):
+        action = domain_tier_eval.get("recommended_action", "")
+        if action in ("PUBLISH_IMMEDIATE", "PUBLISH_WITH_VERIFICATION"):
+            return True
+
+    # Standard Two-Source Rule
+    if len(sources) < 2:
+        return False
+
+    unique_domains = set(get_domain(s["url"]) for s in sources)
+    return len(unique_domains) >= 2
+```
+
+### Tier-Based Base Score
+
+```python
+def _calculate_base_score(sources: list[dict]) -> float:
+    if len(sources) == 0:
+        return 0.0
+    elif len(sources) == 1:
+        # Check domain tier for single-source boost
+        domain_tier = get_domain_tier(sources[0].get("url", ""))
+        if domain_tier == DomainTier.TIER_1:
+            return 0.75  # Wire service boost
+        elif domain_tier == DomainTier.TIER_2:
+            return 0.65  # Major outlet boost
+        return 0.50
+    elif len(sources) == 2:
+        return 0.70
+    else:
+        return 0.85
 ```
 
 ## Publication Decision
@@ -173,5 +233,8 @@ app/agent/confidence_scorer.py
 
 ## Related Documentation
 - [Cross-Source Matcher](CROSS_SOURCE_MATCHER.md)
+- [Source Tiers](SOURCE_TIERS.md) - Domain tier system
+- [Importance Scoring](IMPORTANCE_SCORING.md) - Event importance
 - [ADR-001: Two-Source Rule](../adr/ADR-001-two-source-rule.md)
-- [ADR-003: Tier System](../adr/ADR-003-tier-system.md)
+- [ADR-003: Tier System](../adr/ADR-003-tier-system.md) - Trigger tiers
+- [ADR-011: Domain Tiers](../adr/ADR-011-domain-tiers.md) - Domain tiers
