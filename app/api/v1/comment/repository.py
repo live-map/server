@@ -54,9 +54,13 @@ class CommentRepository:
         Returns:
             Comment | None
         """
-        stmt = select(Comment).where(
-            Comment.id == comment_id,
-            Comment.is_deleted == False,
+        stmt = (
+            select(Comment)
+            .options(selectinload(Comment.user))  # 작성자 eager load
+            .where(
+                Comment.id == comment_id,
+                Comment.is_deleted == False,
+            )
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()

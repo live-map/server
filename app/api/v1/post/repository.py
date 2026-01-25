@@ -82,7 +82,7 @@ class PostRepository:
     # Not recommended to use this method to fetch all posts by user_id
     # Becuase it will be slow and inefficient because it will fetch all posts and then filter them by user_id
     # Instead, use the query with user_id directly in the service layer
-    # Use only when you need to fetch all posts!!!  전체 게시글 조회시에만 사용 !!! 
+    # Use only when you need to fetch all posts!!!  전체 게시글 조회시에만 사용 !!!
     async def get_all(
         self,
         limit: int = 20,
@@ -91,7 +91,7 @@ class PostRepository:
     ) -> Sequence[Post]:
         """
 
-        !!! 전체 게시글 조회시에만 사용 !!! 
+        !!! 전체 게시글 조회시에만 사용 !!!
 
         게시글 목록 조회 (페이지네이션).
 
@@ -103,7 +103,14 @@ class PostRepository:
         Returns:
             Sequence[Post]: 게시글 목록
         """
-        stmt = select(Post).where(Post.is_deleted == False)
+        stmt = (
+            select(Post)
+            .options(
+                selectinload(Post.user),      # 작성자 eager load
+                selectinload(Post.comments),  # 댓글 eager load (for count)
+            )
+            .where(Post.is_deleted == False)
+        )
 
         if user_id:
             stmt = stmt.where(Post.user_id == user_id)

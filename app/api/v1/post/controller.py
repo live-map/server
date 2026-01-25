@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/posts", tags=["posts"])
 
 
+
 # ========================================
 # Dependencies
 # ========================================
@@ -45,6 +46,7 @@ async def get_post_service(
     """PostService 의존성 주입."""
     return PostService(session)
 
+postServiceDep = Annotated[PostService, Depends(get_post_service)]
 
 # ========================================
 # Post Endpoints
@@ -135,7 +137,7 @@ async def list_posts(
 )
 async def get_post(
     post_id: uuid.UUID,
-    service: PostServiceDep,
+    service: postServiceDep,
 ) -> PostResponse:
     """게시글 상세 정보를 조회합니다."""
     post = await service.get_post_with_comments(post_id)
@@ -168,7 +170,7 @@ async def update_post(
     post_id: uuid.UUID,
     data: PostUpdate,
     current_user: CurrentUser,
-    service: PostServiceDep,
+    service: postServiceDep,
 ) -> PostResponse:
     """
     게시글을 수정합니다.
@@ -207,7 +209,7 @@ async def update_post(
 async def delete_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
-    service: PostServiceDep,
+    service: postServiceDep,
 ) -> None:
     """
     게시글을 삭제합니다 (소프트 삭제).
@@ -235,7 +237,7 @@ async def delete_post(
 async def hard_delete_post(
     post_id: uuid.UUID,
     current_admin: CurrentAdmin,
-    service: PostServiceDep,
+    service: postServiceDep,
 ) -> None:
     """
     게시글을 완전 삭제합니다 (하드 삭제).
