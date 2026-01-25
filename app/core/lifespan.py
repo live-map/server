@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
@@ -25,21 +26,26 @@ logger = logging.getLogger(__name__)
 # Global task reference for cleanup
 _scanner_task: asyncio.Task | None = None
 
+# Store current log file path for reference
+_current_log_file: str | None = None
+
 
 def setup_logging():
-    """Configure logging with file output for overnight debugging.
+    """Configure logging with per-session file output.
 
-    Logs are written to:
+    Each server start creates a new timestamped log file:
     - Console: All activity with timestamp (HH:MM:SS format)
-    - File: logs/livemap.log with full timestamp (YYYY-MM-DD HH:MM:SS)
+    - File: logs/livemap_YYYY-MM-DD_HH-MM-SS.log
 
-    File rotation: 10MB max size, 5 backup files (max 50MB total)
+    Old logs are preserved for debugging. Clean up manually or via cron.
     """
+    global _current_log_file
+
     # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
 
-    # === Console handler (existing) ===
+    # === Console handler ===
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
     console_formatter = logging.Formatter(
@@ -48,14 +54,28 @@ def setup_logging():
     )
     console_handler.setFormatter(console_formatter)
 
-    # === File handler (new for overnight debugging) ===
+    # === File handler (timestamped per session) ===
     log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
     os.makedirs(log_dir, exist_ok=True)
 
-    file_handler = RotatingFileHandler(
-        os.path.join(log_dir, "livemap.log"),
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=5,
+    # Create timestamped log filename for this session
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_filename = f"livemap_{timestamp}.log"
+    log_path = os.path.join(log_dir, log_filename)
+    _current_log_file = log_path
+
+    # Also create/update a symlink to the latest log for convenience
+    latest_link = os.path.join(log_dir, "livemap_latest.log")
+    try:
+        if os.path.islink(latest_link):
+            os.unlink(latest_link)
+        os.symlink(log_filename, latest_link)
+    except OSError:
+        # Symlinks may fail on Windows, ignore
+        pass
+
+    file_handler = logging.FileHandler(
+        log_path,
         encoding="utf-8",
     )
     file_handler.setLevel(logging.INFO)
@@ -81,7 +101,39 @@ def setup_logging():
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
     # Log startup
-    logger.info(f"Logging initialized - file output: {os.path.join(log_dir, 'livemap.log')}")
+    logger.info(f"Logging initialized - session log: {log_path}")
+
+
+def cleanup_old_logs(keep_days: int = 7):
+    """Remove log files older than keep_days.
+
+    Call this periodically or on startup to prevent disk space issues.
+    """
+    log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+    if not os.path.exists(log_dir):
+        return
+
+    cutoff_time = datetime.now().timestamp() - (keep_days * 24 * 60 * 60)
+    removed_count = 0
+
+    for filename in os.listdir(log_dir):
+        if not filename.startswith("livemap_") or not filename.endswith(".log"):
+            continue
+        if filename == "livemap_latest.log":
+            continue
+
+        filepath = os.path.join(log_dir, filename)
+        if os.path.isfile(filepath):
+            file_mtime = os.path.getmtime(filepath)
+            if file_mtime < cutoff_time:
+                try:
+                    os.remove(filepath)
+                    removed_count += 1
+                except OSError:
+                    pass
+
+    if removed_count > 0:
+        logger.info(f"Cleaned up {removed_count} old log files (older than {keep_days} days)")
 
 
 async def run_scheduled_scan():
@@ -367,8 +419,11 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
     global _scanner_task
 
-    # Setup logging first
+    # Setup logging first (creates new timestamped log file)
     setup_logging()
+
+    # Clean up old logs (keep last 7 days)
+    cleanup_old_logs(keep_days=7)
 
     # Validate required configuration
     if not agent_settings.openai_api_key:
