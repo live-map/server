@@ -19,7 +19,7 @@ from typing import Annotated, Literal
 # P2: LLM timeout constant (seconds)
 LLM_TIMEOUT_SECONDS = 60.0
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -33,7 +33,7 @@ from .graph import (
     InvestigationState,
     VerifiedFact,
 )
-from .tools import ALL_TOOLS
+from .tools import INVESTIGATOR_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class InvestigationAgent:
             model=agent_settings.llm_model,
             temperature=agent_settings.llm_temperature,
             api_key=agent_settings.openai_api_key,
-        ).bind_tools(ALL_TOOLS)
+        ).bind_tools(INVESTIGATOR_TOOLS)
 
         # LLM (도구 없음) - 검증/발행용
         self.llm_no_tools = ChatOpenAI(
@@ -79,7 +79,7 @@ class InvestigationAgent:
         # 노드 추가
         graph.add_node("planner", self._plan_node)
         graph.add_node("executor", self._execute_node)
-        graph.add_node("tools", ToolNode(ALL_TOOLS))
+        graph.add_node("tools", ToolNode(INVESTIGATOR_TOOLS))
         graph.add_node("verifier", self._verify_node)
         graph.add_node("publisher", self._publish_node)
 
@@ -271,20 +271,19 @@ Investigation plan:
 
 Already collected {len(collected)} items.
 
-=== COST OPTIMIZATION: USE FREE TOOLS FIRST ===
+=== INVESTIGATION TOOLS (Unlimited Free APIs) ===
 
-FREE NEWS TOOLS (use these first):
+FREE NEWS TOOLS (unlimited):
 1. search_news_gdelt - FREE: For breaking news, conflicts, protests (100,000+ sources)
 2. search_news_ddg - FREE: For recent news (DuckDuckGo News)
-3. search_news_brave - FREE: For broader coverage (2000/month, auto-translates queries)
 
-FREE WEB/SOCIAL TOOLS:
-4. search_web_free - FREE: For general web search (DuckDuckGo)
-5. search_telegram - FREE: For real-time footage and local reports
-6. search_youtube - FREE: For video content
+FREE WEB/SOCIAL TOOLS (unlimited):
+3. search_web_free - FREE: For general web search (DuckDuckGo)
+4. search_telegram - FREE: For real-time footage and local reports
+5. search_youtube - FREE: For video content
 
 PAID TOOLS (use only if free tools fail):
-7. search_web - PAID: High-quality search (Tavily) - USE ONLY AS LAST RESORT
+6. search_web - PAID: High-quality search (Tavily) - USE ONLY AS LAST RESORT
 
 UTILITY TOOLS:
 - get_video_info: Video metadata
@@ -292,7 +291,7 @@ UTILITY TOOLS:
 
 RULES:
 1. ALWAYS start with search_news_gdelt for news/events
-2. Use search_news_ddg and search_news_brave for additional coverage
+2. Use search_news_ddg for additional recent news coverage
 3. Use search_web_free for general information
 4. ONLY use search_web (paid) if free tools return <3 results
 5. Focus on getting diverse sources from different outlets
@@ -315,7 +314,7 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
         # 디버깅: LLM 응답 확인
         if hasattr(response, 'tool_calls') and response.tool_calls:
             tools_called = [t['name'] for t in response.tool_calls]
-            print(f"[EXECUTOR] Calling tools: {', '.join(tools_called)}")
+            logger.debug(f"[EXECUTOR] Calling tools: {', '.join(tools_called)}")
 
         return {
             **state,
@@ -331,7 +330,7 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
 
         # 도구 호출 횟수 제한 (5회)
         if tool_calls_count >= 5:
-            print(f"[EXECUTOR] Tool limit reached, moving to verification")
+            logger.debug("[EXECUTOR] Tool limit reached, moving to verification")
             return "verify"
 
         if not messages:
@@ -367,13 +366,13 @@ If you have enough information (10+ items from multiple sources), say "COLLECTIO
 
         # 메시지에서 도구 결과 추출하여 collected_items 업데이트
         messages = state.get("messages", [])
-        print(f"[VERIFIER] Processing {len(messages)} messages...")
+        logger.debug(f"[VERIFIER] Processing {len(messages)} messages...")
 
         collected = self._extract_tool_results(messages)
-        print(f"[VERIFIER] Extracted {len(collected)} items from tools")
+        logger.debug(f"[VERIFIER] Extracted {len(collected)} items from tools")
 
         if not collected:
-            print(f"[VERIFIER] No data collected, skipping verification")
+            logger.debug("[VERIFIER] No data collected, skipping verification")
             return {**state, "verified_facts": [], "status": "done"}
 
         # 수집된 정보 요약
@@ -422,7 +421,7 @@ CONFLICTS:
             return {**state, "status": "failed", "error": "LLM timeout in verification"}
 
         verified_facts = self._parse_verification(response.content)
-        print(f"[VERIFIER] Found {len(verified_facts)} verified facts")
+        logger.info(f"[VERIFIER] Found {len(verified_facts)} verified facts")
 
         return {
             **state,
@@ -498,7 +497,7 @@ Keep it factual and cite sources."""
             logger.error(f"LLM timeout in _publish_node after {LLM_TIMEOUT_SECONDS}s")
             return {**state, "status": "failed", "error": "LLM timeout in publishing"}
 
-        print(f"[PUBLISHER] Generating final report...")
+        logger.info("[PUBLISHER] Generating final report...")
 
         # 리포트 구성
         report = {

@@ -6,7 +6,6 @@ Social media tools for investigation agent.
 """
 
 import logging
-from datetime import datetime, timezone
 
 from langchain_core.tools import tool
 
@@ -14,45 +13,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum age for social media content (30 days)
 MAX_AGE_DAYS = 30
-
-
-def _is_recent_published_date(published_at: str, max_age_days: int = MAX_AGE_DAYS) -> bool:
-    """
-    Check if published date is within the maximum age limit.
-
-    Args:
-        published_at: ISO 8601 date string (e.g., "2026-01-20T12:00:00Z")
-        max_age_days: Maximum age in days
-
-    Returns:
-        True if the content is recent enough, False otherwise
-    """
-    if not published_at:
-        # Can't determine date, allow by default
-        return True
-
-    try:
-        # Handle various ISO formats
-        published_at = published_at.replace("Z", "+00:00")
-        pub_date = datetime.fromisoformat(published_at)
-
-        # Make sure we have timezone-aware datetime
-        if pub_date.tzinfo is None:
-            pub_date = pub_date.replace(tzinfo=timezone.utc)
-
-        now = datetime.now(timezone.utc)
-        age_days = (now - pub_date).days
-
-        if age_days > max_age_days:
-            logger.debug(f"Skipping old content from {published_at} ({age_days} days old)")
-            return False
-
-        return True
-
-    except (ValueError, TypeError) as e:
-        logger.debug(f"Could not parse date {published_at}: {e}")
-        # Can't parse, allow by default
-        return True
 
 
 # Suggested Telegram channels for reference

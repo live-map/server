@@ -6,6 +6,7 @@ Handles:
 - Update detection
 - Article storage (English + Korean)
 - Story chain management
+- Re-embedding with canonical title (Phase 6)
 """
 
 from __future__ import annotations
@@ -13,11 +14,12 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.config import agent_settings
 from app.agent.deduplication import EventMatcher, MatchResult, MatchType, UpdateDetector, UpdateCheckResult
 from app.models.article import Article, ArticleStatus, UpdateType
 from app.models.event import Event
@@ -26,6 +28,16 @@ if TYPE_CHECKING:
     from app.agent.article_generator import GeneratedArticle
 
 logger = logging.getLogger(__name__)
+
+
+class CanonicalDuplicateError(Exception):
+    """Raised when a duplicate is detected after canonical title re-embedding."""
+
+    def __init__(self, matched_event_id: int, similarity: float, message: str = ""):
+        self.matched_event_id = matched_event_id
+        self.similarity = similarity
+        self.message = message or f"Duplicate detected (event_id={matched_event_id}, similarity={similarity:.2%})"
+        super().__init__(self.message)
 
 
 class ArticleService:
@@ -136,15 +148,21 @@ class ArticleService:
         update_type: str | None = None,
         update_reason: str | None = None,
         existing_event_id: int | None = None,
+        embedding_generator: Callable[[str], list[float] | None] | None = None,
     ) -> tuple[Event, Article]:
         """
         Save event and bilingual article to database.
+
+        Phase 6 Enhancement: Re-embedding with Canonical Title
+        - If article_en["headline"] differs from event_text, regenerate embedding
+        - Re-check for duplicates with canonical embedding
+        - Raises CanonicalDuplicateError if duplicate found post-LLM
 
         Args:
             article_en: English article dict
             article_ko: Korean article dict
             event_text: Original event text
-            embedding: Event embedding
+            embedding: Event embedding (from original event_text)
             category: Event category
             claims: Extracted claims
             verification_result: Verification results
@@ -154,9 +172,13 @@ class ArticleService:
             update_type: Type of update
             update_reason: Reason for update
             existing_event_id: Event ID if this is an update
+            embedding_generator: Optional callable to regenerate embedding from canonical title
 
         Returns:
             Tuple of (Event, Article)
+
+        Raises:
+            CanonicalDuplicateError: If duplicate detected after canonical title re-embedding
         """
         # Extract facts and entities from claims
         key_facts = []
@@ -164,6 +186,55 @@ class ArticleService:
         if claims:
             key_facts = self.update_detector.extract_key_facts(claims)
             key_entities = self.update_detector.extract_key_entities(claims)
+
+        # ============================================================
+        # Phase 6: Re-embedding with Canonical Title
+        # ============================================================
+        canonical_title = article_en.get("headline", "")
+        canonical_embedding = embedding  # Default to original embedding
+
+        if (
+            agent_settings.dedup_reembed_canonical
+            and embedding_generator
+            and canonical_title
+            and canonical_title != event_text[:len(canonical_title)]
+        ):
+            logger.debug(f"[REEMBED] Generating canonical embedding for: {canonical_title[:50]}...")
+
+            # Generate new embedding from canonical title
+            new_embedding = embedding_generator(canonical_title)
+
+            if new_embedding:
+                # Re-check for duplicates with canonical embedding
+                canonical_match = await self.event_matcher.find_match(
+                    canonical_title,
+                    embedding=new_embedding,
+                    category=category,
+                )
+
+                if canonical_match.is_duplicate:
+                    logger.warning(
+                        f"[REEMBED-DUPLICATE] Post-LLM duplicate detected: "
+                        f"'{canonical_title[:50]}...' matches event_id={canonical_match.matched_event_id} "
+                        f"(similarity={canonical_match.similarity_score:.2%})"
+                    )
+                    raise CanonicalDuplicateError(
+                        matched_event_id=canonical_match.matched_event_id,
+                        similarity=canonical_match.similarity_score,
+                        message=f"Canonical title duplicate: {canonical_title[:50]}...",
+                    )
+
+                # Use canonical embedding for storage
+                canonical_embedding = new_embedding
+                best_match_str = (
+                    f"{canonical_match.similarity_score:.2%}"
+                    if canonical_match.similarity_score is not None
+                    else "N/A"
+                )
+                logger.info(
+                    f"[REEMBED] Using canonical embedding for: {canonical_title[:50]}... "
+                    f"(no duplicate found, best match: {best_match_str})"
+                )
 
         # Generate hashes
         event_hash = self.event_matcher.generate_event_hash(event_text)
@@ -184,8 +255,8 @@ class ArticleService:
                 event.key_facts = json.dumps(key_facts)
                 event.key_entities = json.dumps(key_entities)
                 event.fact_hash = fact_hash
-                if embedding:
-                    event.embedding = embedding
+                if canonical_embedding:
+                    event.embedding = canonical_embedding
             else:
                 # Event not found, create new
                 is_update = False
@@ -197,8 +268,8 @@ class ArticleService:
             # Create new event
             event = Event(
                 event_hash=event_hash,
-                canonical_title=article_en.get("headline", event_text[:200]),
-                embedding=embedding,
+                canonical_title=canonical_title or event_text[:200],
+                embedding=canonical_embedding,
                 key_entities=json.dumps(key_entities) if key_entities else None,
                 key_facts=json.dumps(key_facts) if key_facts else None,
                 fact_hash=fact_hash,

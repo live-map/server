@@ -97,17 +97,6 @@ def get_search_stats(tool_name: str) -> SearchStats:
     return _search_stats[tool_name]
 
 
-def get_all_search_stats() -> dict:
-    """Get all search stats for debugging."""
-    return {name: {
-        "total": stats.total_queries,
-        "success": stats.successful_queries,
-        "failed": stats.failed_queries,
-        "empty": stats.empty_results,
-        "error_types": list(stats.errors_by_type.keys()),
-    } for name, stats in _search_stats.items()}
-
-
 # =============================================================================
 # P1: SEARCH RESULT CACHING (15 min TTL)
 # =============================================================================
@@ -451,20 +440,9 @@ def _extract_date_from_url(url: str) -> datetime | None:
     return None
 
 
-def _is_recent_url(url: str, max_age_days: int = 7) -> bool:
-    """Check if URL appears to be recent based on date in URL."""
-    url_date = _extract_date_from_url(url)
-    if url_date is None:
-        # Can't determine date, don't filter
-        return True
-
-    cutoff = datetime.now() - timedelta(days=max_age_days)
-    return url_date >= cutoff
-
-
 def _parse_published_date(date_str: str) -> datetime | None:
     """
-    Parse published date from API response.
+    Parse published date from API response with strict year validation.
 
     Handles various formats:
     - ISO 8601: "2026-01-23T15:30:00Z"
@@ -472,13 +450,27 @@ def _parse_published_date(date_str: str) -> datetime | None:
     - Relative: "2 hours ago" (via dateutil fuzzy parsing)
     - GDELT seendate: "20260123T153000Z"
 
+    P0 FIX: Added year validation - only accepts current year.
+    This fixes the DuckDuckGo/Yahoo API bug returning 2024/2025 dates.
+
     Returns:
-        datetime object if parsing succeeds, None otherwise.
+        datetime object if parsing succeeds and year is current, None otherwise.
     """
     if not date_str:
         return None
     try:
-        return parse_date(date_str, fuzzy=True)
+        parsed = parse_date(date_str, fuzzy=True)
+
+        # P0 FIX: Year validation - only accept current year
+        # This fixes DDG/Yahoo API returning wrong years (2024, 2025 instead of 2026)
+        current_year = datetime.now(timezone.utc).year
+        if parsed.year != current_year:
+            logger.warning(
+                f"Wrong year in date: {date_str} → {parsed.year} (expected {current_year})"
+            )
+            return None
+
+        return parsed
     except Exception:
         return None
 
@@ -1007,171 +999,3 @@ async def search_news_brave(
         logger.error(f"Brave Search error ({error_type.value}): {e}")
         get_search_stats("brave").record_error(error_type, str(e))
         return []  # P2: Empty list but error is tracked
-
-
-# =============================================================================
-# P1: MULTI-ENGINE PARALLEL SEARCH
-# =============================================================================
-
-
-async def search_multi_engine(
-    query: str,
-    max_results_per_engine: int = 10,
-    engines: list[str] | None = None,
-    translate_query: bool = True,
-) -> dict[str, list[dict]]:
-    """
-    P1: Parallel search across multiple engines for better evidence coverage.
-
-    Searches GDELT, DuckDuckGo News, and Brave Search in parallel,
-    returning results from all engines. This increases the chance of
-    finding corroborating evidence for Gate 3.
-
-    Args:
-        query: Search query
-        max_results_per_engine: Max results per engine (default 10)
-        engines: List of engines to use. Options: "gdelt", "ddg", "brave"
-                 Default: ["gdelt", "ddg", "brave"]
-        translate_query: Whether to translate non-English queries
-
-    Returns:
-        Dict mapping engine name to results list
-        {
-            "gdelt": [{...}, ...],
-            "ddg": [{...}, ...],
-            "brave": [{...}, ...],
-        }
-    """
-    if engines is None:
-        engines = ["gdelt", "ddg", "brave"]
-
-    # Create search tasks for each engine
-    tasks = {}
-
-    if "gdelt" in engines:
-        tasks["gdelt"] = search_news_gdelt.ainvoke({
-            "query": query,
-            "max_results": max_results_per_engine,
-            "translate_query": translate_query,
-        })
-
-    if "ddg" in engines:
-        tasks["ddg"] = search_news_ddg.ainvoke({
-            "query": query,
-            "max_results": max_results_per_engine,
-            "translate_query": translate_query,
-        })
-
-    if "brave" in engines:
-        # Only include if API key is configured
-        if getattr(agent_settings, 'brave_api_key', None):
-            tasks["brave"] = search_news_brave.ainvoke({
-                "query": query,
-                "max_results": max_results_per_engine,
-                "translate_query": translate_query,
-            })
-
-    if not tasks:
-        logger.warning("No search engines available")
-        return {}
-
-    # Run searches in parallel
-    engine_names = list(tasks.keys())
-    results_list = await asyncio.gather(*tasks.values(), return_exceptions=True)
-
-    # Collect results
-    results = {}
-    total_count = 0
-
-    for engine_name, engine_results in zip(engine_names, results_list):
-        if isinstance(engine_results, Exception):
-            logger.error(f"{engine_name} search failed: {engine_results}")
-            results[engine_name] = []
-        else:
-            results[engine_name] = engine_results or []
-            total_count += len(results[engine_name])
-
-    logger.info(
-        f"Multi-engine search complete: {total_count} total results "
-        f"(gdelt={len(results.get('gdelt', []))}, "
-        f"ddg={len(results.get('ddg', []))}, "
-        f"brave={len(results.get('brave', []))})"
-    )
-
-    return results
-
-
-async def search_evidence(
-    query: str,
-    min_results: int = 3,
-    max_results: int = 15,
-    translate_query: bool = True,
-) -> list[dict]:
-    """
-    P1: Smart evidence search with fallback strategy.
-
-    Searches multiple engines in parallel and deduplicates results.
-    If initial search doesn't find enough results, expands to paid sources.
-
-    Args:
-        query: Search query for evidence
-        min_results: Minimum results needed (triggers fallback if not met)
-        max_results: Maximum total results to return
-        translate_query: Whether to translate non-English queries
-
-    Returns:
-        Deduplicated list of evidence documents
-    """
-    # Check cache first
-    cache_key = _get_cache_key("evidence", query, min_results=min_results, max_results=max_results)
-    cached = _get_cached_results(cache_key)
-    if cached is not None:
-        return cached
-
-    # Phase 1: Free multi-engine search
-    multi_results = await search_multi_engine(
-        query=query,
-        max_results_per_engine=10,
-        engines=["gdelt", "ddg", "brave"],
-        translate_query=translate_query,
-    )
-
-    # Deduplicate results by URL
-    seen_urls: set[str] = set()
-    all_results: list[dict] = []
-
-    for engine_name, engine_results in multi_results.items():
-        for doc in engine_results:
-            url = doc.get("url", "")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                doc["search_engine"] = engine_name
-                all_results.append(doc)
-
-    logger.info(f"Phase 1 (free engines): {len(all_results)} unique results for '{query[:30]}...'")
-
-    # Phase 2: If not enough results, try Tavily (paid)
-    if len(all_results) < min_results and agent_settings.tavily_api_key:
-        logger.info(f"Phase 2: Not enough results ({len(all_results)} < {min_results}), trying Tavily")
-
-        tavily_results = await search_web.ainvoke({
-            "query": query,
-            "max_results": max_results - len(all_results),
-        })
-
-        for doc in tavily_results or []:
-            url = doc.get("url", "")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                doc["search_engine"] = "tavily"
-                all_results.append(doc)
-
-        logger.info(f"Phase 2 complete: {len(all_results)} total results")
-
-    # Limit to max_results
-    final_results = all_results[:max_results]
-
-    # Cache results
-    _set_cached_results(cache_key, final_results)
-
-    return final_results

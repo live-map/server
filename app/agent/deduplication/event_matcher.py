@@ -189,6 +189,7 @@ class EventMatcher:
         Find event by semantic similarity using pgvector.
 
         Uses cosine distance for similarity calculation.
+        Optimized to use a single query that returns full Event object.
         """
         from app.models.event import Event
 
@@ -204,21 +205,35 @@ class EventMatcher:
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
         # Query using raw SQL for pgvector operations
+        # Returns all Event columns plus similarity in a single query
+        # Note: Use CAST() instead of :: to avoid asyncpg parameter parsing issues
         query = text(f"""
             SELECT
                 id,
                 event_hash,
                 canonical_title,
+                embedding,
+                key_entities,
+                key_facts,
+                fact_hash,
                 category,
-                1 - (embedding <=> :embedding::vector) as similarity
+                sub_category,
+                first_reported_at,
+                last_updated_at,
+                article_count,
+                is_active,
+                cluster_id,
+                created_at,
+                updated_at,
+                1 - (embedding <=> CAST(:embedding AS vector)) as similarity
             FROM events
             WHERE
                 is_active = true
                 AND created_at >= :cutoff_date
                 AND embedding IS NOT NULL
-                AND (embedding <=> :embedding::vector) <= :max_distance
+                AND (embedding <=> CAST(:embedding AS vector)) <= :max_distance
                 {"AND category = :category" if category else ""}
-            ORDER BY embedding <=> :embedding::vector
+            ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT 1
         """)
 
@@ -238,7 +253,13 @@ class EventMatcher:
                 logger.debug("No semantic match found (below related threshold)")
             return None
 
-        event_id, event_hash, canonical_title, matched_category, similarity = row
+        # Unpack all columns - similarity is the last column
+        (
+            event_id, event_hash, canonical_title, event_embedding,
+            key_entities, key_facts, fact_hash, matched_category, sub_category,
+            first_reported_at, last_updated_at, article_count,
+            is_active, cluster_id, created_at, updated_at, similarity
+        ) = row
 
         # Determine match type based on similarity
         if similarity >= self.duplicate_threshold:
@@ -262,11 +283,25 @@ class EventMatcher:
                 f"similarity={similarity:.3f}, type={match_type.value}"
             )
 
-        # Fetch full event object
-        event_result = await self.db.execute(
-            select(Event).where(Event.id == event_id)
+        # Construct Event object from query result (single query optimization)
+        matched_event = Event(
+            id=event_id,
+            event_hash=event_hash,
+            canonical_title=canonical_title,
+            embedding=event_embedding,
+            key_entities=key_entities,
+            key_facts=key_facts,
+            fact_hash=fact_hash,
+            category=matched_category,
+            sub_category=sub_category,
+            first_reported_at=first_reported_at,
+            last_updated_at=last_updated_at,
+            article_count=article_count,
+            is_active=is_active,
+            cluster_id=cluster_id,
+            created_at=created_at,
+            updated_at=updated_at,
         )
-        matched_event = event_result.scalar_one_or_none()
 
         return MatchResult(
             match_type=match_type,

@@ -21,6 +21,7 @@ from .twitter import TwitterTrigger
 from .telegram import TelegramTrigger
 from .currents import CurrentsTrigger
 from .worldnews import WorldNewsTrigger
+from .brave import BraveTrigger
 from .manager import TriggerManager
 from .anomaly import AnomalyDetector, AnomalySignal
 from .clustering import SemanticClusterer, SemanticCluster, ClusteringSignal
@@ -36,6 +37,7 @@ __all__ = [
     "TelegramTrigger",
     "CurrentsTrigger",
     "WorldNewsTrigger",
+    "BraveTrigger",
     "TriggerManager",
     # Detection Layers
     "AnomalyDetector",

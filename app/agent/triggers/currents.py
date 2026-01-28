@@ -21,7 +21,9 @@ from typing import Any
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
-from .date_extractor import validate_trigger_recency
+from .date_extractor import validate_trigger_recency, parse_iso_datetime
+from ..source_tiers import is_trusted_domain, normalize_domain
+from ..config import agent_settings
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ class CurrentsTrigger(BaseTrigger):
         country: str | None = None,
         category: str | None = None,
         max_results: int = 50,
-        max_age_hours: int = 48,
+        max_age_hours: int = 1,  # P0 FIX: 1 hour for 15-minute scan intervals
     ):
         super().__init__(keywords)
         self.api_key = api_key
@@ -159,6 +161,13 @@ class CurrentsTrigger(BaseTrigger):
             if not title or not url:
                 return None
 
+            # Domain whitelist filter (Tier-1/2 only)
+            if agent_settings.domain_whitelist_enabled:
+                domain = normalize_domain(url)
+                if not is_trusted_domain(domain):
+                    logger.debug(f"[CURRENTS-DOMAIN] Rejected untrusted: {domain}")
+                    return None
+
             # Deduplication
             content_hash = hashlib.md5(f"{url}".encode()).hexdigest()
             if content_hash in self.seen_hashes:
@@ -173,11 +182,8 @@ class CurrentsTrigger(BaseTrigger):
             language = article.get("language", self.language)
             category = article.get("category", [])
 
-            # Parse API timestamp
-            try:
-                api_date = datetime.fromisoformat(published.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                api_date = None
+            # Parse API timestamp using shared utility
+            api_date = parse_iso_datetime(published)
 
             # Validate recency using 4-Layer validation
             is_recent, reason, validated_date = validate_trigger_recency(
@@ -188,13 +194,15 @@ class CurrentsTrigger(BaseTrigger):
                 max_age_hours=self.max_age_hours,
             )
 
-            # P0: Date Fallback - Allow API date if within 24 hours
+            # P0: Date Fallback - Allow API date if within 1 hour
             if not is_recent:
                 if "NO_DATE_INFO" in reason and api_date:
-                    api_age_hours = (datetime.utcnow() - api_date.replace(tzinfo=None)).total_seconds() / 3600
-                    if api_age_hours <= 24:
+                    # P0 FIX: Safe timezone handling - convert to naive UTC
+                    api_date_naive = api_date.replace(tzinfo=None) if api_date.tzinfo else api_date
+                    api_age_hours = (datetime.utcnow() - api_date_naive).total_seconds() / 3600
+                    if api_age_hours <= 1:
                         is_recent = True
-                        validated_date = api_date.replace(tzinfo=None)
+                        validated_date = api_date_naive
                         reason = f"DATE_FALLBACK: Using API published {api_date.date()} (age: {api_age_hours:.1f}h)"
                         logger.warning(f"[DATE-FALLBACK] {title[:50]}... | {reason}")
                     else:
@@ -244,11 +252,6 @@ class CurrentsTrigger(BaseTrigger):
         ]
         for h in expired:
             del self.seen_hashes[h]
-
-    def reset_daily_count(self) -> None:
-        """Reset daily request count (call at midnight)"""
-        self._request_count = 0
-        logger.info("Currents API daily request count reset")
 
     async def close(self):
         """Cleanup resources"""

@@ -1,6 +1,72 @@
 # Scanner Pipeline 상세 문서
 
-## 개요
+> **주의**: 이 문서는 Phase 5 (2026-01-24) 기준입니다.
+> Phase 6 (2026-01-27) 변경 사항은 아래 "Phase 6 업데이트" 섹션을 참조하세요.
+
+---
+
+## Phase 6 업데이트 (2026-01-27)
+
+### 주요 변경 사항
+
+| 항목 | Phase 5 | Phase 6 |
+|------|---------|---------|
+| Recency 필터 | **활성화** (6시간) | **비활성화** (트리거에서 처리) |
+| Title Dedup 위치 | Step 6.5 (LLM 후) | **Step 3.34 (LLM 전)** |
+| Gate 0-2 | 패턴 기반 (600+ 정규식) | **LLM 분류기** (1개 프롬프트) |
+| 소스 | 모든 소스 | **59개 도메인 화이트리스트** |
+
+### 새로운 파이프라인 흐름
+
+```
+[도메인 화이트리스트] 59개 Tier-1/2 도메인만
+     ↓
+[Trigger 레벨 Recency] validate_trigger_recency()
+     ↓
+[Hash Dedup] URL+Title 해시
+     ↓
+[Scanner 진입]
+     ↓
+[Recency 필터] DISABLED ← 변경
+     ↓
+[Content Date / News Classification]
+     ↓
+[Cross-Source Matching + Confidence]
+     ↓
+[Importance Filter]
+     ↓
+[Title Dedup] ← Step 3.34 (LLM 전으로 이동)
+     ↓
+[LLM 분류기] ← Step 3.35 (Gate 0-2 대체)
+  - temporal_category: breaking|developing|retrospective|predictive|timeless
+  - is_news, category, is_significant
+     ↓
+[Temporal Filter] ← Phase 6.1 신규
+  - RETROSPECTIVE 자동 거부 (회고/분석 기사)
+  - PREDICTIVE 자동 거부 (미래 예측 기사)
+     ↓
+[Breaking News + Category Limiting]
+     ↓
+[발행]
+```
+
+### Phase 6.1: 시간적 분류 카테고리
+
+| 카테고리 | 시간 범위 | 발행 | 언어적 마커 |
+|---------|----------|-----|-----------|
+| **BREAKING** | 24시간 이내 | ✅ | "just", "breaking", "happening now" |
+| **DEVELOPING** | 1-7일 | ✅ | "latest update", "Day N of" |
+| **RETROSPECTIVE** | 과거 분석 | ❌ | "years later", "looking back", "analysis" |
+| **PREDICTIVE** | 미래 예측 | ❌ | "could", "may", "expected to" |
+| **TIMELESS** | 시간 무관 | ⚠️ | 백과사전적 콘텐츠 |
+
+### 관련 문서
+- [Phase 6 히스토리](../history/PHASE_6_LLM_CLASSIFIER.md)
+- [ADR-012: LLM 분류기](../adr/ADR-012-llm-classifier.md)
+
+---
+
+## 개요 (Phase 5 기준)
 
 Scanner는 다중 소스에서 뉴스 이벤트를 수집하고, 신뢰도 기반으로 필터링하여 기사화할 이벤트를 선별하는 파이프라인입니다.
 

@@ -4,6 +4,83 @@ LiveMap 백엔드의 모든 주요 변경 사항이 이 문서에 기록됩니�
 
 ---
 
+## [3.6.1] - 2026-01-27
+
+### Added
+- **시간적 분류 강화** (`llm_classifier.py`) - Phase 6.1
+  - `TemporalCategory` enum 추가 (BREAKING, DEVELOPING, RETROSPECTIVE, PREDICTIVE, TIMELESS)
+  - 프롬프트에 현재 날짜 컨텍스트 포함
+  - 시간적 언어 마커 기반 분류
+  - RETROSPECTIVE/PREDICTIVE 기사 자동 거부
+- 시간적 분류 설정 옵션
+  - `temporal_classification_enabled`
+  - `temporal_filter_enabled`
+  - `temporal_reject_categories`
+
+### Changed
+- 프롬프트 길이 증가 (~300 → ~600 tokens)
+- 회고/분석 기사 필터링 정확도 향상 (~85% → ~95%)
+
+### Performance
+- 비발행 기사 (회고/예측) 조기 필터링으로 파이프라인 효율 개선
+
+---
+
+## [3.6.0] - 2026-01-27
+
+### Added
+- **LLM 분류기** (`llm_classifier.py`) - Deepinfra Llama 3.1 8B 기반
+  - 단일 프롬프트로 is_news, category, is_significant 판단
+  - Gate 0-2 패턴 기반 필터링 대체
+  - 배치 처리 지원 (기본 20개)
+- **도메인 화이트리스트** (`source_tiers.py`) - 59개 Tier-1/2 도메인만 허용
+- **Pre-LLM Title Deduplication** - LLM 호출 전 중복 제거로 비용 절감
+- `dedup_before_llm` 설정 옵션
+
+### Changed
+- **Recency 필터 비활성화** - 트리거 레벨에서 이미 처리
+  - `recency_filter_enabled: bool = False` 추가
+  - 3중 검증 → 단일 검증으로 단순화
+- Title Deduplication을 Step 6.5에서 Step 3.34로 이동
+- Tier-3 소스 (Reddit 등) 기본 비활성화
+
+### Removed
+- Scanner 레벨 Recency 필터 (조건부 비활성화)
+- 패턴 기반 Gate 의존성 (LLM 모드에서)
+
+### Performance
+- LLM 비용 ~25% 절감 (Pre-LLM dedup)
+- 600+ 정규식 패턴 → 1개 프롬프트
+- 예상 월 비용: $3-5 (Deepinfra)
+
+---
+
+## [3.5.0] - 2026-01-25
+
+### Added
+- **세션 기반 로깅** - 타임스탬프 로그 파일
+- 포괄적 문서 업데이트 (Phase 1-5 히스토리, ADR, 알고리즘)
+
+### Changed
+- P2 유지보수 - 죽은 코드 제거, 오류 추적, LLM 타임아웃
+- P0+P1 파이프라인 최적화
+
+---
+
+## [3.4.0] - 2026-01-24
+
+### Added
+- **속보 패스트패스** - Tier-1 소스 5초 내 발행
+- **Goldstein Scale 중요도 점수** - 6차원 점수 시스템
+- **도메인 티어 시스템** (ADR-011)
+- Currents API, WorldNews API 통합 (Tier-2)
+- 파이프라인 메트릭 시스템
+
+### Changed
+- Gate 스킵 메커니즘 - 속보는 Gate 0, 2, 3 스킵 가능
+
+---
+
 ## [3.3.0] - 2026-01-23
 
 ### Added

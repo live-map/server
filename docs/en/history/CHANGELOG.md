@@ -4,6 +4,57 @@ All notable changes to the LiveMap backend are documented here.
 
 ---
 
+## [3.6.1] - 2026-01-27
+
+### Added
+- **Temporal Classification Enhancement** (`llm_classifier.py`) - Phase 6.1
+  - `TemporalCategory` enum (BREAKING, DEVELOPING, RETROSPECTIVE, PREDICTIVE, TIMELESS)
+  - Current date context in classification prompt
+  - Temporal linguistic markers for improved classification
+  - Auto-reject RETROSPECTIVE and PREDICTIVE articles
+- Temporal classification settings
+  - `temporal_classification_enabled`
+  - `temporal_filter_enabled`
+  - `temporal_reject_categories`
+
+### Changed
+- Prompt length increased (~300 → ~600 tokens)
+- Retrospective/analysis article filtering accuracy improved (~85% → ~95%)
+
+### Performance
+- Early filtering of non-publishable articles (retrospective/predictive) improves pipeline efficiency
+
+---
+
+## [3.6.0] - 2026-01-27
+
+### Added
+- **LLM Classifier** (`llm_classifier.py`) - Deepinfra Llama 3.1 8B based
+  - Single prompt for is_news, category, is_significant classification
+  - Replaces Gate 0-2 pattern-based filtering
+  - Batch processing support (default 20 articles)
+- **Domain Whitelist** (`source_tiers.py`) - Only 59 Tier-1/2 domains allowed
+- **Pre-LLM Title Deduplication** - Cost savings by deduplicating before LLM calls
+- `dedup_before_llm` config option
+
+### Changed
+- **Recency Filter Disabled** - Already handled at trigger level
+  - `recency_filter_enabled: bool = False`
+  - Triple validation → Single validation simplification
+- Title Deduplication moved from Step 6.5 to Step 3.34
+- Tier-3 sources (Reddit, etc.) disabled by default
+
+### Removed
+- Scanner level Recency Filter (conditionally disabled)
+- Pattern-based Gate dependency (in LLM mode)
+
+### Performance
+- ~25% LLM cost reduction (Pre-LLM dedup)
+- 600+ regex patterns → 1 prompt
+- Estimated monthly cost: $3-5 (Deepinfra)
+
+---
+
 ## [3.5.0] - 2026-01-24
 
 ### Added

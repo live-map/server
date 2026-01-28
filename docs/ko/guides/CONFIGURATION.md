@@ -79,6 +79,32 @@ LiveMap 백엔드의 모든 설정 옵션에 대한 완전한 참조입니다.
 | `AGENT_MAX_NEWS_PER_SCAN` | int | 100 | 스캔당 최대 이벤트 |
 | `AGENT_MAX_EVENTS_PER_CATEGORY` | int | 5 | 카테고리 제한 |
 | `AGENT_ENSURE_CATEGORY_DIVERSITY` | bool | true | 다양성 인터리빙 활성화 |
+| `AGENT_RECENCY_FILTER_ENABLED` | bool | **false** | Recency 필터 (비활성화 - 트리거에서 처리) |
+| `AGENT_MAX_EVENT_AGE_HOURS` | int | 6 | 최대 이벤트 나이 (폴백용) |
+
+### LLM 분류기 설정 (Phase 6 신규)
+
+> Gate 0-2 패턴 기반 필터링을 LLM 분류기로 대체합니다.
+
+| 변수 | 타입 | 기본값 | 설명 |
+|----------|------|---------|-------------|
+| `AGENT_LLM_CLASSIFIER_ENABLED` | bool | true | LLM 분류기 활성화 |
+| `AGENT_DEEPINFRA_API_KEY` | str | "" | Deepinfra API 키 |
+| `AGENT_DEEPINFRA_BASE_URL` | str | "https://api.deepinfra.com/v1/openai" | API 엔드포인트 |
+| `AGENT_LLM_CLASSIFIER_MODEL` | str | "meta-llama/Meta-Llama-3.1-8B-Instruct" | 모델 |
+| `AGENT_LLM_CLASSIFIER_BATCH_SIZE` | int | 20 | 배치 크기 |
+| `AGENT_LLM_CLASSIFIER_TIMEOUT` | float | 30.0 | 타임아웃 (초) |
+| `AGENT_LLM_CLASSIFIER_FALLBACK_ENABLED` | bool | true | 패턴 폴백 활성화 |
+| `AGENT_DEDUP_BEFORE_LLM` | bool | true | LLM 전 Title Dedup (비용 절감) |
+
+### 도메인 화이트리스트 설정 (Phase 6 신규)
+
+> Tier-1/2 도메인만 허용하여 잡음을 줄입니다.
+
+| 변수 | 타입 | 기본값 | 설명 |
+|----------|------|---------|-------------|
+| `AGENT_DOMAIN_WHITELIST_ENABLED` | bool | true | 화이트리스트 활성화 |
+| `AGENT_TRUSTED_DOMAINS` | str | "reuters.com,apnews.com,..." | 신뢰 도메인 (59개) |
 
 ### 국제 정세 초점
 
@@ -162,23 +188,66 @@ DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/livemap
 
 # 에이전트 설정
 AGENT_GDELT_ENABLED=true
-AGENT_GDELT_TIMESPAN=2h
-AGENT_REDDIT_ENABLED=true
-AGENT_REDDIT_SUBREDDITS=worldnews,news,UkrainianConflict
+AGENT_GDELT_TIMESPAN=30min
+AGENT_REDDIT_ENABLED=false  # Phase 6: Tier-3 비활성화
 AGENT_MIN_CONFIDENCE_SCORE=0.70
 AGENT_SCAN_INTERVAL_MINUTES=15
-AGENT_EVENT_VERIFICATION_ENABLED=true
-AGENT_EVENT_VERIFICATION_USE_ZERO_SHOT=true
-AGENT_EVENT_VERIFICATION_USE_LLM=true
 AGENT_FOCUS_INTERNATIONAL_AFFAIRS=true
+
+# Phase 6: LLM 분류기 (Gate 0-2 대체)
+AGENT_LLM_CLASSIFIER_ENABLED=true
+AGENT_DEEPINFRA_API_KEY=your_deepinfra_key_here
+AGENT_LLM_CLASSIFIER_MODEL=meta-llama/Meta-Llama-3.1-8B-Instruct
+AGENT_DEDUP_BEFORE_LLM=true
+
+# Phase 6: 도메인 화이트리스트
+AGENT_DOMAIN_WHITELIST_ENABLED=true
+
+# Phase 6: Recency 필터 비활성화 (트리거에서 처리)
+AGENT_RECENCY_FILTER_ENABLED=false
 
 # 선택: 추가 소스
 AGENT_CURRENTS_ENABLED=false
 AGENT_CURRENTS_API_KEY=
+AGENT_WORLDNEWS_ENABLED=false
+AGENT_WORLDNEWS_API_KEY=
 
 # 로깅
 AGENT_LOG_GATE_REJECTIONS=true
 AGENT_DEDUP_LOG_ALL_SIMILARITIES=true
+```
+
+### 시간적 분류 설정 (Phase 6.1 신규)
+
+> 회고/분석 기사와 예측 기사를 자동으로 필터링합니다.
+
+| 변수 | 타입 | 기본값 | 설명 |
+|----------|------|---------|-------------|
+| `AGENT_TEMPORAL_CLASSIFICATION_ENABLED` | bool | true | 시간적 분류 활성화 |
+| `AGENT_TEMPORAL_FILTER_ENABLED` | bool | true | 비발행 카테고리 자동 거부 |
+| `AGENT_TEMPORAL_REJECT_CATEGORIES` | str | "retrospective,predictive" | 거부할 시간적 카테고리 |
+| `AGENT_TEMPORAL_LOG_CLASSIFICATIONS` | bool | true | 분류 결과 로깅 |
+
+**시간적 분류 카테고리**:
+
+| 카테고리 | 시간 범위 | 발행 여부 | 예시 |
+|---------|----------|----------|-----|
+| `breaking` | 24시간 이내 | ✅ 발행 | "Russia launches offensive" |
+| `developing` | 1-7일 | ✅ 발행 | "Day 5 of peace talks" |
+| `retrospective` | 과거 분석 | ❌ 거부 | "Three years of war: Analysis" |
+| `predictive` | 미래 예측 | ❌ 거부 | "What 2027 elections could mean" |
+| `timeless` | 시간 무관 | ⚠️ 개별 평가 | "How sanctions work: Explainer" |
+
+### 레거시 설정 (Phase 5 이전)
+
+패턴 기반 Gate 시스템을 사용하려면:
+
+```bash
+# LLM 분류기 비활성화 → 패턴 폴백
+AGENT_LLM_CLASSIFIER_ENABLED=false
+AGENT_EVENT_VERIFICATION_ENABLED=true
+AGENT_EVENT_VERIFICATION_USE_ZERO_SHOT=true
+AGENT_EVENT_VERIFICATION_USE_LLM=true
 ```
 
 ## 코드에서 설정 사용

@@ -75,12 +75,14 @@ class CrossSourceMatcher:
     2. Grouping related events for confidence scoring
     3. Detecting duplicate coverage
 
-    P2 Enhancement: Increased default threshold from 0.70 to 0.75 to reduce
-    false positives where different events are incorrectly grouped together.
+    P2 Enhancement: Threshold adjusted based on empirical analysis (2026-01-27).
+    Cross-source similarity for same story typically 60-86%, so 0.75 was too high.
+    Lowered to 0.60 to enable proper cross-source event matching.
     """
 
-    # P2: Higher threshold for stricter duplicate detection
-    DEFAULT_SIMILARITY_THRESHOLD = 0.75  # Was 0.70
+    # Lowered threshold for cross-source matching (was 0.75, was 0.70)
+    # Empirical data shows same story from different sources: 60-86% similarity
+    DEFAULT_SIMILARITY_THRESHOLD = 0.60
 
     def __init__(
         self,

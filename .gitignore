@@ -24,3 +24,5 @@ telegram_session*
 .DS_Store
 *.log
 logs/
+outputs/
+docs.zip

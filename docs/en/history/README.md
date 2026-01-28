@@ -7,7 +7,7 @@ This section documents the evolution of the LiveMap system from initial concept 
 ## Timeline Overview
 
 ```
-Jan 10, 2026 ──────────────────────────────────────────────────────► Jan 24
+Jan 10, 2026 ──────────────────────────────────────────────────────► Jan 27
     │
     ├── Phase 0: Foundation (Jan 10)
     │   └── Telegram MCP, GDELT trigger, basic infrastructure
@@ -24,8 +24,11 @@ Jan 10, 2026 ──────────────────────�
     ├── Phase 4: Source Management (Jan 23-24)
     │   └── Recency filters, category classification
     │
-    └── Phase 5: Optimization (Jan 24)
-        └── Breaking news fast-path, P0/P1/P2 optimizations
+    ├── Phase 5: Optimization (Jan 24)
+    │   └── Breaking news fast-path, P0/P1/P2 optimizations
+    │
+    └── Phase 6: LLM Classifier (Jan 25-27)
+        └── Patterns → LLM, Recency removal, Pre-LLM Dedup
 ```
 
 ---
@@ -43,14 +46,15 @@ Jan 10, 2026 ──────────────────────�
 | v3.3 | Jan 23 | Zero-shot ML classifier |
 | v3.4 | Jan 24 | Breaking news fast-path |
 | v3.5 | Jan 24 | P0/P1/P2 optimizations |
+| v3.6 | Jan 27 | **LLM Classifier + Pipeline optimization** |
 
 ---
 
 ## Phase Documentation
 
-### Current Architecture (Phase 5)
+### Current Architecture (Phase 6)
 
-The system now uses an optimized pipeline with breaking news fast-path and 6-dimension importance scoring:
+The system now uses LLM-based classification with optimized deduplication:
 
 | Phase | Document | Summary |
 |-------|----------|---------|
@@ -60,18 +64,20 @@ The system now uses an optimized pipeline with breaking news fast-path and 6-dim
 | 3 | [Intelligence Layer](PHASE_3_INTELLIGENCE_LAYER.md) | Zero-shot ML, 91% cost reduction |
 | 4 | [Source Management](PHASE_4_SOURCE_MANAGEMENT.md) | Recency filters, categories |
 | 5 | [Optimization](PHASE_5_OPTIMIZATION.md) | Breaking news, P0/P1/P2 |
+| **6** | [**LLM Classifier**](PHASE_6_LLM_CLASSIFIER.md) | **Patterns→LLM, Recency removal, Pre-LLM Dedup** |
 
 ---
 
 ## Key Metrics
 
-| Metric | Initial | Current | Improvement |
-|--------|---------|---------|-------------|
-| LLM cost/day | $16.13 | $1.44 | -91% |
-| Verification time | 45s | 8s avg | -82% |
-| Breaking news latency | N/A | 5s | New |
-| Data sources | 1 | 12+ | +1100% |
-| False positive rate | ~20% | ~5% | -75% |
+| Metric | Initial | Phase 5 | Phase 6 (Current) | Improvement |
+|--------|---------|---------|-------------------|-------------|
+| LLM cost/day | $16.13 | $1.44 | **$0.10-0.17** | -99% |
+| Verification time | 45s | 8s avg | 5s avg | -89% |
+| Breaking news latency | N/A | 5s | 5s | - |
+| Pattern rules | 600+ | 600+ | **1 prompt** | -99% |
+| Data sources | 1 | 12+ | **59 domains** (whitelist) | Quality↑ |
+| False positive rate | ~20% | ~5% | ~5% (expected) | - |
 
 ---
 
@@ -100,6 +106,9 @@ Documents for deprecated approaches:
 | Jan 24 | Breaking news fast-path | Speed for Tier-1 sources | [ADR-007](../adr/ADR-007-breaking-news.md) |
 | Jan 24 | Domain tier system | Per-domain credibility | [ADR-011](../adr/ADR-011-domain-tiers.md) |
 | Jan 24 | Goldstein Scale importance | Multi-dimension scoring | [ADR-008](../adr/ADR-008-importance-scoring.md) |
+| Jan 27 | **LLM Classifier** | 600 patterns → 1 prompt | [ADR-012](../adr/ADR-012-llm-classifier.md) |
+| Jan 27 | **Recency Filter Removal** | Triggers already handle it | - |
+| Jan 27 | **Pre-LLM Dedup** | 25% LLM cost savings | - |
 
 ---
 

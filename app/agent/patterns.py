@@ -1,6 +1,19 @@
 """
 Centralized Pattern Definitions (P2)
 
+DEPRECATED: This module is deprecated in favor of LLM-based classification.
+See llm_classifier.py for the new implementation.
+
+When llm_classifier_enabled=True in config.py:
+- LLM replaces all pattern-based filtering (Gates 0-2)
+- Single LLM call handles: is_news, category, is_significant
+- Cost: ~$3-5/month for ~2000 articles/day
+
+This file is kept for backward compatibility and fallback mode.
+To use pattern-based filtering, set llm_classifier_enabled=False.
+
+---
+
 This module consolidates all regex patterns and keyword lists used across the
 news scanner pipeline. Centralizing patterns provides:
 1. Single source of truth for pattern definitions
@@ -77,6 +90,28 @@ ENTERTAINMENT_PATTERNS = [
     r"\b(?:grammy|oscar|emmy|golden globe|awards? show)\b",
     r"\b(?:box office|streaming|netflix|disney|premiere)\b",
     r"\b(?:reality tv|talk show|interview|podcast)\b",
+]
+
+# P0 Fix: Entertainment context patterns - detect misleading titles where
+# entertainment content contains international affairs keywords (e.g., "war movies")
+ENTERTAINMENT_CONTEXT_PATTERNS = [
+    # Movie/film rankings with keywords that could trigger war/conflict categories
+    r"\b(?:movie|film|movies|films)\b.{0,30}\b(?:ranked|ranking|best|top\s+\d+|great)\b",
+    r"\b(?:ranked|ranking|best|top\s+\d+|great)\b.{0,30}\b(?:movie|film|movies|films)\b",
+    # Sci-fi/action movie keywords
+    r"\b(?:sci-fi|science\s+fiction|action|thriller)\b.{0,30}\b(?:war|battle|conflict)\b",
+    # Celebrity + action verb that could be misclassified
+    r"\b(?:Salman\s+Khan|Jamie\s+Lee\s+Curtis|Tom\s+Cruise|Brad\s+Pitt|Angelina\s+Jolie)\b",
+    r"\b(?:Hollywood|Bollywood|celebrity|star)\s+(?:celebrates?|honors?|attends?)\b",
+    # Entertainment industry context
+    r"\b(?:box\s+office|premiere|trailer|sequel|prequel|franchise)\b",
+    r"\b(?:oscar|emmy|grammy)\s+(?:winner|nominated|nominee)\b",
+    # TV/streaming shows
+    r"\b(?:netflix|hbo|disney\+?|amazon\s+prime|hulu)\s+(?:show|series|original)\b",
+]
+
+COMPILED_ENTERTAINMENT_CONTEXT_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in ENTERTAINMENT_CONTEXT_PATTERNS
 ]
 
 SPECULATION_PATTERNS = [

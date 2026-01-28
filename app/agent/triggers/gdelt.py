@@ -23,13 +23,14 @@ import logging
 import random
 import time
 from datetime import datetime
-from functools import lru_cache
 from typing import Any
 
 import httpx
 
 from .base import BaseTrigger, TriggerEvent, TriggerSource
 from .date_extractor import validate_trigger_recency
+from ..source_tiers import is_trusted_domain, get_domain_tier, DomainTier
+from ..config import agent_settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ MAX_RETRIES = 3
 # P2: Simple in-memory cache for GDELT responses
 # Key: query hash, Value: (timestamp, response_data)
 _response_cache: dict[str, tuple[float, Any]] = {}
-CACHE_TTL_SECONDS = 300  # 5 minutes
+CACHE_TTL_SECONDS = 600  # P1 Fix: 10 minutes (2/3 of 15min scan interval)
 
 # GKG Crisis Themes for enhanced detection
 GKG_CRISIS_THEMES = [
@@ -227,8 +228,15 @@ class GDELTTrigger(BaseTrigger):
         """Process GDELT articles into TriggerEvents."""
         events = []
         current_time = time.time()
+        domain_rejected = 0
 
         for art in articles:
+            # Domain whitelist filter (Tier-1/2 only)
+            if agent_settings.domain_whitelist_enabled:
+                domain = art.get("domain", "").lower()
+                if not is_trusted_domain(domain):
+                    domain_rejected += 1
+                    continue
             # Apply tone filter if threshold is set
             if self.tone_threshold is not None:
                 tone = art.get("tone", 0)
@@ -271,23 +279,24 @@ class GDELTTrigger(BaseTrigger):
                 seendate = datetime.utcnow()
 
             # Validate article recency using 4-Layer validation
+            # P0 FIX: max_age_hours=1 for 15-minute scan intervals (real-time news only)
             url = art.get("url", "")
             is_recent, reason, validated_date = validate_trigger_recency(
                 url=url,
                 title=title,
                 content="",  # GDELT doesn't provide content
                 api_date=seendate,
-                max_age_hours=48,
+                max_age_hours=1,
             )
 
-            # P0: Date Fallback - Allow API date (seendate) if within 24 hours
+            # P0: Date Fallback - Allow API date (seendate) if within 1 hour
             # This handles cases where URL/content date extraction fails
-            # but the GDELT seendate is trustworthy for recent articles
+            # but the GDELT seendate is trustworthy for very recent articles
             if not is_recent:
                 # Check if rejection is due to NO_DATE_INFO and API date is recent
                 if "NO_DATE_INFO" in reason and seendate:
                     api_age_hours = (datetime.utcnow() - seendate).total_seconds() / 3600
-                    if api_age_hours <= 24:
+                    if api_age_hours <= 1:
                         # Accept with API date fallback (24h threshold for safety)
                         is_recent = True
                         validated_date = seendate
@@ -327,7 +336,14 @@ class GDELTTrigger(BaseTrigger):
         # 메모리 관리: 만료된 해시 정리
         self._cleanup_expired_hashes(current_time)
 
-        logger.info(f"GDELT scan: {len(articles)} articles, {len(events)} new")
+        # Log domain filter stats
+        if agent_settings.domain_whitelist_enabled and domain_rejected > 0:
+            logger.info(
+                f"GDELT scan: {len(articles)} articles, {domain_rejected} rejected (untrusted domain), "
+                f"{len(events)} new from trusted sources"
+            )
+        else:
+            logger.info(f"GDELT scan: {len(articles)} articles, {len(events)} new")
 
         return events
 

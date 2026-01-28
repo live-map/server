@@ -24,6 +24,31 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def parse_iso_datetime(date_str: str | None) -> datetime | None:
+    """
+    Parse ISO 8601 datetime string to datetime object.
+
+    Handles common formats:
+    - "2026-01-23T15:30:00Z"
+    - "2026-01-23T15:30:00+00:00"
+    - "2026-01-23T15:30:00"
+
+    Args:
+        date_str: ISO datetime string
+
+    Returns:
+        datetime object if parsing succeeds, None otherwise
+    """
+    if not date_str:
+        return None
+    try:
+        # Handle Z suffix (Zulu time)
+        return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
 # Current year for past year detection
 CURRENT_YEAR = datetime.utcnow().year
 
@@ -350,15 +375,18 @@ def validate_trigger_recency(
     title: str,
     content: str = "",
     api_date: datetime | None = None,
-    max_age_hours: int = 48,
+    max_age_hours: int = 1,  # P0 FIX: 1 hour default for 15-minute scan intervals
 ) -> tuple[bool, str, datetime | None]:
     """
     Validate trigger event recency using 4-Layer validation.
 
-    Layer 1: URL date patterns (most reliable)
+    IMPORTANT: Layer 3 (past year detection) runs FIRST to catch retrospective articles
+    even when URL date appears recent.
+
+    Layer 0 (First): Past year detection (CRITICAL - catch old events immediately)
+    Layer 1: URL date patterns (most reliable for recency)
     Layer 2: Content date extraction (title/body explicit dates)
-    Layer 3: Past year detection (catch old events)
-    Layer 4: API-provided date (fallback, may be unreliable)
+    Layer 3: API-provided date (fallback, may be unreliable)
 
     IMPORTANT: This is stricter than validate_article_recency().
     If content mentions a past year, the event is rejected.
@@ -379,6 +407,21 @@ def validate_trigger_recency(
     current_time = datetime.utcnow()
     current_year = current_time.year
 
+    # ============================================
+    # Layer 0 (FIRST): Past year detection (CRITICAL)
+    # Must run BEFORE URL/content date checks to catch "December 2024" articles
+    # even when the URL date is recent (e.g., /2026/01/26/)
+    # ============================================
+    full_text = f"{title} {content}"
+    has_past_year, past_year = contains_past_year(full_text, current_year)
+    if has_past_year:
+        logger.warning(f"[PAST-YEAR-REJECT] Year {past_year} in content: {title[:50]}...")
+        return (
+            False,
+            f"PAST_YEAR_IN_CONTENT: Article mentions year {past_year} (current: {current_year})",
+            None,
+        )
+
     # Layer 1: URL date extraction
     url_date = extract_date_from_url(url)
     if url_date:
@@ -391,7 +434,7 @@ def validate_trigger_recency(
                 url_date,
             )
 
-        # URL date is valid and recent
+        # URL date is valid and recent (past year already checked above)
         logger.debug(f"Layer 1 (URL): Valid date {url_date.date()}")
         return (
             True,
@@ -419,33 +462,25 @@ def validate_trigger_recency(
             content_date,
         )
 
-    # Layer 3: Past year detection (CRITICAL)
-    full_text = f"{title} {content}"
-    has_past_year, past_year = contains_past_year(full_text, current_year)
-    if has_past_year:
-        return (
-            False,
-            f"PAST_YEAR_DETECTED: Article mentions year {past_year} (current: {current_year})",
-            None,
-        )
-
-    # Layer 4: API-provided date (fallback)
+    # Layer 3: API-provided date (fallback)
     if api_date:
-        api_age_hours = (current_time - api_date).total_seconds() / 3600
+        # P0 FIX: Safe timezone handling - convert to naive UTC
+        api_date_naive = api_date.replace(tzinfo=None) if api_date.tzinfo else api_date
+        api_age_hours = (current_time - api_date_naive).total_seconds() / 3600
 
         if api_age_hours > max_age_hours:
             return (
                 False,
-                f"API_DATE_TOO_OLD: {api_date.date()} (age: {api_age_hours:.1f}h)",
-                api_date,
+                f"API_DATE_TOO_OLD: {api_date_naive.date()} (age: {api_age_hours:.1f}h)",
+                api_date_naive,
             )
 
         # API date is valid, but warn that no URL/content date was found
-        logger.debug(f"Layer 4 (API): Using API date {api_date.date()} (no content validation)")
+        logger.debug(f"Layer 3 (API): Using API date {api_date_naive.date()} (no content validation)")
         return (
             True,
-            f"API_DATE_ONLY: {api_date.date()} (age: {api_age_hours:.1f}h, no content date found)",
-            api_date,
+            f"API_DATE_ONLY: {api_date_naive.date()} (age: {api_age_hours:.1f}h, no content date found)",
+            api_date_naive,
         )
 
     # No date information at all - conservative rejection

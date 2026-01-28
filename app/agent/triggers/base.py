@@ -4,11 +4,17 @@
 모든 트리거 소스는 이 인터페이스를 구현해야 함
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Default hash expiry (24 hours)
+DEFAULT_HASH_EXPIRY_SECONDS = 86400
 
 
 class TriggerSource(str, Enum):
@@ -23,6 +29,7 @@ class TriggerSource(str, Enum):
     CURRENTS = "currents"
     WORLDNEWS = "worldnews"
     ACLED = "acled"
+    BRAVE = "brave"
 
     # Tier-3: Signal Sources
     TWITTER = "twitter"
@@ -54,6 +61,7 @@ SOURCE_TIER_MAP: dict[TriggerSource, SourceTier] = {
     TriggerSource.CURRENTS: SourceTier.TIER2_NEWS,
     TriggerSource.WORLDNEWS: SourceTier.TIER2_NEWS,
     TriggerSource.ACLED: SourceTier.TIER2_DATA,
+    TriggerSource.BRAVE: SourceTier.TIER2_NEWS,
     # Tier-3: Signal Sources
     TriggerSource.TWITTER: SourceTier.TIER3_SOCIAL,
     TriggerSource.TELEGRAM: SourceTier.TIER3_MSG,
@@ -209,3 +217,38 @@ class BaseTrigger(ABC):
         """텍스트에서 매칭된 키워드 찾기"""
         text_lower = text.lower()
         return [kw for kw in self.keywords if kw.lower() in text_lower]
+
+
+class HashCleanupMixin:
+    """
+    Mixin for time-based hash deduplication and cleanup.
+
+    Provides:
+    - seen_hashes storage
+    - _cleanup_expired_hashes() method
+
+    Usage:
+        class MyTrigger(BaseTrigger, HashCleanupMixin):
+            def __init__(self):
+                self.seen_hashes: dict[str, float] = {}
+                self.hash_expiry_seconds = 86400  # Optional override
+    """
+
+    seen_hashes: dict[str, float]
+    hash_expiry_seconds: int = DEFAULT_HASH_EXPIRY_SECONDS
+
+    def _cleanup_expired_hashes(self, current_time: float) -> None:
+        """Remove expired hashes older than hash_expiry_seconds."""
+        expiry = getattr(self, "hash_expiry_seconds", DEFAULT_HASH_EXPIRY_SECONDS)
+        expired = [
+            h for h, ts in self.seen_hashes.items()
+            if current_time - ts > expiry
+        ]
+        for h in expired:
+            del self.seen_hashes[h]
+
+        if expired:
+            logger.debug(
+                f"[{self.__class__.__name__}] Cleaned up {len(expired)} expired hashes, "
+                f"{len(self.seen_hashes)} remaining"
+            )

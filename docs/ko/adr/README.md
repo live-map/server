@@ -19,6 +19,7 @@ Architecture Decision Record (ADR)는 중요한 아키텍처 결정과 그 맥�
 | [ADR-007](ADR-007-breaking-news.md) | 속보 패스트패스 | Accepted | 2026-01-24 |
 | [ADR-008](ADR-008-importance-scoring.md) | Goldstein Scale 중요도 | Accepted | 2026-01-24 |
 | [ADR-011](ADR-011-domain-tiers.md) | 도메인 티어 시스템 | Accepted | 2026-01-24 |
+| [ADR-012](ADR-012-llm-classifier.md) | **LLM 분류기 (패턴 대체)** | Accepted | 2026-01-27 |
 
 ## ADR 템플릿
 

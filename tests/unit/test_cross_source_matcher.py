@@ -120,8 +120,9 @@ class TestCrossSourceMatcherInit:
         """Default initialization should use default values."""
         matcher = CrossSourceMatcher()
 
-        # P2 update: default threshold increased from 0.70 to 0.75
-        assert matcher.similarity_threshold == 0.75
+        # Updated 2026-01-27: lowered from 0.75 to 0.60 for cross-source matching
+        # Empirical data shows same story from different sources: 60-86% similarity
+        assert matcher.similarity_threshold == 0.60
         assert matcher.time_window == timedelta(hours=6)
         assert matcher.embedding_model == "BAAI/bge-m3"
         assert matcher._encoder is None

@@ -60,7 +60,7 @@ class RedditTrigger(BaseTrigger):
         min_score: int = 10,  # Minimum upvotes
         min_comments: int = 0,
         time_filter: str = "day",  # hour, day, week, month, year, all
-        max_age_hours: int = 48,  # Maximum article age
+        max_age_hours: int = 1,  # Maximum article age (match other triggers)
     ):
         super().__init__(keywords)
         self.subreddits = subreddits or NEWS_SUBREDDITS
@@ -296,11 +296,6 @@ class RedditTrigger(BaseTrigger):
             logger.error(f"Error parsing Reddit post: {e}")
             return None
 
-    async def _wait_for_rate_limit(self):
-        """Wait for rate limit to reset"""
-        import asyncio
-        await asyncio.sleep(60)  # Wait 1 minute
-
     def _cleanup_expired_hashes(self, current_time: float) -> None:
         """Remove expired hashes"""
         expired = [
@@ -312,6 +307,11 @@ class RedditTrigger(BaseTrigger):
 
         if expired:
             logger.debug(f"Cleaned up {len(expired)} expired Reddit hashes")
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Wait for rate limit reset (1 second for Reddit public API)"""
+        import asyncio
+        await asyncio.sleep(1.0)
 
     async def close(self):
         """Cleanup resources"""

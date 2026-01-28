@@ -38,6 +38,7 @@ from .bluesky import BlueskyTrigger
 from .google_trends import GoogleTrendsTrigger
 from .currents import CurrentsTrigger
 from .worldnews import WorldNewsTrigger
+from .brave import BraveTrigger
 from .usgs import USGSTrigger
 from .noaa import NOAATrigger
 from .acled import ACLEDTrigger
@@ -250,6 +251,18 @@ class TriggerManager:
         ))
         return self
 
+    def add_brave(
+        self,
+        api_key: str,
+        keywords: list[str] | None = None,
+    ) -> "TriggerManager":
+        """Brave Search 트리거 추가 (Tier-2)"""
+        self.add_trigger(BraveTrigger(
+            api_key=api_key,
+            keywords=keywords,
+        ))
+        return self
+
     def add_usgs(
         self,
         min_magnitude: float = 5.0,
@@ -301,8 +314,13 @@ class TriggerManager:
             try:
                 success = await trigger.initialize()
                 results[trigger.source_name] = success
+                # P0: Explicit success/failure logging at INFO level
+                if success:
+                    logger.info(f"[TRIGGER-INIT-OK] {trigger.source_name} initialized successfully")
+                else:
+                    logger.error(f"[TRIGGER-INIT-FAIL] {trigger.source_name} failed to initialize")
             except Exception as e:
-                logger.error(f"Failed to initialize {trigger.source_name}: {e}")
+                logger.error(f"[TRIGGER-INIT-FAIL] {trigger.source_name}: {e}")
                 results[trigger.source_name] = False
 
         # Semantic Clusterer 초기화 (임베딩 모델 로딩)

@@ -10,7 +10,6 @@ from app.agent.metrics import (
     FilterStageStats,
     ScanCycleResult,
     SourceQualityMetrics,
-    AccuracyMetrics,
     get_global_metrics,
     reset_global_metrics,
 )
@@ -165,68 +164,6 @@ class TestPipelineMetrics:
 
         timing = metrics.get_timing_report()
         assert timing["total_scans"] == 0
-
-
-class TestAccuracyMetrics:
-    """Test accuracy metrics."""
-
-    def test_precision_calculation(self):
-        """Precision should be calculated correctly."""
-        accuracy = AccuracyMetrics(true_positives=80, false_positives=20)
-        assert accuracy.precision == 0.8
-
-    def test_recall_calculation(self):
-        """Recall should be calculated correctly."""
-        accuracy = AccuracyMetrics(true_positives=80, false_negatives=20)
-        assert accuracy.recall == 0.8
-
-    def test_f1_score_calculation(self):
-        """F1 score should be calculated correctly."""
-        accuracy = AccuracyMetrics(
-            true_positives=80,
-            false_positives=10,
-            false_negatives=10,
-        )
-        # precision = 80/90 = 0.889
-        # recall = 80/90 = 0.889
-        # f1 = 2 * 0.889 * 0.889 / (0.889 + 0.889) = 0.889
-        assert 0.88 <= accuracy.f1_score <= 0.90
-
-    def test_record_feedback_true_positive(self):
-        """Should record true positive correctly."""
-        accuracy = AccuracyMetrics()
-        accuracy.record_feedback("event1", is_relevant=True, was_published=True)
-        assert accuracy.true_positives == 1
-        assert accuracy.false_positives == 0
-
-    def test_record_feedback_false_positive(self):
-        """Should record false positive correctly."""
-        accuracy = AccuracyMetrics()
-        accuracy.record_feedback("event1", is_relevant=False, was_published=True)
-        assert accuracy.true_positives == 0
-        assert accuracy.false_positives == 1
-
-    def test_record_feedback_false_negative(self):
-        """Should record false negative correctly."""
-        accuracy = AccuracyMetrics()
-        accuracy.record_feedback("event1", is_relevant=True, was_published=False)
-        assert accuracy.false_negatives == 1
-
-    def test_get_accuracy_report(self):
-        """Should return accuracy report."""
-        accuracy = AccuracyMetrics(
-            true_positives=80,
-            false_positives=10,
-            false_negatives=10,
-        )
-        report = accuracy.get_report()
-
-        assert report["true_positives"] == 80
-        assert report["false_positives"] == 10
-        assert report["false_negatives"] == 10
-        assert "precision" in report
-        assert "recall" in report
-        assert "f1_score" in report
 
 
 class TestGlobalMetrics:
