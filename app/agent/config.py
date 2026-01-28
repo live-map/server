@@ -26,6 +26,7 @@ class AgentSettings(BaseSettings):
     tavily_api_key: str = ""
 
     # P1: Brave Search (무료 2,000회/월)
+    brave_enabled: bool = True  # P0: Added for consistency with other triggers
     brave_api_key: str = ""
 
     # ===========================================
@@ -34,7 +35,7 @@ class AgentSettings(BaseSettings):
 
     # GDELT (뉴스) - 인증 불필요
     gdelt_enabled: bool = True
-    gdelt_timespan: str = "2h"  # 검색 기간 (2시간, 프로덕션용)
+    gdelt_timespan: str = "30min"  # 검색 기간 (30분, 15분 스캔에 최적화)
 
 
     # X/Twitter (Twikit) - 개인계정 필요
@@ -61,8 +62,8 @@ class AgentSettings(BaseSettings):
     gdelt_use_gkg_themes: bool = True
     gdelt_tone_threshold: float = -5.0  # Goldstein proxy
 
-    # Social Detection (Tier-3)
-    reddit_enabled: bool = True
+    # Social Detection (Tier-3) - DISABLED in Tier-1/2 only mode
+    reddit_enabled: bool = False  # Disabled: Tier-3 source excluded
     reddit_subreddits: str = "worldnews,news,UkrainianConflict,geopolitics"
     reddit_min_score: int = 50
 
@@ -103,8 +104,11 @@ class AgentSettings(BaseSettings):
     scan_interval_minutes: int = 15  # 멀티소스용 15분 간격
     max_news_per_scan: int = 100
 
-    # Recency filter - reject articles older than this threshold
-    max_event_age_hours: int = 48  # Maximum age for events to be processed
+    # Recency filter - DISABLED (triggers already validate recency)
+    # P0 Optimization: Each trigger (GDELT, Currents, WorldNews) validates recency
+    # via validate_trigger_recency, making scanner-level filter redundant
+    recency_filter_enabled: bool = False  # Disabled - triggers handle this
+    max_event_age_hours: int = 6  # Kept for backward compatibility
 
     # 카테고리별 이벤트 제한 (큐 다양성 보장)
     max_events_per_category: int = 5  # 각 카테고리당 최대 이벤트 수
@@ -127,41 +131,51 @@ class AgentSettings(BaseSettings):
 
     min_investigate_score: int = 50  # 조사 시작 최소 점수
 
-    # 점수 계산 방식
-    use_deterministic_scoring: bool = True  # 결정론적 점수 사용
-    use_llm_scoring: bool = True  # LLM 점수도 사용
-    combine_scores: bool = True  # 두 점수 조합 (평균)
-
-    # 디버깅
-    log_all_scores: bool = True  # 모든 점수 계산 로깅
-
     # ===========================================
     # 조사 에이전트 설정
     # ===========================================
     max_investigation_iterations: int = 3
-    min_sources_for_verification: int = 2
-    max_tokens_per_investigation: int = 4000
-
-    # ===========================================
-
-    evidence_gate_enabled: bool = True  # 증거 검증 게이트 활성화
-    min_supported_claims: int = 2       # SUPPORTED 판정 필요 최소 주장 수
-    min_evidence_ratio: float = 0.5     # 최소 증거 비율 (supported/total)
 
 
     # ===========================================
     # 중복 제거 설정 (Deduplication)
     # ===========================================
     dedup_enabled: bool = True
+
+    # === Layer 1: Title Similarity (Fast, no embedding) ===
+    # Uses SequenceMatcher for string similarity
+    title_similarity_duplicate: float = 0.85   # >= 85% title match = skip
+    title_similarity_potential: float = 0.70   # 70-85% = verify with embedding
+
+    # === Layer 2: Semantic Similarity (Embedding-based) ===
     # Similarity thresholds (tune based on actual data distribution)
     # >= duplicate: Skip as duplicate
     # >= potential: Needs LLM verification
     # >= related: Link as story chain
     # < related: Create new event
-    dedup_duplicate_threshold: float = 0.95    # 확실한 중복 (스킵)
-    dedup_potential_threshold: float = 0.85    # 잠재적 일치 (LLM 검증 필요)
-    dedup_related_threshold: float = 0.70      # 관련 이벤트 (스토리 체인)
+    #
+    # NOTE: Cross-source embedding similarity typically shows:
+    # - Identical titles from different sources: ~84% similarity
+    # - Same story, different wording: 60-86% similarity
+    # Original thresholds (0.95/0.85/0.70) were too high for cross-source dedup.
+    # Lowered based on empirical data analysis (2026-01-27).
+    # P2 Fix: Further lowered based on log analysis (2026-01-28):
+    # - 70.53% Trump Iran articles were not caught as duplicates
+    # - 67.96% TikTok articles were not caught as duplicates
+    dedup_duplicate_threshold: float = 0.75    # 확실한 중복 (스킵) - was 0.80
+    dedup_potential_threshold: float = 0.65    # 잠재적 일치 (LLM 검증 필요) - was 0.70
+    dedup_related_threshold: float = 0.55      # 관련 이벤트 (스토리 체인) - unchanged
     dedup_time_window_days: int = 7            # 조회 기간 (일)
+
+    # === Layer 3: Re-embedding with Canonical Title ===
+    # After LLM generates canonical headline, regenerate embedding
+    # and re-check for duplicates (catches cross-source duplicates)
+    dedup_reembed_canonical: bool = True       # Re-embed with canonical title
+
+    # === Layer 4: Entity Matching ===
+    # Check key entity overlap (people, places, organizations)
+    entity_overlap_threshold: float = 0.60     # 60% entity overlap = related
+
     # Logging for threshold tuning
     dedup_log_all_similarities: bool = True    # 모든 유사도 점수 로깅
 
@@ -179,15 +193,44 @@ class AgentSettings(BaseSettings):
     investigation_timeout_seconds: float = 300.0  # 5 minutes
 
     # ===========================================
+    # LLM Classifier Settings (Deepinfra)
+    # ===========================================
+    # Enable/disable LLM-based news classification
+    llm_classifier_enabled: bool = True
+
+    # Deepinfra API for cost-effective LLM inference
+    # Cost: ~$3-5/month for ~2000 articles/day
+    deepinfra_api_key: str = ""
+    deepinfra_base_url: str = "https://api.deepinfra.com/v1/openai"
+    llm_classifier_model: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+    # Classification settings
+    llm_classifier_batch_size: int = 20  # Process articles in batches
+    llm_classifier_timeout: float = 30.0  # Timeout per batch request
+
+    # Fallback to pattern-based filtering if LLM fails
+    llm_classifier_fallback_enabled: bool = True
+
+    # LLM Cost Optimization: Move deduplication BEFORE LLM call
+    # This prevents LLM calls for articles that will be deduplicated anyway
+    dedup_before_llm: bool = True  # Title dedup before LLM (saves ~25% LLM costs)
+
+    # ===========================================
+    # Domain Whitelist (Tier-1/2 Only)
+    # ===========================================
+    # Enable domain whitelist filtering (reject Tier-3 sources)
+    domain_whitelist_enabled: bool = True
+
+    # Disable Tier-3 sources (Reddit, etc.) when whitelist is enabled
+    disable_tier3_sources: bool = True
+
+    # ===========================================
     # 콘텐츠 필터링 게이트 설정
     # ===========================================
 
     # Gate 0: Event Verification (이벤트 검증)
     event_verification_enabled: bool = True   # 이벤트 검증 활성화
     event_verification_use_llm: bool = False  # LLM 검증 비활성화 (규칙만 사용하여 비용 절감)
-    event_verification_use_zero_shot: bool = False  # Zero-shot 분류 사용 (transformers 필요)
-    zero_shot_high_confidence: float = 0.8    # 이 이상이면 바로 결정
-    zero_shot_model: str = "facebook/bart-large-mnli"  # Zero-shot 모델
 
     # Gate 1: Check-worthiness
     checkworthiness_enabled: bool = True
@@ -206,6 +249,28 @@ class AgentSettings(BaseSettings):
 
     # 로깅
     log_gate_rejections: bool = True    # 거부 사유 로깅
+
+    # ===========================================
+    # News Type Classification (Retrospective Filter)
+    # ===========================================
+    news_classification_enabled: bool = True  # Enable news type classification
+    retrospective_min_confidence: float = 0.25  # Min confidence to reject retrospective
+
+    # ===========================================
+    # Temporal Classification (Phase 6)
+    # ===========================================
+    # Enable LLM-based temporal classification
+    temporal_classification_enabled: bool = True
+
+    # Auto-reject non-publishable temporal categories (RETROSPECTIVE, PREDICTIVE)
+    temporal_filter_enabled: bool = True
+
+    # Temporal categories to reject (comma-separated)
+    # Options: retrospective, predictive
+    temporal_reject_categories: str = "retrospective,predictive"
+
+    # Log temporal classification results for debugging
+    temporal_log_classifications: bool = True
 
     # Pydantic v2 configuration
     model_config = ConfigDict(

@@ -1,5 +1,17 @@
 """
-Check-worthiness 감지 모듈
+Check-worthiness 감지 모듈 (Gate 1)
+
+DEPRECATED: This module is deprecated in favor of LLM-based classification.
+See llm_classifier.py for the new implementation.
+
+When llm_classifier_enabled=True in config.py:
+- LLM replaces this module (Gate 1: checkworthiness)
+- Single LLM call determines: is_news (filters entertainment, speculation, etc.)
+- Cost: ~$3-5/month for ~2000 articles/day
+
+This file is kept for backward compatibility and fallback mode.
+
+---
 
 목적: 연예, 추측, 일반 배경 콘텐츠 거부
 
@@ -17,6 +29,7 @@ from enum import Enum
 # P1 Fix: Import centralized compiled patterns
 from .patterns import (
     COMPILED_ENTERTAINMENT_PATTERNS,
+    COMPILED_ENTERTAINMENT_CONTEXT_PATTERNS,  # P0 Fix: Context-aware entertainment detection
     COMPILED_SPECULATION_PATTERNS,
     COMPILED_PROMOTIONAL_PATTERNS,
     COMPILED_HUMAN_INTEREST_PATTERNS,
@@ -123,6 +136,20 @@ def check_worthiness(
             rejection_reason=RejectionReason.SPORTS_NEWS,
             confidence=0.95,
             matched_patterns=[f"sports:{p}" for p in sports_matches]
+        )
+
+    # ============================================
+    # P0 Fix: Entertainment context patterns (movie rankings, celebrity news)
+    # Catches cases like "7 Great Sci-Fi War Movies, Ranked" that would
+    # otherwise be misclassified as war/conflict news
+    # ============================================
+    ent_context_count, ent_context_matches = count_matches(COMPILED_ENTERTAINMENT_CONTEXT_PATTERNS, text)
+    if ent_context_count >= 1:  # Just 1 match is enough for context-aware detection
+        return CheckWorthinessResult(
+            is_checkworthy=False,
+            rejection_reason=RejectionReason.ENTERTAINMENT,
+            confidence=0.90,
+            matched_patterns=[f"entertainment_context:{p}" for p in ent_context_matches]
         )
 
     # ============================================

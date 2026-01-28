@@ -1,5 +1,17 @@
 """
-Specificity 감지 모듈
+Specificity 감지 모듈 (Gate 2)
+
+DEPRECATED: This module is deprecated in favor of LLM-based classification.
+See llm_classifier.py for the new implementation.
+
+When llm_classifier_enabled=True in config.py:
+- LLM replaces this module (Gate 2: specificity)
+- LLM naturally handles specificity through is_significant check
+- Cost: ~$3-5/month for ~2000 articles/day
+
+This file is kept for backward compatibility and fallback mode.
+
+---
 
 목적: 구체적 날짜/장소/숫자 없는 일반 배경 기사 거부
 

@@ -16,7 +16,10 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from typing import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -29,10 +32,17 @@ from .specificity import check_specificity
 from .triggers import TriggerEvent, TriggerManager, TriggerSource
 from .triggers.base import SourceTier, SOURCE_TIER_MAP
 from .triggers.date_extractor import extract_date_from_content, contains_past_year
+from .news_classifier import classify_news_type, NewsType, ClassificationResult as NewsClassificationResult
+
+# LLM Classifier (replaces pattern-based Gates 0-2)
+from .llm_classifier import (
+    get_llm_classifier,
+    classify_articles,
+    filter_by_classification,
+    ClassificationResult as LLMClassificationResult,
+    NewsCategory,
+)
 from .significance import (
-    calculate_significance,
-    filter_significant_events,
-    classify_with_llm,
     SignificanceScore,
     SignificanceConfig,
 )
@@ -57,6 +67,91 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
+# P0 Fix: Title Deduplication Cache
+# ============================================
+@dataclass
+class PublishedTitle:
+    """Recently published title for duplicate detection."""
+    title: str
+    published_at: datetime
+
+
+class TitleDeduplicationCache:
+    """
+    In-memory cache for recently published titles.
+
+    P0 Fix: Prevents duplicate articles from being published within a time window
+    by checking title similarity (SequenceMatcher) against recent publications.
+
+    This handles duplicates within the same runtime session. For cross-restart
+    deduplication, the EventMatcher in article_service handles hash + semantic matching.
+    """
+
+    def __init__(self, max_age_hours: int = 8, similarity_threshold: float = 0.85):
+        """
+        Args:
+            max_age_hours: How long to keep titles in cache (default 8 hours)
+            similarity_threshold: Minimum similarity to consider as duplicate (default 0.85)
+        """
+        self.max_age_hours = max_age_hours
+        self.similarity_threshold = similarity_threshold
+        self._cache: deque[PublishedTitle] = deque(maxlen=500)  # Max 500 titles
+
+    def add(self, title: str) -> None:
+        """Add a title to the cache."""
+        self._cache.append(PublishedTitle(
+            title=title,
+            published_at=datetime.utcnow(),
+        ))
+        self._cleanup()
+
+    def is_duplicate(self, title: str) -> tuple[bool, str | None, float]:
+        """
+        Check if title is similar to recently published titles.
+
+        Args:
+            title: Title to check
+
+        Returns:
+            Tuple of (is_duplicate, matched_title, similarity_score)
+        """
+        self._cleanup()
+        title_lower = title.lower().strip()
+
+        for item in self._cache:
+            cached_lower = item.title.lower().strip()
+            similarity = SequenceMatcher(None, title_lower, cached_lower).ratio()
+
+            if similarity >= self.similarity_threshold:
+                return True, item.title, similarity
+
+        return False, None, 0.0
+
+    def _cleanup(self) -> None:
+        """Remove expired titles from cache."""
+        cutoff = datetime.utcnow() - timedelta(hours=self.max_age_hours)
+        # Remove from left (oldest) until we find a non-expired item
+        while self._cache and self._cache[0].published_at < cutoff:
+            self._cache.popleft()
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+
+# Global deduplication cache (persists across scan cycles)
+_global_title_cache = TitleDeduplicationCache(max_age_hours=8, similarity_threshold=0.85)
+
+
+def get_title_dedup_cache() -> TitleDeduplicationCache:
+    """Get the global title deduplication cache."""
+    return _global_title_cache
+
+
+# ============================================
 # 스캔 요약 로깅 (야간 디버깅용)
 # ============================================
 def _log_scan_summary(
@@ -73,15 +168,20 @@ def _log_scan_summary(
     scan_duration = (datetime.utcnow() - scan_start).total_seconds()
 
     # Filter stats line
-    # P2: Include importance filter in stats
+    # P2: Include importance filter and retrospective filter in stats
     importance_rejected = filter_stats.get('importance_rejected', 0)
+    retrospective_rejected = filter_stats.get('retrospective_rejected', 0)
+    # P0 Fix: Include duplicate rejection in filter stats
+    duplicate_rejected = filter_stats.get('duplicate_rejected', 0)
     logger.info(
         f"[FILTER-STATS] initial={filter_stats['initial']} → "
         f"recency={filter_stats['recency_rejected']} rejected → "
         f"content-date={filter_stats['content_date_rejected']} rejected → "
+        f"retrospective={retrospective_rejected} rejected → "
         f"importance={importance_rejected} rejected → "
         f"confidence={filter_stats['confidence_passed']} passed → "
         f"gates={filter_stats['gate0_rejected'] + filter_stats['gate1_rejected'] + filter_stats['gate2_rejected']} rejected → "
+        f"duplicate={duplicate_rejected} rejected → "
         f"published={filter_stats['final_published']}"
     )
 
@@ -322,14 +422,25 @@ class MultiSourceScanner:
         # ============================================
 
         # Currents API
-        if agent_settings.currents_enabled and agent_settings.currents_api_key:
-            manager.add_currents(api_key=agent_settings.currents_api_key)
-            logger.info("Currents API trigger added (Tier-2)")
+        if agent_settings.currents_enabled:
+            if not agent_settings.currents_api_key:
+                logger.error("[INIT-FAIL] Currents enabled but API key missing (AGENT_CURRENTS_API_KEY)")
+            else:
+                manager.add_currents(api_key=agent_settings.currents_api_key)
+                logger.info("Currents API trigger added (Tier-2)")
 
         # World News API
         if agent_settings.worldnews_enabled and agent_settings.worldnews_api_key:
             manager.add_worldnews(api_key=agent_settings.worldnews_api_key)
             logger.info("World News API trigger added (Tier-2)")
+
+        # Brave Search (for initial scan only, not investigator)
+        if agent_settings.brave_enabled:
+            if not agent_settings.brave_api_key:
+                logger.warning("[INIT-SKIP] Brave Search disabled (no API key: AGENT_BRAVE_API_KEY)")
+            else:
+                manager.add_brave(api_key=agent_settings.brave_api_key)
+                logger.info("Brave Search trigger added (Tier-2)")
 
         # ACLED Conflict Data
         if agent_settings.acled_enabled and agent_settings.acled_api_key:
@@ -417,6 +528,7 @@ class MultiSourceScanner:
             "gate0_rejected": 0,
             "gate1_rejected": 0,
             "gate2_rejected": 0,
+            "duplicate_rejected": 0,  # P0 Fix: Title-based duplicate detection
             "final_published": 0,
         }
 
@@ -431,36 +543,44 @@ class MultiSourceScanner:
         filter_stats["initial"] = len(events)
 
         # ============================================
-        # Recency Filter - Reject old articles
+        # Recency Filter - DISABLED (triggers handle this)
+        # P0 Optimization: Each trigger validates recency via validate_trigger_recency
+        # GDELT timespan, Currents/WorldNews max_age_hours already filter old articles
         # ============================================
-        max_age_hours = agent_settings.max_event_age_hours
         current_time = datetime.utcnow()
-        recent_events = []
 
-        for event in events:
-            age_hours = (current_time - event.detected_at).total_seconds() / 3600
-            if age_hours <= max_age_hours:
-                recent_events.append(event)
-                filter_stats["recency_passed"] += 1
-            else:
-                filter_stats["recency_rejected"] += 1
-                logger.warning(
-                    f"[RECENCY-FILTER] Rejected old event (age={age_hours:.1f}h): "
-                    f"{event.title[:50]}..."
+        if agent_settings.recency_filter_enabled:
+            max_age_hours = agent_settings.max_event_age_hours
+            recent_events = []
+
+            for event in events:
+                age_hours = (current_time - event.detected_at).total_seconds() / 3600
+                if age_hours <= max_age_hours:
+                    recent_events.append(event)
+                    filter_stats["recency_passed"] += 1
+                else:
+                    filter_stats["recency_rejected"] += 1
+                    logger.warning(
+                        f"[RECENCY-FILTER] Rejected old event (age={age_hours:.1f}h): "
+                        f"{event.title[:50]}..."
+                    )
+
+            if filter_stats["recency_rejected"] > 0:
+                logger.info(
+                    f"Recency filter: {len(recent_events)}/{filter_stats['initial']} events within "
+                    f"{max_age_hours}h window ({filter_stats['recency_rejected']} rejected)"
                 )
 
-        if filter_stats["recency_rejected"] > 0:
-            logger.info(
-                f"Recency filter: {len(recent_events)}/{filter_stats['initial']} events within "
-                f"{max_age_hours}h window ({filter_stats['recency_rejected']} rejected)"
-            )
+            events = recent_events
 
-        events = recent_events
-
-        if not events:
-            logger.info("No recent events after recency filter")
-            _log_scan_summary(scan_start, filter_stats, [])
-            return []
+            if not events:
+                logger.info("No recent events after recency filter")
+                _log_scan_summary(scan_start, filter_stats, [])
+                return []
+        else:
+            # Recency filter disabled - triggers already handle this
+            filter_stats["recency_passed"] = len(events)
+            logger.debug("[RECENCY-FILTER] Disabled - triggers validate recency")
 
         # ============================================
         # Content-based Past Year Filter (2차 검증)
@@ -501,6 +621,60 @@ class MultiSourceScanner:
             logger.info("No events after content date filter")
             _log_scan_summary(scan_start, filter_stats, [])
             return []
+
+        # ============================================
+        # News Type Classification - Reject RETROSPECTIVE articles
+        # DATA_RELEASE articles are included (with label)
+        # ============================================
+        if agent_settings.news_classification_enabled:
+            filter_stats["retrospective_rejected"] = 0
+            classified_events = []
+
+            for event in events:
+                # Tier-1 government sources (USGS, NOAA) are exempt
+                source_tier = SOURCE_TIER_MAP.get(event.source, SourceTier.TIER2_NEWS)
+                if source_tier == SourceTier.TIER1_GOVT:
+                    event.news_type = NewsType.LIVE_EVENT.value
+                    classified_events.append(event)
+                    continue
+
+                # Classify news type
+                classification = classify_news_type(
+                    title=event.title,
+                    content=event.content or "",
+                )
+
+                # Store classification result on event for later use
+                event.news_type = classification.news_type.value
+                event._classification_result = classification
+
+                if not classification.is_publishable:
+                    filter_stats["retrospective_rejected"] += 1
+                    logger.warning(
+                        f"[RETROSPECTIVE-REJECT] {classification.reason}: {event.title[:50]}..."
+                    )
+                    continue
+
+                # Log DATA_RELEASE articles
+                if classification.news_type == NewsType.DATA_RELEASE:
+                    logger.info(
+                        f"[DATA-RELEASE] Including with label: {event.title[:50]}..."
+                    )
+
+                classified_events.append(event)
+
+            if filter_stats["retrospective_rejected"] > 0:
+                logger.info(
+                    f"News classification: {len(classified_events)}/{len(events)} events passed "
+                    f"({filter_stats['retrospective_rejected']} retrospective rejected)"
+                )
+
+            events = classified_events
+
+            if not events:
+                logger.info("No events after news classification filter")
+                _log_scan_summary(scan_start, filter_stats, [])
+                return []
 
         # NOTE: Importance filter moved AFTER cross-source matching (P0 fix)
         # This allows multi-source clusters to receive proper importance boost
@@ -559,7 +733,11 @@ class MultiSourceScanner:
                 "gate0_rejected": 0,
                 "gate1_rejected": 0,
                 "gate2_rejected": 0,
+                "importance_rejected": 0,
             }
+        # Ensure importance_rejected key exists (for callers that provide partial stats)
+        if "importance_rejected" not in filter_stats:
+            filter_stats["importance_rejected"] = 0
 
         # ============================================
         # Step 1: Tier-1 정부 소스 분리 (USGS, NOAA는 신뢰도 0.99)
@@ -708,6 +886,114 @@ class MultiSourceScanner:
             return []
 
         # ============================================
+        # Step 3.34: Title Deduplication BEFORE LLM (P0 Cost Optimization)
+        # Check against recently published titles to save LLM costs
+        # This catches duplicates BEFORE expensive LLM calls
+        # ============================================
+        if agent_settings.dedup_before_llm:
+            title_cache = get_title_dedup_cache()
+            dedup_before_llm = []
+
+            for item in publishable_events:
+                event = item["event"]
+                is_dup, matched_title, sim_score = title_cache.is_duplicate(event.title)
+
+                if is_dup:
+                    filter_stats["duplicate_rejected"] = filter_stats.get("duplicate_rejected", 0) + 1
+                    logger.info(
+                        f"[PRE-LLM-DEDUP] Skip duplicate before LLM: "
+                        f"sim={sim_score:.2f} | {event.title[:50]}..."
+                    )
+                    continue
+
+                dedup_before_llm.append(item)
+
+            if filter_stats.get("duplicate_rejected", 0) > 0:
+                logger.info(
+                    f"Pre-LLM deduplication: {len(dedup_before_llm)}/{len(publishable_events)} events passed "
+                    f"({filter_stats['duplicate_rejected']} duplicates rejected before LLM)"
+                )
+
+            publishable_events = dedup_before_llm
+
+            if not publishable_events:
+                logger.info("No events after pre-LLM deduplication")
+                return []
+
+        # ============================================
+        # Step 3.35: LLM Classification (replaces Gates 0-2 when enabled)
+        # Single LLM call for: is_news, category, is_significant
+        # ============================================
+        llm_classifier = get_llm_classifier()
+        use_llm_classification = (
+            agent_settings.llm_classifier_enabled and
+            llm_classifier.is_enabled
+        )
+
+        if use_llm_classification:
+            logger.info("[LLM-CLASSIFIER] Using LLM for article classification (replacing Gates 0-2)")
+
+            # Prepare articles for LLM classification
+            articles_for_llm = [
+                {"title": item["event"].title, "content": item["event"].content or ""}
+                for item in publishable_events
+            ]
+
+            # Run LLM classification
+            llm_result = await classify_articles(articles_for_llm)
+
+            # Filter based on LLM results
+            llm_filtered = []
+            filter_stats["llm_rejected"] = 0
+
+            for i, item in enumerate(publishable_events):
+                if i < len(llm_result.results):
+                    classification = llm_result.results[i]
+
+                    # Reject if not news or not significant
+                    if not classification.is_news:
+                        filter_stats["llm_rejected"] += 1
+                        logger.info(
+                            f"[LLM-REJECT] Not news: {item['event'].title[:50]}... "
+                            f"({classification.reason})"
+                        )
+                        continue
+
+                    if not classification.is_significant:
+                        filter_stats["llm_rejected"] += 1
+                        logger.info(
+                            f"[LLM-REJECT] Not significant: {item['event'].title[:50]}... "
+                            f"({classification.reason})"
+                        )
+                        continue
+
+                    if classification.category == NewsCategory.OTHER:
+                        filter_stats["llm_rejected"] += 1
+                        logger.info(
+                            f"[LLM-REJECT] Category other: {item['event'].title[:50]}..."
+                        )
+                        continue
+
+                    # Store LLM classification for later use
+                    item["llm_classification"] = classification
+                    item["_category"] = classification.category.value  # Use LLM category
+                    llm_filtered.append(item)
+                else:
+                    # Fallback: include if LLM didn't return result
+                    llm_filtered.append(item)
+
+            logger.info(
+                f"LLM classification: {len(llm_filtered)}/{len(publishable_events)} passed "
+                f"({filter_stats.get('llm_rejected', 0)} rejected)"
+            )
+
+            publishable_events = llm_filtered
+
+            if not publishable_events:
+                logger.info("No events after LLM classification")
+                return []
+
+        # ============================================
         # Step 3.4: Breaking News Detection (P1 Fix: moved before Gate 0)
         # Detect early so high-confidence breaking news can skip gates
         # ============================================
@@ -733,8 +1019,9 @@ class MultiSourceScanner:
         # ============================================
         # Step 3.5: 이벤트 검증 (Gate 0) - 하이브리드 방식
         # P1: Breaking news with high confidence can skip this gate
+        # NOTE: Skipped when LLM classifier is enabled (handles verification)
         # ============================================
-        if agent_settings.event_verification_enabled:
+        if agent_settings.event_verification_enabled and not use_llm_classification:
             verified_events = []
 
             for item in publishable_events:
@@ -790,68 +1077,74 @@ class MultiSourceScanner:
         # ============================================
         # Step 4: Content Gates 적용 (Tier-1 govt는 일부 면제)
         # P0: Breaking News Fast-Path can skip certain gates
+        # NOTE: Skipped when LLM classifier is enabled (handles content filtering)
         # ============================================
-        gate_passed = []
+        if use_llm_classification:
+            # LLM classification already handled content filtering
+            gate_passed = publishable_events
+            logger.info(f"Content gates: SKIPPED (LLM classification enabled)")
+        else:
+            gate_passed = []
 
-        for item in publishable_events:
-            event = item["event"]
-            text = f"{event.title} {event.content}"
+            for item in publishable_events:
+                event = item["event"]
+                text = f"{event.title} {event.content}"
 
-            # P0: Check if breaking news fast-path is eligible
-            breaking_result: BreakingNewsResult = item.get("breaking_news")
-            is_breaking_fast_path = (
-                breaking_result and
-                breaking_result.fast_path_eligible and
-                "gate1_checkworthiness" not in breaking_result.gates_to_skip
-            )
+                # P0: Check if breaking news fast-path is eligible
+                breaking_result: BreakingNewsResult = item.get("breaking_news")
+                is_breaking_fast_path = (
+                    breaking_result and
+                    breaking_result.fast_path_eligible and
+                    "gate1_checkworthiness" not in breaking_result.gates_to_skip
+                )
 
-            # Tier-1 정부 소스는 checkworthiness 면제 (공식 발표)
-            if not item["is_tier1_govt"]:
-                # Gate 1: Check-worthiness (Breaking news does NOT skip this)
-                if agent_settings.checkworthiness_enabled:
-                    cw_result = check_worthiness(
-                        text,
-                        entertainment_threshold=agent_settings.entertainment_pattern_threshold,
-                        speculation_threshold=agent_settings.speculation_pattern_threshold,
-                        human_interest_threshold=agent_settings.human_interest_pattern_threshold,
-                    )
-                    if not cw_result.is_checkworthy:
-                        filter_stats["gate1_rejected"] += 1
+                # Tier-1 정부 소스는 checkworthiness 면제 (공식 발표)
+                if not item["is_tier1_govt"]:
+                    # Gate 1: Check-worthiness (Breaking news does NOT skip this)
+                    if agent_settings.checkworthiness_enabled:
+                        cw_result = check_worthiness(
+                            text,
+                            entertainment_threshold=agent_settings.entertainment_pattern_threshold,
+                            speculation_threshold=agent_settings.speculation_pattern_threshold,
+                            human_interest_threshold=agent_settings.human_interest_pattern_threshold,
+                        )
+                        if not cw_result.is_checkworthy:
+                            filter_stats["gate1_rejected"] += 1
+                            if agent_settings.log_gate_rejections:
+                                logger.info(
+                                    f"[GATE1-REJECT] {cw_result.rejection_reason.value}: "
+                                    f"{event.title[:50]}..."
+                                )
+                            continue
+
+                # Gate 2: Specificity (영어 기사만 적용 - 패턴이 영어 전용)
+                # Tier-1 govt 또는 비영어 기사는 스킵
+                # P0: Breaking news with fast-path can skip this gate
+                is_english = getattr(event, 'language', 'en') in ['en', 'english', '']
+                skip_specificity = (
+                    item["is_tier1_govt"] or
+                    (breaking_result and breaking_result.fast_path_eligible and
+                     "gate2_specificity" in breaking_result.gates_to_skip)
+                )
+
+                if agent_settings.specificity_enabled and is_english and not skip_specificity:
+                    spec_result = check_specificity(text, min_score=agent_settings.min_specificity_score)
+                    if not spec_result.is_specific:
+                        filter_stats["gate2_rejected"] += 1
                         if agent_settings.log_gate_rejections:
                             logger.info(
-                                f"[GATE1-REJECT] {cw_result.rejection_reason.value}: "
+                                f"[GATE2-REJECT] Low specificity ({spec_result.score:.2f}): "
                                 f"{event.title[:50]}..."
                             )
                         continue
+                elif skip_specificity and breaking_result and breaking_result.is_breaking:
+                    logger.info(
+                        f"[BREAKING-FAST-PATH] Skipping Gate 2 (specificity) for: {event.title[:50]}..."
+                    )
 
-            # Gate 2: Specificity (영어 기사만 적용 - 패턴이 영어 전용)
-            # Tier-1 govt 또는 비영어 기사는 스킵
-            # P0: Breaking news with fast-path can skip this gate
-            is_english = getattr(event, 'language', 'en') in ['en', 'english', '']
-            skip_specificity = (
-                item["is_tier1_govt"] or
-                (breaking_result and breaking_result.fast_path_eligible and
-                 "gate2_specificity" in breaking_result.gates_to_skip)
-            )
+                gate_passed.append(item)
 
-            if agent_settings.specificity_enabled and is_english and not skip_specificity:
-                spec_result = check_specificity(text, min_score=agent_settings.min_specificity_score)
-                if not spec_result.is_specific:
-                    filter_stats["gate2_rejected"] += 1
-                    if agent_settings.log_gate_rejections:
-                        logger.info(
-                            f"[GATE2-REJECT] Low specificity ({spec_result.score:.2f}): "
-                            f"{event.title[:50]}..."
-                        )
-                    continue
-            elif skip_specificity and breaking_result and breaking_result.is_breaking:
-                logger.info(
-                    f"[BREAKING-FAST-PATH] Skipping Gate 2 (specificity) for: {event.title[:50]}..."
-                )
-
-            gate_passed.append(item)
-
-        logger.info(f"Content gates: {len(gate_passed)}/{len(publishable_events)} passed")
+            logger.info(f"Content gates: {len(gate_passed)}/{len(publishable_events)} passed")
 
         if not gate_passed:
             return []
@@ -865,11 +1158,15 @@ class MultiSourceScanner:
 
         for item in gate_passed:
             event = item["event"]
-            category = self._infer_category_from_event(event)
+
+            # Use LLM-assigned category if available, otherwise infer from keywords
+            category = item.get("_category")
+            if not category:
+                category = self._infer_category_from_event(event)
 
             # 방어선 5: 키워드 매칭이 실패해서 "other"가 나오면 발행하지 않음
-            # 국제 정세 키워드가 하나도 매칭되지 않은 기사는 로컬 뉴스일 가능성 높음
-            if category == "other":
+            # NOTE: Skip this check when LLM classification was used (already filtered)
+            if category == "other" and not use_llm_classification:
                 logger.info(
                     f"[CATEGORY-REJECT] No international affairs keywords matched: "
                     f"{event.title[:50]}..."
@@ -966,9 +1263,50 @@ class MultiSourceScanner:
             )
 
         # ============================================
+        # Step 6.5: P0 Fix - Title-based duplicate detection (fallback)
+        # Check against recently published titles (in-memory cache)
+        # SKIP if already done before LLM (dedup_before_llm=True)
+        # ============================================
+        if not agent_settings.dedup_before_llm:
+            # Only run if pre-LLM dedup was disabled
+            title_cache = get_title_dedup_cache()
+            dedup_filtered = []
+
+            for item in limited_events:
+                event = item["event"]
+                is_dup, matched_title, sim_score = title_cache.is_duplicate(event.title)
+
+                if is_dup:
+                    filter_stats["duplicate_rejected"] = filter_stats.get("duplicate_rejected", 0) + 1
+                    logger.info(
+                        f"[DUPLICATE-REJECT] Similar to '{matched_title[:50]}...' "
+                        f"(sim={sim_score:.2f}): {event.title[:50]}..."
+                    )
+                    continue
+
+                dedup_filtered.append(item)
+
+            if filter_stats.get("duplicate_rejected", 0) > 0:
+                logger.info(
+                    f"Title deduplication: {len(dedup_filtered)}/{len(limited_events)} events passed "
+                    f"({filter_stats['duplicate_rejected']} duplicates rejected)"
+                )
+
+            limited_events = dedup_filtered
+
+            if not limited_events:
+                logger.info("No events after title deduplication")
+                return []
+        else:
+            logger.debug("[POST-LLM-DEDUP] Skipped - already done before LLM")
+
+        # ============================================
         # Step 7: 최종 결과 포맷팅
         # ============================================
         results = []
+        # Get title cache for adding published titles (regardless of when dedup was done)
+        title_cache = get_title_dedup_cache()
+
         for item in limited_events:
             event = item["event"]
             confidence = item["confidence"]
@@ -1008,6 +1346,15 @@ class MultiSourceScanner:
             )
             importance_level = importance_result.level.value if importance_result else "medium"
 
+            # P0: Get news type classification
+            news_type = getattr(event, 'news_type', NewsType.UNKNOWN.value)
+            is_data_release = news_type == NewsType.DATA_RELEASE.value
+
+            # LLM classification info (if available)
+            llm_classification: LLMClassificationResult | None = item.get("llm_classification")
+            llm_confidence = llm_classification.confidence if llm_classification else None
+            llm_reason = llm_classification.reason if llm_classification else None
+
             result_item = {
                 "description": event.title,
                 "category": category,
@@ -1029,9 +1376,19 @@ class MultiSourceScanner:
                 # P2: Importance scoring (Goldstein Scale)
                 "importance_score": round(importance_score, 3),
                 "importance_level": importance_level,
+                # P0: News type classification
+                "news_type": news_type,
+                "is_data_release": is_data_release,
+                # LLM classification (if enabled)
+                "llm_classified": llm_classification is not None,
+                "llm_confidence": round(llm_confidence, 3) if llm_confidence else None,
+                "llm_reason": llm_reason,
             }
 
             results.append(result_item)
+
+            # P0 Fix: Add title to dedup cache after successful processing
+            title_cache.add(event.title)
 
             # Enhanced logging with breaking news and importance info
             breaking_info = f" | {breaking_label}" if breaking_label else ""
@@ -1112,134 +1469,6 @@ class MultiSourceScanner:
                 return "other"
             return "violence"
 
-        return "other"
-
-    async def _llm_validate_and_format(
-        self,
-        filtered_events: list[tuple[dict, SignificanceScore, TriggerEvent]],
-    ) -> list[dict]:
-        """LLM으로 추가 검증 및 포맷팅"""
-        event_dicts = [e for e, _, _ in filtered_events]
-
-        try:
-            llm_results = await classify_with_llm(
-                events=event_dicts,
-                llm=self.llm,
-                min_score=agent_settings.min_publish_score,
-            )
-
-            if not llm_results:
-                logger.warning("LLM returned no results, using deterministic scores")
-                return self._format_results(filtered_events)
-
-            # LLM 결과와 결정론적 점수 조합
-            results = []
-            for event_dict, llm_score, category, reasoning in llm_results:
-                # 원본 이벤트 찾기
-                det_score = None
-                for e, s, t in filtered_events:
-                    if e["title"] == event_dict["title"]:
-                        det_score = s
-                        break
-
-                # 조합 점수 계산
-                if agent_settings.combine_scores and det_score:
-                    final_score = (det_score.total_score + llm_score) // 2
-                else:
-                    final_score = llm_score
-
-                logger.info(
-                    f"[FINAL] {final_score:3d} [{category:8s}] "
-                    f"{event_dict['title'][:50]}... "
-                    f"(det={det_score.total_score if det_score else 'N/A'}, llm={llm_score}) "
-                    f"| {reasoning[:50]}"
-                )
-
-                results.append({
-                    "description": event_dict["title"],
-                    "category": category,
-                    "sources": [event_dict["source_name"]],
-                    "trigger_source": event_dict["source"],
-                    "keywords": event_dict.get("keywords_matched", []),
-                    "url": event_dict.get("url", ""),
-                    "significance_score": final_score,
-                    "deterministic_score": det_score.total_score if det_score else None,
-                    "llm_score": llm_score,
-                    "reasoning": reasoning,
-                })
-
-            return results
-
-        except Exception as e:
-            logger.error(f"LLM validation error: {e}")
-            return self._format_results(filtered_events)
-
-    def _format_results(
-        self,
-        filtered_events: list[tuple[dict, SignificanceScore, TriggerEvent]],
-    ) -> list[dict]:
-        """결과 포맷팅 (LLM 없이)"""
-        results = []
-        for event_dict, score, trigger_event in filtered_events:
-            # 카테고리 추론
-            category = self._infer_category(event_dict, score)
-
-            results.append({
-                "description": event_dict["title"],
-                "category": category,
-                "sources": [event_dict["source_name"]],
-                "trigger_source": event_dict["source"],
-                "keywords": event_dict.get("keywords_matched", []),
-                "url": event_dict.get("url", ""),
-                "significance_score": score.total_score,
-                "deterministic_score": score.total_score,
-                "reasoning": score.reasoning,
-            })
-
-        return results
-
-    def _infer_category(self, event_dict: dict, score: SignificanceScore = None) -> str:
-        """키워드 기반 카테고리 추론 (dict용) - 단어 경계 매칭 사용
-
-        P0 개선: 스포츠/범죄/엔터테인먼트 제외 패턴 적용
-        """
-        text = f"{event_dict['title']} {event_dict.get('content', '')}".lower()
-
-        # 제외 패턴 확인
-        is_sports = _matches_exclusion_patterns(text, "sports")
-        is_crime = _matches_exclusion_patterns(text, "crime")
-        is_entertainment = _matches_exclusion_patterns(text, "entertainment")
-
-        # 스포츠/엔터테인먼트는 항상 "other"
-        if is_sports or is_entertainment:
-            return "other"
-
-        # 범죄 뉴스는 국제적 맥락 확인
-        if is_crime:
-            international_context = _keyword_matches_word_boundary(
-                text,
-                ["international", "cross-border", "embassy", "foreign", "diplomat",
-                 "war crime", "genocide", "terror", "mass shooting", "political"]
-            )
-            if not international_context:
-                return "other"
-
-        if _keyword_matches_word_boundary(text, ["earthquake", "tsunami", "flood", "hurricane"]):
-            return "natural_disaster"
-        if _keyword_matches_word_boundary(text, ["war", "invasion", "airstrike", "troops"]):
-            return "war"
-        if _keyword_matches_word_boundary(text, ["terrorist", "bombing", "hostage"]):
-            return "terrorism"
-        if _keyword_matches_word_boundary(text, ["protest", "demonstration", "riot"]):
-            if is_sports:  # "rally" could be sports
-                return "other"
-            return "protest"
-        if _keyword_matches_word_boundary(text, ["military", "army", "navy", "air force"]):
-            return "military"
-        if _keyword_matches_word_boundary(text, ["violence", "killed", "casualties"]):
-            if is_crime:
-                return "other"
-            return "violence"
         return "other"
 
     async def _safe_callback(self, description: str, category: str):
