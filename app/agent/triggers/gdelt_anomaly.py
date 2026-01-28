@@ -9,6 +9,7 @@ Uses GDELT's advanced APIs for breaking news detection:
 Reference: https://blog.gdeltproject.org/gdelt-2-0-our-global-world-in-realtime/
 """
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -108,8 +109,6 @@ class GDELTAnomalyTrigger(BaseTrigger):
         self.volume_spike_threshold = volume_spike_threshold
         self.goldstein_threshold = goldstein_threshold
         self.max_results = max_results
-        # Historical volume data for spike detection
-        self.volume_history: dict[str, list[float]] = {}
         # Time-based deduplication
         self.seen_hashes: dict[str, float] = {}
 
@@ -140,8 +139,10 @@ class GDELTAnomalyTrigger(BaseTrigger):
         current_time = time.time()
 
         try:
-            # Parallel detection of different anomaly types
+            # P1 Fix: Sequential detection to avoid GDELT rate limiting (429)
+            # Using 100ms delay between API calls instead of parallel
             gkg_events = await self._scan_gkg_themes()
+            await asyncio.sleep(0.1)  # Rate limit avoidance
             goldstein_events = await self._scan_goldstein_conflicts()
 
             # Combine all events
@@ -222,7 +223,7 @@ class GDELTAnomalyTrigger(BaseTrigger):
                     is_recent, reason, url_date = validate_article_recency(
                         url=url,
                         seendate=seendate,
-                        max_age_hours=48,
+                        max_age_hours=1,
                         max_discrepancy_hours=72,
                     )
 
@@ -311,7 +312,7 @@ class GDELTAnomalyTrigger(BaseTrigger):
                     is_recent, reason, url_date = validate_article_recency(
                         url=url,
                         seendate=seendate,
-                        max_age_hours=48,
+                        max_age_hours=1,
                         max_discrepancy_hours=72,
                     )
 
@@ -365,4 +366,3 @@ class GDELTAnomalyTrigger(BaseTrigger):
     async def close(self):
         """Cleanup resources"""
         self.seen_hashes.clear()
-        self.volume_history.clear()
