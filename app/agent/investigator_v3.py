@@ -48,7 +48,7 @@ from .confidence_scorer import MultiSourceConfidenceScorer, ConfidenceResult
 from .config import agent_settings
 from .qa_verifier import ClaimVerdict, QAVerifier, VerificationResult
 from .tools import ALL_TOOLS
-from .tools.search import _is_evidence_recent, _is_excluded_domain, _is_recent_url
+from .tools.search import _is_evidence_recent, _is_excluded_domain
 
 
 # =============================================================================
