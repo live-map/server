@@ -19,7 +19,9 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 
 from app.agent.config import agent_settings
+from app.agent.triggers.date_extractor import contains_past_year
 from app.core.database import AsyncSessionLocal
+from app.services.article_service import CanonicalDuplicateError
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +170,12 @@ async def run_scheduled_scan():
         scanner = NewsScanner()
         # Initialize scanner (loads CrossSourceMatcher for multi-source verification)
         init_results = await scanner.initialize()
-        logger.debug(f"Scanner initialized: {init_results}")
+        # P0: Log initialization results at INFO level for easier debugging
+        logger.info(f"Scanner initialized: {init_results}")
+        # P0: Warn about failed triggers
+        failed_triggers = [k for k, v in init_results.items() if not v]
+        if failed_triggers:
+            logger.warning(f"[INIT-WARNING] Failed triggers: {failed_triggers}")
         events = await scanner.scan_all_sources()
 
         if not events:
@@ -261,6 +268,18 @@ async def run_scheduled_scan():
                 article_ko = result.get("article_ko")
 
                 if article_en:
+                    # === POST-LLM VALIDATION: Reject articles mentioning past years ===
+                    article_full_text = article_en.get("full_text", "")
+                    current_year = datetime.utcnow().year
+                    has_past_year, past_year = contains_past_year(article_full_text, current_year)
+
+                    if has_past_year:
+                        print(f"[SCANNER] [{i+1}] SKIPPING: LLM generated article mentions past year ({past_year})")
+                        logger.warning(
+                            f"[POST-LLM-DATE-REJECT] Article mentions past year ({past_year}): "
+                            f"{article_en.get('headline', '')[:50]}..."
+                        )
+                        continue
                     async with AsyncSessionLocal() as db:
                         article_service = ArticleService(db)
 
@@ -281,31 +300,42 @@ async def run_scheduled_scan():
                             "overall_reliability": result.get("overall_reliability", 0.0),
                         }
 
-                        # Save to database
-                        saved_event, saved_article = await article_service.save_article(
-                            article_en=article_en,
-                            article_ko=article_ko or {
-                                "headline": "",
-                                "lead": "",
-                                "nut_graph": "",
-                                "body": "",
-                                "full_text": "",
-                            },
-                            event_text=event_desc,
-                            embedding=event_embedding,  # P0: Now uses actual embedding
-                            category=category,
-                            claims=result.get("claims"),
-                            verification_result=verification_result,
-                            sources=sources,
-                            is_update=result.get("is_update", False),
-                            update_type=result.get("update_type"),
-                            update_reason=result.get("update_reason"),
-                            existing_event_id=result.get("matched_event_id"),
-                        )
-                        print(f"[SCANNER] [{i+1}] SAVED: event_id={saved_event.id}, article_id={saved_article.id}")
-                        investigation_count += 1
-                        # P2: Track published event for in-cycle duplicate prevention
-                        published_in_cycle.append(event_desc)
+                        # Phase 6: Create embedding generator callback for re-embedding
+                        embedding_generator = None
+                        if scanner._matcher_initialized and scanner.cross_source_matcher._encoder:
+                            embedding_generator = scanner.cross_source_matcher.generate_embedding_for_text
+
+                        # Save to database (Phase 6: with re-embedding support)
+                        try:
+                            saved_event, saved_article = await article_service.save_article(
+                                article_en=article_en,
+                                article_ko=article_ko or {
+                                    "headline": "",
+                                    "lead": "",
+                                    "nut_graph": "",
+                                    "body": "",
+                                    "full_text": "",
+                                },
+                                event_text=event_desc,
+                                embedding=event_embedding,  # P0: Now uses actual embedding
+                                category=category,
+                                claims=result.get("claims"),
+                                verification_result=verification_result,
+                                sources=sources,
+                                is_update=result.get("is_update", False),
+                                update_type=result.get("update_type"),
+                                update_reason=result.get("update_reason"),
+                                existing_event_id=result.get("matched_event_id"),
+                                embedding_generator=embedding_generator,  # Phase 6
+                            )
+                            print(f"[SCANNER] [{i+1}] SAVED: event_id={saved_event.id}, article_id={saved_article.id}")
+                            investigation_count += 1
+                            # P2: Track published event for in-cycle duplicate prevention
+                            published_in_cycle.append(event_desc)
+                        except CanonicalDuplicateError as e:
+                            print(f"[SCANNER] [{i+1}] SKIPPING: Post-LLM duplicate detected (matched event_id={e.matched_event_id}, similarity={e.similarity:.2%})")
+                            logger.info(f"[CANONICAL-DEDUP] Skipped duplicate: {e.message}")
+                            continue
 
                 # Output the generated article
                 article = result.get("article")
