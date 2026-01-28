@@ -201,10 +201,10 @@ class TestEventMatcherInit:
         """Default thresholds should match config."""
         matcher = EventMatcher(mock_db_session)
 
-        # Default thresholds from config
-        assert matcher.duplicate_threshold == 0.95
-        assert matcher.potential_threshold == 0.85
-        assert matcher.related_threshold == 0.70
+        # Default thresholds from config (updated 2026-01-28 for more aggressive dedup)
+        assert matcher.duplicate_threshold == 0.75
+        assert matcher.potential_threshold == 0.65
+        assert matcher.related_threshold == 0.55
 
     def test_custom_thresholds(self, mock_db_session):
         """Custom thresholds should override defaults."""
@@ -258,91 +258,109 @@ class TestHashExactMatch:
 
 
 class TestSemanticDuplicateThresholds:
-    """Tests for Layer 2: Semantic similarity thresholds."""
+    """Tests for Layer 2: Semantic similarity thresholds.
+
+    Updated thresholds (2026-01-27):
+    - >= 0.80: DUPLICATE (was 0.95)
+    - 0.70-0.80: POTENTIAL (was 0.85-0.95)
+    - 0.55-0.70: RELATED (was 0.70-0.85)
+    - < 0.55: NEW (was < 0.70)
+    """
+
+    def _make_semantic_row(self, event_id, event_hash, title, similarity):
+        """Create mock row matching the 17-column query result."""
+        from datetime import datetime
+        now = datetime.utcnow()
+        # Match columns: id, event_hash, canonical_title, embedding, key_entities,
+        # key_facts, fact_hash, category, sub_category, first_reported_at,
+        # last_updated_at, article_count, is_active, cluster_id, created_at,
+        # updated_at, similarity
+        return (
+            event_id, event_hash, title, None,  # id, hash, title, embedding
+            None, None, "fact_hash",  # key_entities, key_facts, fact_hash
+            "conflict", None,  # category, sub_category
+            now, now,  # first_reported_at, last_updated_at
+            1, True, None,  # article_count, is_active, cluster_id
+            now, now,  # created_at, updated_at
+            similarity  # similarity
+        )
 
     @pytest.mark.asyncio
-    async def test_semantic_duplicate_95(self, mock_db_session):
-        """Similarity >= 0.95 should return DUPLICATE."""
+    async def test_semantic_duplicate_80(self, mock_db_session):
+        """Similarity >= 0.80 should return DUPLICATE."""
         matcher = EventMatcher(mock_db_session)
 
         # Mock no hash match
         hash_result = MagicMock()
         hash_result.scalar_one_or_none.return_value = None
 
-        # Mock semantic match with high similarity
+        # Mock semantic match with high similarity (0.85 >= 0.80)
         semantic_result = MagicMock()
-        semantic_result.fetchone.return_value = (
-            1, "hash123", "Similar event", "conflict", 0.96
+        semantic_result.fetchone.return_value = self._make_semantic_row(
+            1, "hash123", "Similar event", 0.85
         )
 
-        event_result = MagicMock()
-        event_result.scalar_one_or_none.return_value = MagicMock(id=1)
-
         mock_db_session.execute = AsyncMock(
-            side_effect=[hash_result, semantic_result, event_result]
+            side_effect=[hash_result, semantic_result]
         )
 
         embedding = [0.1] * 1024
         result = await matcher.find_match("Event text", embedding=embedding)
 
         assert result.match_type == MatchType.DUPLICATE
-        assert result.similarity_score == 0.96
+        assert result.similarity_score == 0.85
 
     @pytest.mark.asyncio
-    async def test_semantic_potential_85_95(self, mock_db_session):
-        """Similarity 0.85-0.95 should return POTENTIAL."""
+    async def test_semantic_potential_65_75(self, mock_db_session):
+        """Similarity 0.65-0.75 should return POTENTIAL."""
         matcher = EventMatcher(mock_db_session)
 
         hash_result = MagicMock()
         hash_result.scalar_one_or_none.return_value = None
 
+        # Mock semantic match (0.70 is between 0.65 and 0.75)
         semantic_result = MagicMock()
-        semantic_result.fetchone.return_value = (
-            1, "hash123", "Similar event", "conflict", 0.90
+        semantic_result.fetchone.return_value = self._make_semantic_row(
+            1, "hash123", "Similar event", 0.70
         )
 
-        event_result = MagicMock()
-        event_result.scalar_one_or_none.return_value = MagicMock(id=1)
-
         mock_db_session.execute = AsyncMock(
-            side_effect=[hash_result, semantic_result, event_result]
+            side_effect=[hash_result, semantic_result]
         )
 
         embedding = [0.1] * 1024
         result = await matcher.find_match("Event text", embedding=embedding)
 
         assert result.match_type == MatchType.POTENTIAL
-        assert result.similarity_score == 0.90
+        assert result.similarity_score == 0.70
 
     @pytest.mark.asyncio
-    async def test_semantic_related_70_85(self, mock_db_session):
-        """Similarity 0.70-0.85 should return RELATED."""
+    async def test_semantic_related_55_65(self, mock_db_session):
+        """Similarity 0.55-0.65 should return RELATED."""
         matcher = EventMatcher(mock_db_session)
 
         hash_result = MagicMock()
         hash_result.scalar_one_or_none.return_value = None
 
+        # Mock semantic match (0.60 is between 0.55 and 0.65)
         semantic_result = MagicMock()
-        semantic_result.fetchone.return_value = (
-            1, "hash123", "Related event", "conflict", 0.78
+        semantic_result.fetchone.return_value = self._make_semantic_row(
+            1, "hash123", "Related event", 0.60
         )
 
-        event_result = MagicMock()
-        event_result.scalar_one_or_none.return_value = MagicMock(id=1)
-
         mock_db_session.execute = AsyncMock(
-            side_effect=[hash_result, semantic_result, event_result]
+            side_effect=[hash_result, semantic_result]
         )
 
         embedding = [0.1] * 1024
         result = await matcher.find_match("Event text", embedding=embedding)
 
         assert result.match_type == MatchType.RELATED
-        assert result.similarity_score == 0.78
+        assert result.similarity_score == 0.60
 
     @pytest.mark.asyncio
-    async def test_semantic_new_below_70(self, mock_db_session):
-        """Similarity < 0.70 should return NEW."""
+    async def test_semantic_new_below_55(self, mock_db_session):
+        """Similarity < 0.55 should return NEW."""
         matcher = EventMatcher(mock_db_session)
 
         hash_result = MagicMock()
