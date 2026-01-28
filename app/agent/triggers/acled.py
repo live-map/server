@@ -57,7 +57,7 @@ class ACLEDTrigger(BaseTrigger):
         event_types: list[str] | None = None,
         min_fatalities: int = 0,
         countries: list[str] | None = None,
-        max_age_days: int = 7,
+        max_age_days: int = 1,
     ):
         super().__init__(keywords or ["conflict", "protest", "violence"])
         self.api_key = api_key

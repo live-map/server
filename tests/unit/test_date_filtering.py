@@ -13,6 +13,11 @@ Layers:
 CRITICAL BUG FIX (2026-01-24):
 - 2023년 이벤트가 2026년 뉴스로 발행되는 버그 수정
 - 콘텐츠에서 과거 연도를 감지하여 오래된 기사 필터링
+
+P0 FIX (2026-01-27):
+- DDG/Yahoo API 잘못된 연도 반환 버그 수정 (2024, 2025 반환)
+- _parse_published_date()에 연도 검증 추가
+- max_age_hours를 1시간으로 축소 (실시간 뉴스만)
 """
 
 from datetime import datetime, timedelta
@@ -26,6 +31,7 @@ from app.agent.triggers.date_extractor import (
     validate_trigger_recency,
     validate_article_recency,
 )
+from app.agent.tools.search import _parse_published_date
 
 
 class TestExtractDateFromUrl:
@@ -247,7 +253,8 @@ class TestValidateTriggerRecency:
 
     def test_accepts_recent_article_with_url_date(self):
         """최신 기사 (URL에 오늘 날짜)는 통과."""
-        url = f"https://example.com/2026/01/24/breaking-news"
+        today = datetime.utcnow()
+        url = f"https://example.com/{today.year}/{today.month:02d}/{today.day:02d}/breaking-news"
         title = "Breaking: New Development Today"
 
         is_recent, reason, validated_date = validate_trigger_recency(
@@ -261,7 +268,7 @@ class TestValidateTriggerRecency:
         assert is_recent
         assert "URL_DATE_VALID" in reason
         assert validated_date is not None
-        assert validated_date.year == 2026
+        assert validated_date.year == today.year
 
     def test_rejects_url_with_old_date(self):
         """URL에 오래된 날짜가 있으면 거부."""
@@ -346,8 +353,13 @@ class TestValidateTriggerRecency:
         assert not is_recent
         assert "NO_DATE_INFO" in reason
 
-    def test_url_date_takes_priority_over_content(self):
-        """URL 날짜가 콘텐츠 날짜보다 우선."""
+    def test_past_year_detection_runs_first(self):
+        """과거 연도 감지가 URL 날짜보다 먼저 실행됨 (P0 fix).
+
+        CHANGED BEHAVIOR: 과거 연도 감지(Layer 0)가 URL 날짜 확인 전에 실행됨.
+        이는 "December 2024" 같은 과거 이벤트 기사가 최근 URL로 발행되는 것을 방지.
+        비교 기사도 거부됨 - 이는 의도된 보수적 접근임.
+        """
         # URL has recent date, but content mentions old year
         today = datetime.utcnow()
         url = f"https://example.com/{today.year}/{today.month:02d}/{today.day:02d}/article"
@@ -361,9 +373,9 @@ class TestValidateTriggerRecency:
             max_age_hours=48,
         )
 
-        # URL date should be used, not rejected by past year
-        assert is_recent
-        assert "URL_DATE_VALID" in reason
+        # NEW BEHAVIOR: Past year detection runs FIRST, so this is rejected
+        assert not is_recent
+        assert "PAST_YEAR" in reason
 
     def test_content_date_extraction_when_no_url_date(self):
         """URL에 날짜가 없으면 콘텐츠에서 날짜 추출."""
@@ -389,7 +401,8 @@ class TestValidateArticleRecency:
 
     def test_url_date_valid(self):
         """Test valid URL date."""
-        url = "https://example.com/2026/01/24/article"
+        today = datetime.utcnow()
+        url = f"https://example.com/{today.year}/{today.month:02d}/{today.day:02d}/article"
         seendate = datetime.utcnow()
 
         is_valid, reason, url_date = validate_article_recency(
@@ -447,7 +460,8 @@ class TestEdgeCases:
 
     def test_none_content(self):
         """Test with None content in validate_trigger_recency."""
-        url = "https://example.com/2026/01/24/article"
+        today = datetime.utcnow()
+        url = f"https://example.com/{today.year}/{today.month:02d}/{today.day:02d}/article"
 
         is_recent, reason, _ = validate_trigger_recency(
             url=url,
@@ -551,7 +565,10 @@ class TestIntegrationScenarios:
         시나리오: 현재 상황과 과거 비교하는 기사
         - URL에 오늘 날짜
         - 제목에 과거 연도 언급
-        예상: URL 날짜가 우선되어 통과
+
+        CHANGED BEHAVIOR (P0 fix): 과거 연도 감지가 URL 날짜보다 먼저 실행됨.
+        이는 "December 2024 events" 같은 과거 이벤트 기사가 최근 URL로 발행되는 것을 방지.
+        비교 기사("worse than 2023")도 거부됨 - 이는 의도된 보수적 접근임.
         """
         today = datetime.utcnow()
         url = f"https://example.com/{today.year}/{today.month:02d}/{today.day:02d}/analysis"
@@ -565,9 +582,10 @@ class TestIntegrationScenarios:
             max_age_hours=48,
         )
 
-        # URL date is valid and recent, so should pass
-        assert is_recent
-        assert "URL_DATE_VALID" in reason
+        # NEW BEHAVIOR: Past year detection runs FIRST, so comparison articles are also rejected
+        # This is intentional - conservative approach to prevent old events from being published
+        assert not is_recent
+        assert "PAST_YEAR" in reason
 
     def test_scenario_reddit_post_about_old_event(self):
         """
@@ -590,3 +608,191 @@ class TestIntegrationScenarios:
 
         assert not is_recent
         assert "PAST_YEAR" in reason or "2021" in reason
+
+
+class TestYearValidation:
+    """
+    Tests for year validation in _parse_published_date().
+
+    P0 FIX (2026-01-27):
+    DDG/Yahoo API가 2024, 2025년 날짜를 반환하는 버그 수정.
+    현재 연도(2026)만 허용하도록 연도 검증 추가.
+    """
+
+    def test_current_year_accepted(self):
+        """현재 연도(2026) 날짜는 허용."""
+        date_str = "2026-01-27T10:30:00Z"
+        result = _parse_published_date(date_str)
+
+        assert result is not None
+        assert result.year == 2026
+        assert result.month == 1
+        assert result.day == 27
+
+    def test_wrong_year_2025_rejected(self):
+        """2025년 날짜는 거부 - DDG 버그 케이스."""
+        date_str = "2025-01-27T05:53:52+00:00"
+        result = _parse_published_date(date_str)
+
+        assert result is None  # Wrong year should be rejected
+
+    def test_wrong_year_2024_rejected(self):
+        """2024년 날짜는 거부 - DDG 버그 케이스."""
+        date_str = "2024-01-28T05:53:52+00:00"
+        result = _parse_published_date(date_str)
+
+        assert result is None  # Wrong year should be rejected
+
+    def test_future_year_rejected(self):
+        """미래 연도도 거부."""
+        date_str = "2027-01-27T10:30:00Z"
+        result = _parse_published_date(date_str)
+
+        assert result is None  # Future year should be rejected
+
+    def test_human_readable_date_current_year(self):
+        """사람이 읽을 수 있는 형식 - 현재 연도."""
+        date_str = "Jan 27, 2026"
+        result = _parse_published_date(date_str)
+
+        assert result is not None
+        assert result.year == 2026
+
+    def test_human_readable_date_wrong_year(self):
+        """사람이 읽을 수 있는 형식 - 잘못된 연도."""
+        date_str = "Jan 27, 2025"
+        result = _parse_published_date(date_str)
+
+        assert result is None
+
+    def test_empty_string(self):
+        """빈 문자열은 None 반환."""
+        result = _parse_published_date("")
+
+        assert result is None
+
+    def test_none_value(self):
+        """None 값은 None 반환."""
+        result = _parse_published_date(None)
+
+        assert result is None
+
+    def test_invalid_date_string(self):
+        """파싱 불가능한 문자열은 None 반환."""
+        result = _parse_published_date("not a date")
+
+        assert result is None
+
+
+class TestTimezoneHandling:
+    """
+    Tests for timezone handling in validate_trigger_recency.
+
+    P0 FIX (2026-01-27):
+    Timezone-aware API dates were causing:
+    "can't subtract offset-naive and offset-aware datetimes" error
+    """
+
+    def test_timezone_aware_api_date_accepted(self):
+        """Timezone-aware API date should be handled safely."""
+        from datetime import timezone as tz
+
+        url = "https://example.com/news/article-123"
+        title = "Breaking news"
+        # Timezone-aware datetime (like from Currents API)
+        api_date = datetime.now(tz.utc) - timedelta(minutes=30)
+
+        is_recent, reason, validated_date = validate_trigger_recency(
+            url=url,
+            title=title,
+            content="",
+            api_date=api_date,
+            max_age_hours=1,
+        )
+
+        # Should not raise "can't subtract offset-naive and offset-aware datetimes"
+        assert is_recent
+        assert "API_DATE" in reason
+        # Validated date should be timezone-naive
+        assert validated_date is not None
+        assert validated_date.tzinfo is None
+
+    def test_timezone_naive_api_date_accepted(self):
+        """Timezone-naive API date should work as before."""
+        url = "https://example.com/news/article-123"
+        title = "Breaking news"
+        # Timezone-naive datetime
+        api_date = datetime.utcnow() - timedelta(minutes=30)
+
+        is_recent, reason, validated_date = validate_trigger_recency(
+            url=url,
+            title=title,
+            content="",
+            api_date=api_date,
+            max_age_hours=1,
+        )
+
+        assert is_recent
+        assert validated_date is not None
+
+
+class TestMaxAgeHours:
+    """
+    Tests for max_age_hours changes.
+
+    P0 FIX (2026-01-27):
+    max_age_hours를 4시간에서 1시간으로 축소.
+    15분 스캔 간격에 맞춰 실시간 뉴스만 수집.
+    """
+
+    def test_article_within_1_hour_accepted(self):
+        """1시간 이내 기사는 통과 (API date 사용)."""
+        # Note: URL dates only have day precision (no time), so they default to midnight.
+        # For 1-hour max_age, we rely on API dates which have time precision.
+        url = "https://example.com/news/article-123"  # No date in URL
+        title = "Breaking news"
+        api_date = datetime.utcnow() - timedelta(minutes=30)  # 30 mins ago
+
+        is_recent, reason, _ = validate_trigger_recency(
+            url=url,
+            title=title,
+            content="",
+            api_date=api_date,
+            max_age_hours=1,  # New default
+        )
+
+        assert is_recent
+        assert "API_DATE" in reason
+
+    def test_article_2_hours_old_rejected(self):
+        """2시간 전 기사는 거부 (max_age_hours=1)."""
+        url = "https://example.com/news/article-123"
+        title = "Some news"
+        api_date = datetime.utcnow() - timedelta(hours=2)
+
+        is_recent, reason, _ = validate_trigger_recency(
+            url=url,
+            title=title,
+            content="",
+            api_date=api_date,
+            max_age_hours=1,  # New default
+        )
+
+        assert not is_recent
+        assert "TOO_OLD" in reason
+
+    def test_article_4_hours_old_rejected(self):
+        """4시간 전 기사는 거부 (이전에는 통과했음)."""
+        url = "https://example.com/news/article-123"
+        title = "Old news"
+        api_date = datetime.utcnow() - timedelta(hours=4)
+
+        is_recent, reason, _ = validate_trigger_recency(
+            url=url,
+            title=title,
+            content="",
+            api_date=api_date,
+            max_age_hours=1,  # New default
+        )
+
+        assert not is_recent
