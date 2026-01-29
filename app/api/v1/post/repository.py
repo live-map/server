@@ -58,21 +58,22 @@ class PostRepository:
 
     async def get_by_id_with_comments(self, post_id: uuid.UUID) -> Post | None:
         """
-        ID로 게시글 조회 (댓글 포함).
+        ID로 게시글 조회 (댓글, 미디어 포함).
 
-        Eager loading으로 댓글을 함께 로드합니다.
+        Eager loading으로 댓글과 미디어를 함께 로드합니다.
 
         Args:
             post_id: 게시글 UUID
 
         Returns:
-            Post | None: 댓글이 포함된 게시글
+            Post | None: 댓글과 미디어가 포함된 게시글
         """
         stmt = (
             select(Post)
             .options(
                 selectinload(Post.comments),  # 댓글 eager load
                 selectinload(Post.user),      # 작성자 eager load
+                selectinload(Post.media),     # 미디어 eager load
             )
             .where(Post.id == post_id, Post.is_deleted == False)
         )
@@ -108,6 +109,7 @@ class PostRepository:
             .options(
                 selectinload(Post.user),      # 작성자 eager load
                 selectinload(Post.comments),  # 댓글 eager load (for count)
+                selectinload(Post.media),     # 미디어 eager load
             )
             .where(Post.is_deleted == False)
         )

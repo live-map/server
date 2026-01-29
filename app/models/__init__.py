@@ -6,6 +6,8 @@ from app.models.channel import Channel
 from app.models.event import Event
 from app.models.feed import Feed
 from app.models.post import Post
+from app.models.post_media import MediaType, PostMedia
+from app.models.post_like import PostLike
 from app.models.comment import Comment
 
 # Auth/NextAuth models (synced with frontend Prisma schema)
@@ -24,6 +26,9 @@ __all__ = [
     "Feed",
     "UpdateType",
     "Post",
+    "PostMedia",
+    "PostLike",
+    "MediaType",
     "Comment",
     # Auth/NextAuth models
     "User",
