@@ -17,6 +17,15 @@ from app.models.post_like import PostLike
 logger = logging.getLogger(__name__)
 
 
+# ========================================
+# Custom Exceptions
+# ========================================
+
+class PostNotFoundForLikeError(Exception):
+    """Raised when trying to like a post that doesn't exist or is deleted."""
+    pass
+
+
 @dataclass
 class LikeResult:
     """좋아요 작업 결과."""
@@ -42,6 +51,7 @@ class PostLikeService:
         게시글 좋아요.
 
         이미 좋아요한 경우 실패를 반환합니다.
+        게시글이 삭제된 경우 예외를 발생시킵니다.
 
         Args:
             post_id: 게시글 UUID
@@ -49,7 +59,15 @@ class PostLikeService:
 
         Returns:
             LikeResult: 작업 결과
+
+        Raises:
+            PostNotFoundForLikeError: 게시글이 존재하지 않거나 삭제됨
         """
+        # 게시글 존재 및 삭제 상태 확인 (race condition 방지)
+        post_exists = await self.like_repo.check_post_exists_and_active(post_id)
+        if not post_exists:
+            raise PostNotFoundForLikeError(f"Post {post_id} not found or deleted")
+
         # 이미 좋아요했는지 확인
         already_liked = await self.like_repo.exists(post_id, user_id)
         if already_liked:
@@ -65,8 +83,12 @@ class PostLikeService:
         like = PostLike(post_id=post_id, user_id=user_id)
         await self.like_repo.create(like)
 
-        # like_count 증가
-        await self.like_repo.increment_like_count(post_id)
+        # like_count 증가 (실패 시 전체 트랜잭션 롤백됨)
+        updated = await self.like_repo.increment_like_count(post_id)
+        if not updated:
+            # like_count 업데이트 실패 = 게시글이 삭제됨 (race condition)
+            await self.session.rollback()
+            raise PostNotFoundForLikeError(f"Post {post_id} was deleted during like operation")
 
         await self.session.commit()
 
@@ -104,11 +126,16 @@ class PostLikeService:
                 message="Not liked this post",
             )
 
-        # 좋아요 삭제
-        await self.like_repo.delete(post_id, user_id)
+        # like_count 감소 먼저 (실패하면 삭제도 하지 않음)
+        updated = await self.like_repo.decrement_like_count(post_id)
 
-        # like_count 감소
-        await self.like_repo.decrement_like_count(post_id)
+        # 좋아요 삭제 (like_count 감소 성공한 경우만)
+        if updated:
+            await self.like_repo.delete(post_id, user_id)
+        else:
+            # like_count가 이미 0이면 desync 상태 - 삭제만 수행
+            logger.warning(f"like_count desync detected for post {post_id}, deleting like anyway")
+            await self.like_repo.delete(post_id, user_id)
 
         await self.session.commit()
 

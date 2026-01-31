@@ -83,7 +83,30 @@ class PostMediaService:
         media_data_list: list[dict],
     ) -> list[PostMedia]:
         """
-        게시글에 여러 미디어 일괄 추가.
+        게시글에 여러 미디어 일괄 추가 (commit 포함).
+
+        Args:
+            post_id: 게시글 UUID
+            media_data_list: 미디어 데이터 목록
+
+        Returns:
+            생성된 PostMedia 목록
+        """
+        created_list = await self.add_multiple_media_without_commit(post_id, media_data_list)
+        await self.session.commit()
+        logger.info(f"Added {len(created_list)} media items to post {post_id}")
+        return created_list
+
+    async def add_multiple_media_without_commit(
+        self,
+        post_id: uuid.UUID,
+        media_data_list: list[dict],
+    ) -> list[PostMedia]:
+        """
+        게시글에 여러 미디어 일괄 추가 (commit 없음 - 트랜잭션 유지).
+
+        게시글 생성과 함께 미디어를 추가할 때 사용합니다.
+        호출자가 commit을 담당합니다.
 
         Args:
             post_id: 게시글 UUID
@@ -101,7 +124,7 @@ class PostMediaService:
                 }
 
         Returns:
-            생성된 PostMedia 목록
+            생성된 PostMedia 목록 (아직 commit되지 않음)
         """
         media_list = []
         for idx, data in enumerate(media_data_list):
@@ -120,8 +143,7 @@ class PostMediaService:
             media_list.append(media)
 
         created_list = await self.media_repo.create_many(media_list)
-        await self.session.commit()
-        logger.info(f"Added {len(created_list)} media items to post {post_id}")
+        logger.debug(f"Added {len(created_list)} media items to post {post_id} (uncommitted)")
         return created_list
 
     async def get_post_media(self, post_id: uuid.UUID) -> Sequence[PostMedia]:

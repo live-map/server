@@ -32,9 +32,9 @@ from app.api.v1.post.dto.schemas import (
     PostResponse,
     PostUpdate,
 )
-from app.api.v1.post.service import PostService
+from app.api.v1.post.service import PostService, PostNotFoundError, PostPermissionError
 from app.api.v1.post.media.service import PostMediaService
-from app.api.v1.post.like.service import PostLikeService
+from app.api.v1.post.like.service import PostLikeService, PostNotFoundForLikeError
 from app.core.database import get_db
 from app.models.post_media import MediaType
 
@@ -95,20 +95,24 @@ async def create_post(
 
     - **title**: 게시글 제목 (1-200자)
     - **content**: 게시글 내용
-    - **media**: 미디어 첨부 (선택, S3 업로드 후 URL 전달)
+    - **media**: 미디어 첨부 (선택, S3 업로드 후 URL 전달, 최대 10개)
+
+    Note: 게시글과 미디어는 단일 트랜잭션으로 처리됩니다.
+    미디어 저장 실패 시 게시글 생성도 롤백됩니다.
     """
-    post = await postService.create_post(
+    # 게시글 생성 (아직 commit하지 않음 - 트랜잭션 시작)
+    post = await postService.create_post_without_commit(
         user_id=current_user.user_id,
         title=data.title,
         content=data.content,
     )
 
-    # 미디어 첨부 처리
+    # 미디어 첨부 처리 (같은 트랜잭션 내에서)
     media_responses = []
     if data.media:
         media_data_list = [
             {
-                "media_type": MediaType(m.media_type.value),
+                "media_type": m.media_type,  # Already correct enum from import
                 "url": m.url,
                 "thumbnail_url": m.thumbnail_url,
                 "original_filename": m.original_filename,
@@ -120,7 +124,7 @@ async def create_post(
             }
             for m in data.media
         ]
-        created_media = await mediaService.add_multiple_media_to_post(
+        created_media = await mediaService.add_multiple_media_without_commit(
             post_id=post.id,
             media_data_list=media_data_list,
         )
@@ -141,6 +145,9 @@ async def create_post(
             )
             for m in created_media
         ]
+
+    # 모든 작업이 성공하면 한 번에 commit
+    await postService.session.commit()
 
     return PostResponse(
         id=post.id,
@@ -301,17 +308,22 @@ async def update_post(
 
     작성자만 수정 가능합니다.
     """
-    post = await service.update_post(
-        post_id=post_id,
-        user_id=current_user.user_id,
-        title=data.title,
-        content=data.content,
-    )
-
-    if post is None:
+    try:
+        post = await service.update_post(
+            post_id=post_id,
+            user_id=current_user.user_id,
+            title=data.title,
+            content=data.content,
+        )
+    except PostNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found or no permission",
+            detail="Post not found",
+        )
+    except PostPermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the owner of this post",
         )
 
     return PostResponse(
@@ -340,15 +352,20 @@ async def delete_post(
 
     작성자만 삭제 가능합니다.
     """
-    result = await service.delete_post(
-        post_id=post_id,
-        user_id=current_user.user_id,
-    )
-
-    if not result:
+    try:
+        await service.delete_post(
+            post_id=post_id,
+            user_id=current_user.user_id,
+        )
+    except PostNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found or no permission",
+            detail="Post not found",
+        )
+    except PostPermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the owner of this post",
         )
 
 # This is only for admin to hard delete a post
@@ -394,22 +411,23 @@ async def like_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
     likeService: likeServiceDep,
-    postService: postServiceDep,
 ) -> LikeResponse:
     """
     게시글에 좋아요를 추가합니다.
 
     이미 좋아요한 경우 실패를 반환합니다.
+
+    Note: 게시글 존재 확인은 서비스 레이어에서 수행됩니다.
+    이는 컨트롤러 확인과 서비스 실행 사이의 race condition을 방지합니다.
     """
-    # 게시글 존재 확인
-    post = await postService.get_post(post_id)
-    if post is None:
+    try:
+        result = await likeService.like_post(post_id, current_user.user_id)
+    except PostNotFoundForLikeError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found",
+            detail="Post not found or has been deleted",
         )
 
-    result = await likeService.like_post(post_id, current_user.user_id)
     return LikeResponse(
         success=result.success,
         is_liked=result.is_liked,
@@ -428,21 +446,12 @@ async def unlike_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
     likeService: likeServiceDep,
-    postService: postServiceDep,
 ) -> LikeResponse:
     """
     게시글 좋아요를 취소합니다.
 
     좋아요하지 않은 경우 실패를 반환합니다.
     """
-    # 게시글 존재 확인
-    post = await postService.get_post(post_id)
-    if post is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found",
-        )
-
     result = await likeService.unlike_post(post_id, current_user.user_id)
     return LikeResponse(
         success=result.success,

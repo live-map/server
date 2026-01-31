@@ -157,37 +157,76 @@ class PostLikeRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
-    async def increment_like_count(self, post_id: uuid.UUID) -> None:
+    async def check_post_exists_and_active(self, post_id: uuid.UUID) -> bool:
+        """
+        게시글 존재 및 활성 상태 확인.
+
+        Race condition 방지를 위해 좋아요 전 게시글 상태를 확인합니다.
+
+        Args:
+            post_id: 게시글 UUID
+
+        Returns:
+            bool: 게시글이 존재하고 삭제되지 않았으면 True
+        """
+        stmt = select(Post.id).where(
+            Post.id == post_id,
+            Post.is_deleted == False,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def increment_like_count(self, post_id: uuid.UUID) -> bool:
         """
         Post.like_count 증가.
 
+        is_deleted=False인 게시글에만 적용됩니다.
+
         Args:
             post_id: 게시글 UUID
+
+        Returns:
+            bool: 업데이트 성공 여부 (False면 게시글이 삭제됨)
         """
         stmt = (
             update(Post)
-            .where(Post.id == post_id)
+            .where(Post.id == post_id, Post.is_deleted == False)
             .values(like_count=Post.like_count + 1)
         )
-        await self.session.execute(stmt)
+        result = await self.session.execute(stmt)
         await self.session.flush()
-        logger.debug(f"Incremented like_count for post {post_id}")
+        updated = result.rowcount > 0
+        if updated:
+            logger.debug(f"Incremented like_count for post {post_id}")
+        else:
+            logger.warning(f"Failed to increment like_count for post {post_id} (deleted?)")
+        return updated
 
-    async def decrement_like_count(self, post_id: uuid.UUID) -> None:
+    async def decrement_like_count(self, post_id: uuid.UUID) -> bool:
         """
         Post.like_count 감소.
 
+        like_count > 0 일 때만 감소합니다.
+
         Args:
             post_id: 게시글 UUID
+
+        Returns:
+            bool: 업데이트 성공 여부 (False면 이미 0이거나 게시글 없음)
         """
         stmt = (
             update(Post)
             .where(Post.id == post_id, Post.like_count > 0)
             .values(like_count=Post.like_count - 1)
         )
-        await self.session.execute(stmt)
+        result = await self.session.execute(stmt)
         await self.session.flush()
-        logger.debug(f"Decremented like_count for post {post_id}")
+        updated = result.rowcount > 0
+        if updated:
+            logger.debug(f"Decremented like_count for post {post_id}")
+        else:
+            logger.warning(f"Failed to decrement like_count for post {post_id} (already 0 or not found)")
+        return updated
 
     async def get_like_status_for_posts(
         self,

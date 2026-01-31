@@ -13,8 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.post.repository import PostRepository
 from app.models.post import Post
-from fastapi import HTTPException, status
+
 logger = logging.getLogger(__name__)
+
+
+# ========================================
+# Custom Exceptions (Domain Layer)
+# ========================================
+
+class PostNotFoundError(Exception):
+    """Raised when a post is not found."""
+    pass
+
+
+class PostPermissionError(Exception):
+    """Raised when user doesn't have permission to modify a post."""
+    pass
 
 
 class PostService:
@@ -32,7 +46,9 @@ class PostService:
 
     async def create_post(self, user_id: str, title: str, content: str) -> Post:
         """
-        새 게시글 작성.
+        새 게시글 작성 (commit 포함).
+
+        미디어 없이 게시글만 생성할 때 사용합니다.
 
         Args:
             user_id: 작성자 ID
@@ -42,14 +58,33 @@ class PostService:
         Returns:
             생성된 Post
         """
+        post = await self.create_post_without_commit(user_id, title, content)
+        await self.session.commit()
+        logger.info(f"Post created: {post.id} by user {user_id}")
+        return post
+
+    async def create_post_without_commit(self, user_id: str, title: str, content: str) -> Post:
+        """
+        새 게시글 작성 (commit 없음 - 트랜잭션 유지).
+
+        미디어와 함께 게시글을 생성할 때 사용합니다.
+        호출자가 commit을 담당합니다.
+
+        Args:
+            user_id: 작성자 ID
+            title: 제목
+            content: 내용
+
+        Returns:
+            생성된 Post (아직 commit되지 않음)
+        """
         post = Post(
             user_id=user_id,
             title=title,
             content=content,
         )
         created = await self.post_repo.create(post)
-        await self.session.commit()
-        logger.info(f"Post created: {created.id} by user {user_id}")
+        logger.debug(f"Post created (uncommitted): {created.id} by user {user_id}")
         return created
 
     async def get_post(self, post_id: uuid.UUID) -> Post | None:
@@ -75,7 +110,7 @@ class PostService:
         user_id: str,
         title: str | None = None,
         content: str | None = None,
-    ) -> Post | None:
+    ) -> Post:
         """
         게시글 수정.
 
@@ -86,18 +121,21 @@ class PostService:
             content: 새 내용 (선택)
 
         Returns:
-            수정된 Post 또는 None (권한 없음/존재하지 않음)
+            수정된 Post
+
+        Raises:
+            PostNotFoundError: 게시글이 존재하지 않을 때
+            PostPermissionError: 권한이 없을 때
         """
         post = await self.post_repo.get_by_id(post_id)
 
         if post is None:
-            return None
+            raise PostNotFoundError(f"Post with id {post_id} not found")
 
         # 권한 확인: 작성자만 수정 가능
         if post.user_id != user_id:
             logger.warning(f"User {user_id} tried to edit post {post_id} owned by {post.user_id}")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not the owner of this post")
-            return None
+            raise PostPermissionError(f"User {user_id} is not the owner of post {post_id}")
 
         if title is not None:
             post.title = title
@@ -118,15 +156,19 @@ class PostService:
 
         Returns:
             bool: 삭제 성공 여부
+
+        Raises:
+            PostNotFoundError: 게시글이 존재하지 않을 때
+            PostPermissionError: 권한이 없을 때
         """
         post = await self.post_repo.get_by_id(post_id)
 
         if post is None:
-            return False
+            raise PostNotFoundError(f"Post with id {post_id} not found")
 
         if post.user_id != user_id:
             logger.warning(f"User {user_id} tried to delete post {post_id}")
-            return False
+            raise PostPermissionError(f"User {user_id} is not the owner of post {post_id}")
 
         result = await self.post_repo.soft_delete(post_id)
         await self.session.commit()

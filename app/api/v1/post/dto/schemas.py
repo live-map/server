@@ -2,21 +2,26 @@
 Pydantic schemas for Post, PostMedia, and PostLike API endpoints.
 """
 
+import re
 import uuid
 from datetime import datetime
-from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Import MediaType from model to avoid duplicate enum definitions
+from app.models.post_media import MediaType
 
 
 # ========================================
 # Media Schemas
 # ========================================
 
-class MediaType(str, Enum):
-    """미디어 타입."""
-    IMAGE = "IMAGE"
-    VIDEO = "VIDEO"
+# URL validation pattern for S3/CloudFront URLs
+# Adjust this pattern to match your actual S3 bucket or CloudFront domain
+ALLOWED_MEDIA_URL_PATTERN = re.compile(
+    r"^https://([\w-]+\.s3\.[\w-]+\.amazonaws\.com|[\w-]+\.cloudfront\.net|localhost:\d+)/.*$",
+    re.IGNORECASE,
+)
 
 
 class PostMediaCreate(BaseModel):
@@ -25,11 +30,24 @@ class PostMediaCreate(BaseModel):
     url: str = Field(..., max_length=1000)
     thumbnail_url: str | None = Field(None, max_length=1000)
     original_filename: str | None = Field(None, max_length=255)
-    file_size: int | None = Field(None, ge=0)
+    file_size: int | None = Field(None, ge=0, le=104857600, description="File size in bytes (max 100MB)")
     duration: int | None = Field(None, ge=0, le=60, description="Video duration in seconds (max 60)")
-    width: int | None = Field(None, ge=0)
-    height: int | None = Field(None, ge=0)
+    width: int | None = Field(None, ge=0, le=7680, description="Width in pixels (max 8K)")
+    height: int | None = Field(None, ge=0, le=4320, description="Height in pixels (max 8K)")
     order: int = Field(0, ge=0)
+
+    @field_validator("url", "thumbnail_url")
+    @classmethod
+    def validate_url(cls, v: str | None) -> str | None:
+        """Validate that URL matches allowed patterns (S3/CloudFront)."""
+        if v is None:
+            return v
+        if not ALLOWED_MEDIA_URL_PATTERN.match(v):
+            raise ValueError(
+                "URL must be from allowed domains (S3 or CloudFront). "
+                "Direct file upload to external URLs is not permitted."
+            )
+        return v
 
 
 class PostMediaResponse(BaseModel):
@@ -83,6 +101,13 @@ class PostLikersListResponse(BaseModel):
 
 
 # ========================================
+# Constants
+# ========================================
+
+MAX_MEDIA_PER_POST = 10  # Maximum number of media attachments per post
+
+
+# ========================================
 # Post Schemas
 # ========================================
 
@@ -90,7 +115,11 @@ class PostCreate(BaseModel):
     """게시글 생성 요청."""
     title: str = Field(..., min_length=1, max_length=200)
     content: str = Field(..., min_length=1)
-    media: list[PostMediaCreate] | None = Field(None, description="Optional media attachments")
+    media: list[PostMediaCreate] | None = Field(
+        None,
+        max_length=MAX_MEDIA_PER_POST,
+        description=f"Optional media attachments (max {MAX_MEDIA_PER_POST})",
+    )
 
 
 class PostUpdate(BaseModel):

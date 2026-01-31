@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -91,6 +91,11 @@ class PostMedia(Base):
 
     # Relationships
     post: Mapped["Post"] = relationship("Post", back_populates="media")
+
+    # Composite index for efficient ordering queries
+    __table_args__ = (
+        Index("ix_post_media_post_id_order", "post_id", "order"),
+    )
 
     def __repr__(self) -> str:
         return f"<PostMedia(id={self.id}, type={self.media_type}, post_id={self.post_id})>"
