@@ -41,6 +41,8 @@ dependencies = [
     "pytrends>=4.9.2",
     # Date parsing (for evidence date filtering)
     "python-dateutil>=2.8.2",
+    # AWS S3 (for media uploads)
+    "boto3>=1.34.0",
 ]
 
 [dependency-groups]

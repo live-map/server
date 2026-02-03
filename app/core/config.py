@@ -33,6 +33,30 @@ class Settings(BaseSettings):
     PUBLISHABLE_MIN_CREDIBILITY: int = 60
     PUBLISHABLE_REQUIRE_LOCATION: bool = False
 
+    # AWS S3 Configuration
+    # Required for media uploads. Get credentials from AWS IAM.
+    AWS_S3_BUCKET_NAME: str | None = None
+    AWS_S3_REGION: str = "ap-northeast-2"
+    AWS_ACCESS_KEY_ID: str | None = None
+    AWS_SECRET_ACCESS_KEY: str | None = None
+
+    # CloudFront Configuration (optional, for CDN delivery)
+    # If not set, S3 direct URLs will be used
+    AWS_CLOUDFRONT_DOMAIN: str | None = None  # e.g., "d1234abcd.cloudfront.net"
+
+    # Media Upload Settings
+    MEDIA_UPLOAD_MAX_SIZE_MB: int = 100  # Max file size in MB
+    MEDIA_PRESIGNED_URL_EXPIRES: int = 3600  # Presigned URL expiry in seconds (1 hour)
+
+    @property
+    def s3_enabled(self) -> bool:
+        """Check if S3 is properly configured."""
+        return bool(
+            self.AWS_S3_BUCKET_NAME
+            and self.AWS_ACCESS_KEY_ID
+            and self.AWS_SECRET_ACCESS_KEY
+        )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

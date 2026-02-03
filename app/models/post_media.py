@@ -62,9 +62,9 @@ class PostMedia(Base):
         index=True,
     )
 
-    # Media type
+    # Media type (uses existing PostgreSQL enum "MediaType")
     media_type: Mapped[MediaType] = mapped_column(
-        Enum(MediaType, name="media_type_enum"),
+        Enum(MediaType, name="MediaType", create_type=False),
         nullable=False,
     )
 

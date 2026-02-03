@@ -708,4 +708,71 @@ CREATE INDEX ix_post_likes_user_id ON post_likes(user_id);
 
 ---
 
-*최종 수정: 2026-01-30*
+---
+
+## 10. Frontend Updates (2026-01-31)
+
+### 10.1 Post Edit Feature
+
+**Owner-only edit button**: 게시글 소유자만 수정 버튼을 볼 수 있음
+
+```typescript
+// post-item.tsx
+const { data: session } = useSession();
+const isOwner = session?.user?.id === post.user_id;
+
+// 좋아요, 댓글, 시간 옆에 "수정" 텍스트 버튼 표시
+{isOwner && (
+  <button onClick={handleEdit}>수정</button>
+)}
+```
+
+**Edit flow**:
+1. 수정 버튼 클릭 → `setEditingPost(post)` + `setIsPostFormOpen(true)`
+2. PostCreateForm이 edit mode로 열림 (key prop이 post.id로 설정)
+3. 폼에 기존 제목/내용이 자동 채워짐
+4. 제출 시 `updateMutation.mutateAsync()` 호출
+
+### 10.2 ImageCarousel Component Update
+
+**Layout change**: Overlay 스타일에서 side-by-side 스타일로 변경
+
+```
+이전: [이미지 위에 겹쳐진 좌/우 화살표]
+현재: [◀] [이미지 176x112px] [▶]
+```
+
+**Key changes**:
+- 이미지 크기: 128x80px → 176x112px (w-44 h-28)
+- 화살표: hover-only → 항상 표시
+- 위치 표시: 우측 하단 → 중앙 하단
+- 화살표 위치: 이미지 내부 → 이미지 양 옆
+
+### 10.3 Cache Invalidation for Media Registration
+
+**Problem**: 게시글 생성 mutation의 `onSuccess`가 미디어 등록 전에 cache를 invalidate함
+
+**Solution**: 미디어 등록 완료 후 수동으로 cache invalidate
+
+```typescript
+// post-create-form.tsx
+const queryClient = useQueryClient();
+
+const handleSubmit = async (e: React.FormEvent) => {
+  // 게시글 생성
+  const newPost = await createMutation.mutateAsync({ title, content });
+
+  // 미디어 등록
+  if (newPost && uploadedMedia.length > 0) {
+    for (const media of uploadedMedia) {
+      await addMediaToPost(newPost.id, { ... });
+    }
+    // 미디어 등록 후 cache invalidate
+    await queryClient.invalidateQueries({ queryKey: postKeys.lists() });
+  }
+};
+```
+
+---
+
+*최종 수정: 2026-01-31*
