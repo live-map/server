@@ -149,6 +149,7 @@ async def create_post(
 
     # 모든 작업이 성공하면 한 번에 commit
     await postService.session.commit()
+    await postService.session.refresh(post)
 
     return PostResponse(
         id=post.id,
