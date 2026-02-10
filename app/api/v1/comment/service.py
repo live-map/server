@@ -9,6 +9,7 @@ from app.api.v1.comment.repository import CommentRepository
 from app.models.comment import Comment
 from app.api.v1.comment.dto.commentTreeNode import CommentTreeNode
 from app.api.v1.post.repository import PostRepository
+from app.api.v1.post.sort import compute_popularity_score
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,17 @@ class CommentService:
         )
 
         created = await self.comment_repo.create(comment)
+
+        # Update denormalized comment_count and popularity_score
+        post.comment_count = (post.comment_count or 0) + 1
+        post.popularity_score = compute_popularity_score(
+            likes=post.like_count,
+            comments=post.comment_count,
+            views=post.view_count,
+            created_at=post.created_at,
+        )
+        await self.session.flush()
+
         await self.session.commit()
         logger.info(
             f"Comment created: {created.id} on post {post_id}, "
@@ -214,7 +226,21 @@ class CommentService:
             logger.warning(f"User {user_id} tried to delete comment {comment_id}")
             return False
 
+        post_id = comment.post_id
         result = await self.comment_repo.soft_delete(comment_id)
+
+        # Update denormalized comment_count and popularity_score
+        post = await self.post_repo.get_by_id(post_id)
+        if post and post.comment_count > 0:
+            post.comment_count -= 1
+            post.popularity_score = compute_popularity_score(
+                likes=post.like_count,
+                comments=post.comment_count,
+                views=post.view_count,
+                created_at=post.created_at,
+            )
+            await self.session.flush()
+
         await self.session.commit()
         return result
 
@@ -225,3 +251,7 @@ class CommentService:
     async def get_comment_count(self, post_id: uuid.UUID) -> int:
         """게시글의 총 댓글 수 조회."""
         return await self.comment_repo.count_by_post(post_id)
+
+    async def get_user_comment_count(self, user_id: str) -> int:
+        """특정 사용자의 총 댓글 수 조회."""
+        return await self.comment_repo.count_by_user(user_id)

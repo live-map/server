@@ -115,18 +115,31 @@ async def create_comment(
 )
 async def list_comments_flat(
     service: CommentServiceDep,
-    post_id: Annotated[uuid.UUID, Query(description="게시글 UUID")],
+    post_id: Annotated[uuid.UUID | None, Query(description="게시글 UUID")] = None,
+    user_id: Annotated[str | None, Query(description="특정 사용자의 댓글만 조회")] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 50,
     offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
 ) -> CommentListResponse:
     """
-    게시글의 댓글을 플랫 리스트로 조회합니다.
+    댓글을 플랫 리스트로 조회합니다.
 
     - **post_id**: Query parameter로 게시글 UUID 지정
+    - **user_id**: Query parameter로 사용자 ID 지정
 
-    depth와 order_number로 정렬되어 있어
-    프론트엔드에서 depth 값으로 들여쓰기 표현이 가능합니다.
+    post_id 또는 user_id 중 하나는 반드시 제공해야 합니다.
     """
+    if not post_id and not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="post_id 또는 user_id 중 하나는 반드시 제공해야 합니다.",
+        )
+
+    # user_id만 제공된 경우: 사용자별 댓글 수만 반환
+    if user_id and not post_id:
+        total = await service.get_user_comment_count(user_id)
+        return CommentListResponse(items=[], total=total)
+
+    # post_id가 제공된 경우: 기존 로직
     comments = await service.get_flat_comments(post_id, limit=limit, offset=offset)
     total = await service.get_comment_count(post_id)
 

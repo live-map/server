@@ -259,6 +259,24 @@ class CommentRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def count_by_user(self, user_id: str) -> int:
+        """
+        특정 사용자의 댓글 총 개수.
+
+        Args:
+            user_id: 사용자 ID
+
+        Returns:
+            int: 댓글 수
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Comment)
+            .where(Comment.user_id == user_id, Comment.is_deleted == False)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
     async def count_replies(self, parent_id: uuid.UUID) -> int:
         """
         특정 댓글의 대댓글 수.
