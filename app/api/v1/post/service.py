@@ -12,6 +12,7 @@ from typing import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.post.repository import PostRepository
+from app.api.v1.post.sort import SortType, compute_popularity_score
 from app.models.post import Post
 
 logger = logging.getLogger(__name__)
@@ -84,8 +85,26 @@ class PostService:
             content=content,
         )
         created = await self.post_repo.create(post)
+        # Initialize popularity score with creation time
+        created.popularity_score = compute_popularity_score(
+            likes=0, comments=0, views=0, created_at=created.created_at,
+        )
+        await self.session.flush()
         logger.debug(f"Post created (uncommitted): {created.id} by user {user_id}")
         return created
+
+    async def recalculate_popularity(self, post_id: uuid.UUID) -> None:
+        """게시글 인기도 점수 재계산."""
+        post = await self.post_repo.get_by_id(post_id)
+        if post is None:
+            return
+        post.popularity_score = compute_popularity_score(
+            likes=post.like_count,
+            comments=post.comment_count,
+            views=post.view_count,
+            created_at=post.created_at,
+        )
+        await self.session.flush()
 
     async def get_post(self, post_id: uuid.UUID) -> Post | None:
         """게시글 단건 조회."""
@@ -100,9 +119,12 @@ class PostService:
         limit: int = 20,
         offset: int = 0,
         user_id: str | None = None,
+        sort: SortType = SortType.NEWEST,
     ) -> Sequence[Post]:
         """게시글 목록 조회."""
-        return await self.post_repo.get_all(limit=limit, offset=offset, user_id=user_id)
+        return await self.post_repo.get_all(
+            limit=limit, offset=offset, user_id=user_id, sort=sort,
+        )
 
     async def update_post(
         self,

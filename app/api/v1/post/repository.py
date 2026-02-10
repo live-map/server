@@ -6,13 +6,15 @@ Handles all database operations for posts.
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.post import Post
+from app.api.v1.post.sort import SortType, SIMPLE_SORT_MAP, TIME_WINDOW_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -80,26 +82,21 @@ class PostRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    # Not recommended to use this method to fetch all posts by user_id
-    # Becuase it will be slow and inefficient because it will fetch all posts and then filter them by user_id
-    # Instead, use the query with user_id directly in the service layer
-    # Use only when you need to fetch all posts!!!  전체 게시글 조회시에만 사용 !!!
     async def get_all(
         self,
         limit: int = 20,
         offset: int = 0,
         user_id: str | None = None,
+        sort: SortType = SortType.NEWEST,
     ) -> Sequence[Post]:
         """
-
-        !!! 전체 게시글 조회시에만 사용 !!!
-
-        게시글 목록 조회 (페이지네이션).
+        게시글 목록 조회 (페이지네이션 + 정렬).
 
         Args:
             limit: 최대 조회 수
             offset: 건너뛸 수
             user_id: 특정 사용자의 글만 조회 (선택)
+            sort: 정렬 기준
 
         Returns:
             Sequence[Post]: 게시글 목록
@@ -108,7 +105,6 @@ class PostRepository:
             select(Post)
             .options(
                 selectinload(Post.user),      # 작성자 eager load
-                selectinload(Post.comments),  # 댓글 eager load (for count)
                 selectinload(Post.media),     # 미디어 eager load
             )
             .where(Post.is_deleted == False)
@@ -117,7 +113,17 @@ class PostRepository:
         if user_id:
             stmt = stmt.where(Post.user_id == user_id)
 
-        stmt = stmt.order_by(Post.created_at.desc()).limit(limit).offset(offset)
+        # Time-windowed sorts: add WHERE created_at >= cutoff
+        if sort in TIME_WINDOW_MAP:
+            cutoff = datetime.now(timezone.utc) - TIME_WINDOW_MAP[sort]
+            stmt = stmt.where(Post.created_at >= cutoff)
+            stmt = stmt.order_by(desc(Post.popularity_score), desc(Post.created_at))
+        else:
+            # Simple sorts: use mapped ORDER BY columns
+            order_clauses = SIMPLE_SORT_MAP.get(sort, [desc(Post.created_at)])
+            stmt = stmt.order_by(*order_clauses)
+
+        stmt = stmt.limit(limit).offset(offset)
 
         result = await self.session.execute(stmt)
         return result.scalars().all()
@@ -185,12 +191,17 @@ class PostRepository:
         logger.debug(f"Hard deleted post: {post_id} (with all comments via CASCADE)")
         return True
 
-    async def count(self, user_id: str | None = None) -> int:
+    async def count(
+        self,
+        user_id: str | None = None,
+        sort: SortType = SortType.NEWEST,
+    ) -> int:
         """
         게시글 총 개수.
 
         Args:
             user_id: 특정 사용자의 글만 카운트 (선택)
+            sort: 정렬 기준 (시간 윈도우 필터 적용용)
 
         Returns:
             int: 게시글 수
@@ -199,6 +210,10 @@ class PostRepository:
 
         if user_id:
             stmt = stmt.where(Post.user_id == user_id)
+
+        if sort in TIME_WINDOW_MAP:
+            cutoff = datetime.now(timezone.utc) - TIME_WINDOW_MAP[sort]
+            stmt = stmt.where(Post.created_at >= cutoff)
 
         result = await self.session.execute(stmt)
         return result.scalar_one()

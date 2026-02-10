@@ -12,6 +12,8 @@ from typing import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.post.like.repository import PostLikeRepository
+from app.api.v1.post.sort import compute_popularity_score
+from app.models.post import Post
 from app.models.post_like import PostLike
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,21 @@ class PostLikeService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.like_repo = PostLikeRepository(session)
+
+    async def _recalculate_popularity(self, post_id: uuid.UUID) -> None:
+        """좋아요 변경 후 인기도 점수 재계산."""
+        from sqlalchemy import select
+        stmt = select(Post).where(Post.id == post_id)
+        result = await self.session.execute(stmt)
+        post = result.scalar_one_or_none()
+        if post:
+            post.popularity_score = compute_popularity_score(
+                likes=post.like_count,
+                comments=post.comment_count,
+                views=post.view_count,
+                created_at=post.created_at,
+            )
+            await self.session.flush()
 
     async def like_post(self, post_id: uuid.UUID, user_id: str) -> LikeResult:
         """
@@ -90,6 +107,7 @@ class PostLikeService:
             await self.session.rollback()
             raise PostNotFoundForLikeError(f"Post {post_id} was deleted during like operation")
 
+        await self._recalculate_popularity(post_id)
         await self.session.commit()
 
         like_count = await self.like_repo.count_by_post_id(post_id)
@@ -137,6 +155,7 @@ class PostLikeService:
             logger.warning(f"like_count desync detected for post {post_id}, deleting like anyway")
             await self.like_repo.delete(post_id, user_id)
 
+        await self._recalculate_popularity(post_id)
         await self.session.commit()
 
         like_count = await self.like_repo.count_by_post_id(post_id)

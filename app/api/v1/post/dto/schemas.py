@@ -136,6 +136,7 @@ class PostResponse(BaseModel):
     title: str
     content: str
     like_count: int = 0
+    view_count: int = 0
     is_liked: bool = False  # 현재 사용자의 좋아요 여부
     media: list[PostMediaResponse] = []
     created_at: datetime

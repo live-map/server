@@ -35,6 +35,7 @@ from app.api.v1.post.dto.schemas import (
 from app.api.v1.post.service import PostService, PostNotFoundError, PostPermissionError
 from app.api.v1.post.media.service import PostMediaService
 from app.api.v1.post.like.service import PostLikeService, PostNotFoundForLikeError
+from app.api.v1.post.sort import SortType
 from app.core.database import get_db
 from app.models.post_media import MediaType
 
@@ -175,17 +176,20 @@ async def list_posts(
     current_user: CurrentUserOptional = None,
     limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 20,
     offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
+    user_id: Annotated[str | None, Query(description="특정 사용자의 글만 조회")] = None,
+    sort: Annotated[SortType, Query(description="정렬 기준")] = SortType.NEWEST,
 ) -> PostListResponse:
     """
     게시글 목록을 조회합니다.
 
     - **limit**: 최대 조회 수 (기본 20, 최대 100)
     - **offset**: 건너뛸 수 (기본 0)
+    - **sort**: 정렬 기준 (popular, newest, most_viewed, most_liked, daily_hot, weekly_hot, monthly_hot)
 
     인증된 사용자의 경우 각 게시글의 좋아요 여부(is_liked)가 포함됩니다.
     """
-    posts = await postService.list_posts(limit=limit, offset=offset)
-    total = await postService.post_repo.count()
+    posts = await postService.list_posts(limit=limit, offset=offset, user_id=user_id, sort=sort)
+    total = await postService.post_repo.count(user_id=user_id, sort=sort)
 
     # 인증된 사용자인 경우 좋아요 상태 일괄 조회
     like_status = {}
@@ -201,6 +205,7 @@ async def list_posts(
             title=post.title,
             content=post.content,
             like_count=post.like_count,
+            view_count=post.view_count,
             is_liked=like_status.get(post.id, False),
             media=[
                 PostMediaResponse(
@@ -221,7 +226,7 @@ async def list_posts(
             ],
             created_at=post.created_at,
             updated_at=post.updated_at,
-            comment_count=len(post.comments) if post.comments else 0,
+            comment_count=post.comment_count,
         )
         for post in posts
     ]
@@ -260,6 +265,12 @@ async def get_post(
     if current_user:
         is_liked = await likeService.is_liked_by_user(post_id, current_user.user_id)
 
+    # Increment view count
+    post.view_count += 1
+    await service.session.flush()
+    await service.session.commit()
+    await service.session.refresh(post)
+
     return PostResponse(
         id=post.id,
         user_id=post.user_id,
@@ -267,6 +278,7 @@ async def get_post(
         title=post.title,
         content=post.content,
         like_count=post.like_count,
+        view_count=post.view_count,
         is_liked=is_liked,
         media=[
             PostMediaResponse(
@@ -287,7 +299,7 @@ async def get_post(
         ],
         created_at=post.created_at,
         updated_at=post.updated_at,
-        comment_count=len(post.comments) if post.comments else 0,
+        comment_count=post.comment_count,
     )
 
 
