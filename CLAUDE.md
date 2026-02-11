@@ -24,15 +24,25 @@
 
 ## FastAPI 베스트 프랙티스 (조사 결과 업데이트)
 
-### 프로젝트 구조
+### 프로젝트 구조 (Grapoll - 여론조사 플랫폼)
 ```
 app/
-├── api/v1/           # 버전별 라우터
-├── core/             # 설정, 보안, 예외
-├── db/               # 데이터베이스
-├── models/           # SQLAlchemy 모델
-├── schemas/          # Pydantic 스키마
-├── services/         # 비즈니스 로직
+├── api/v1/
+│   ├── poll/              # 여론조사 모듈 (Controller→Service→Repository)
+│   │   ├── controller.py  # 12개 엔드포인트
+│   │   ├── service.py     # PollService
+│   │   ├── repository.py  # PollRepository
+│   │   ├── dto/schemas.py # Pydantic 스키마 (camelCase alias)
+│   │   ├── vote/          # 투표 서브모듈
+│   │   └── comment/       # 댓글 서브모듈
+│   ├── post/              # 커뮤니티 게시글 (동일 패턴)
+│   ├── comment/           # 커뮤니티 댓글
+│   ├── media/             # 미디어 업로드
+│   └── interpreter/       # JWT 인증 가드
+├── core/                  # 설정, 보안, 예외
+├── db/                    # 데이터베이스
+├── models/                # SQLAlchemy 모델 (Poll, Vote, PollComment, Post, Comment, User)
+├── services/              # 공통 서비스 (S3 등)
 └── main.py
 ```
 
