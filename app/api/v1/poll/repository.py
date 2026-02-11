@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.poll import Poll
+from app.models.poll_comment import PollComment
 from app.models.poll_option import PollOption
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class PollRepository:
             .options(
                 selectinload(Poll.options),
                 selectinload(Poll.sources),
-                selectinload(Poll.comments),
+                selectinload(Poll.comments).selectinload(PollComment.user),
                 selectinload(Poll.user),
             )
             .where(Poll.id == poll_id, Poll.is_deleted == False)
@@ -144,7 +145,7 @@ class PollRepository:
             select(Poll)
             .options(
                 selectinload(Poll.options),
-                selectinload(Poll.comments),
+                selectinload(Poll.comments).selectinload(PollComment.user),
             )
             .where(
                 Poll.is_deleted == False,
