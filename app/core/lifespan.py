@@ -3,12 +3,9 @@ Application lifespan events.
 
 Handles startup and shutdown operations.
 - Configures logging
-- Starts scheduled scanner (every 15 minutes)
-- Runs initial scan on startup
-- Saves articles to database with deduplication
+- Cleans up old logs
 """
 
-import asyncio
 import logging
 import os
 import sys
@@ -18,15 +15,7 @@ from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 
-from app.agent.config import agent_settings
-from app.agent.triggers.date_extractor import contains_past_year
-from app.core.database import AsyncSessionLocal
-from app.services.article_service import CanonicalDuplicateError
-
 logger = logging.getLogger(__name__)
-
-# Global task reference for cleanup
-_scanner_task: asyncio.Task | None = None
 
 # Store current log file path for reference
 _current_log_file: str | None = None
@@ -37,9 +26,7 @@ def setup_logging():
 
     Each server start creates a new timestamped log file:
     - Console: All activity with timestamp (HH:MM:SS format)
-    - File: logs/livemap_YYYY-MM-DD_HH-MM-SS.log
-
-    Old logs are preserved for debugging. Clean up manually or via cron.
+    - File: logs/grapoll_YYYY-MM-DD_HH-MM-SS.log
     """
     global _current_log_file
 
@@ -62,18 +49,17 @@ def setup_logging():
 
     # Create timestamped log filename for this session
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_filename = f"livemap_{timestamp}.log"
+    log_filename = f"grapoll_{timestamp}.log"
     log_path = os.path.join(log_dir, log_filename)
     _current_log_file = log_path
 
     # Also create/update a symlink to the latest log for convenience
-    latest_link = os.path.join(log_dir, "livemap_latest.log")
+    latest_link = os.path.join(log_dir, "grapoll_latest.log")
     try:
         if os.path.islink(latest_link):
             os.unlink(latest_link)
         os.symlink(log_filename, latest_link)
     except OSError:
-        # Symlinks may fail on Windows, ignore
         pass
 
     file_handler = logging.FileHandler(
@@ -94,7 +80,6 @@ def setup_logging():
 
     # Set specific loggers
     logging.getLogger("app").setLevel(logging.DEBUG)
-    logging.getLogger("app.agent").setLevel(logging.DEBUG)
 
     # Reduce noise from libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -107,10 +92,7 @@ def setup_logging():
 
 
 def cleanup_old_logs(keep_days: int = 7):
-    """Remove log files older than keep_days.
-
-    Call this periodically or on startup to prevent disk space issues.
-    """
+    """Remove log files older than keep_days."""
     log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
     if not os.path.exists(log_dir):
         return
@@ -119,9 +101,9 @@ def cleanup_old_logs(keep_days: int = 7):
     removed_count = 0
 
     for filename in os.listdir(log_dir):
-        if not filename.startswith("livemap_") or not filename.endswith(".log"):
+        if not filename.endswith(".log"):
             continue
-        if filename == "livemap_latest.log":
+        if filename in ("grapoll_latest.log", "livemap_latest.log"):
             continue
 
         filepath = os.path.join(log_dir, filename)
@@ -138,375 +120,27 @@ def cleanup_old_logs(keep_days: int = 7):
         logger.info(f"Cleaned up {removed_count} old log files (older than {keep_days} days)")
 
 
-async def run_scheduled_scan():
-    """Run a single scan cycle and trigger investigations for significant events."""
-    from app.agent import ClaimVerificationAgent, NewsScanner
-    from app.services.article_service import ArticleService
-
-    print("\n" + "=" * 60)
-    print("[SCANNER] Starting scheduled scan...")
-    print("=" * 60)
-
-    # P2 Enhancement: In-memory tracking of published events within this scan cycle
-    # to prevent duplicate articles on the same topic (e.g., Trump NATO x7)
-    published_in_cycle: list[str] = []
-
-    def _is_similar_to_published(event_desc: str, threshold: float = 0.6) -> bool:
-        """Check if event is too similar to already-published events in this cycle."""
-        # Simple word overlap similarity
-        event_words = set(event_desc.lower().split())
-        for published in published_in_cycle:
-            published_words = set(published.lower().split())
-            if not event_words or not published_words:
-                continue
-            intersection = len(event_words & published_words)
-            union = len(event_words | published_words)
-            similarity = intersection / union if union > 0 else 0
-            if similarity >= threshold:
-                return True
-        return False
-
-    try:
-        scanner = NewsScanner()
-        # Initialize scanner (loads CrossSourceMatcher for multi-source verification)
-        init_results = await scanner.initialize()
-        # P0: Log initialization results at INFO level for easier debugging
-        logger.info(f"Scanner initialized: {init_results}")
-        # P0: Warn about failed triggers
-        failed_triggers = [k for k, v in init_results.items() if not v]
-        if failed_triggers:
-            logger.warning(f"[INIT-WARNING] Failed triggers: {failed_triggers}")
-        events = await scanner.scan_all_sources()
-
-        if not events:
-            print("[SCANNER] No significant events found")
-            return
-
-        print(f"[SCANNER] Found {len(events)} significant events")
-
-        # Show detected events
-        for i, event in enumerate(events):
-            desc = event.get("description", "N/A")
-            cat = event.get("category", "other")
-            sources = event.get("sources", [])
-            print(f"  [{i+1}] [{cat.upper()}] {desc[:80]}")
-            print(f"       Sources: {', '.join(sources[:3])}")
-
-        # Start investigation for each significant event (using v3 Claim-Level Agent)
-        agent = ClaimVerificationAgent()
-        max_investigations = 5  # Limit per scan (increased for international affairs focus)
-        investigation_count = 0
-
-        for i, event in enumerate(events):
-            if investigation_count >= max_investigations:
-                break
-
-            event_desc = event.get("description") or event.get("title", "Unknown event")
-            category = event.get("category", "other")
-
-            print(f"\n[SCANNER] [{i+1}] Investigating: {event_desc[:80]}...")
-
-            # === P2 Enhancement: In-cycle duplicate check ===
-            if _is_similar_to_published(event_desc):
-                print(f"[SCANNER] [{i+1}] SKIPPING: Similar to already-published event in this cycle")
-                continue
-
-            # P0 Fix: Generate embedding once for both deduplication and saving
-            event_embedding = None
-            if scanner._matcher_initialized and scanner.cross_source_matcher._encoder:
-                event_embedding = scanner.cross_source_matcher.generate_embedding_for_text(event_desc)
-
-            # === STAGE 1.5: DEDUPLICATION CHECK (NEW) ===
-            if agent_settings.dedup_enabled:
-                async with AsyncSessionLocal() as db:
-                    article_service = ArticleService(
-                        db,
-                        duplicate_threshold=agent_settings.dedup_duplicate_threshold,
-                        potential_threshold=agent_settings.dedup_potential_threshold,
-                        time_window_days=agent_settings.dedup_time_window_days,
-                    )
-                    match_result = await article_service.check_duplicate(
-                        event_desc,
-                        embedding=event_embedding,  # P0: Now uses actual embedding
-                        category=category,
-                    )
-
-                    if match_result.is_duplicate:
-                        print(f"[SCANNER] [{i+1}] SKIPPING: Duplicate event (matched event_id={match_result.matched_event_id})")
-                        continue
-
-                    if match_result.is_potential_match:
-                        print(f"[SCANNER] [{i+1}] Potential match found (similarity={match_result.similarity_score:.2f})")
-                        # Check for updates
-                        if match_result.matched_event:
-                            update_result = await article_service.check_update(
-                                match_result.matched_event,
-                                event_desc,
-                            )
-                            if not update_result.should_generate_article:
-                                print(f"[SCANNER] [{i+1}] SKIPPING: No significant update")
-                                continue
-                            print(f"[SCANNER] [{i+1}] Update detected: {update_result.update_type}")
-
-            try:
-                # Add timeout to investigation (5 minutes max)
-                result = await asyncio.wait_for(
-                    agent.investigate(
-                        event=event_desc,
-                        category=category,
-                    ),
-                    timeout=300.0,  # 5 minutes
-                )
-
-                # Skip if marked as duplicate during investigation
-                if result.get("is_duplicate"):
-                    print(f"[SCANNER] [{i+1}] SKIPPING: Marked as duplicate during investigation")
-                    continue
-
-                # === STAGE 6: DB SAVE (NEW) ===
-                article_en = result.get("article_en")
-                article_ko = result.get("article_ko")
-
-                if article_en:
-                    # === POST-LLM VALIDATION: Reject articles mentioning past years ===
-                    article_full_text = article_en.get("full_text", "")
-                    current_year = datetime.utcnow().year
-                    has_past_year, past_year = contains_past_year(article_full_text, current_year)
-
-                    if has_past_year:
-                        print(f"[SCANNER] [{i+1}] SKIPPING: LLM generated article mentions past year ({past_year})")
-                        logger.warning(
-                            f"[POST-LLM-DATE-REJECT] Article mentions past year ({past_year}): "
-                            f"{article_en.get('headline', '')[:50]}..."
-                        )
-                        continue
-                    async with AsyncSessionLocal() as db:
-                        article_service = ArticleService(db)
-
-                        # Extract sources
-                        evidence_docs = result.get("evidence_docs", [])
-                        sources = list({
-                            doc.get("url") or doc.get("source_name", "unknown")
-                            for doc in evidence_docs
-                            if doc.get("url") or doc.get("source_name")
-                        })
-
-                        # Build verification result dict
-                        verification_result = {
-                            "total_claims": len(result.get("claims", [])),
-                            "supported_count": len(result.get("supported_claims", [])),
-                            "refuted_count": len(result.get("refuted_claims", [])),
-                            "nei_count": len(result.get("unverifiable_claims", [])),
-                            "overall_reliability": result.get("overall_reliability", 0.0),
-                        }
-
-                        # Phase 6: Create embedding generator callback for re-embedding
-                        embedding_generator = None
-                        if scanner._matcher_initialized and scanner.cross_source_matcher._encoder:
-                            embedding_generator = scanner.cross_source_matcher.generate_embedding_for_text
-
-                        # Save to database (Phase 6: with re-embedding support)
-                        try:
-                            saved_event, saved_article = await article_service.save_article(
-                                article_en=article_en,
-                                article_ko=article_ko or {
-                                    "headline": "",
-                                    "lead": "",
-                                    "nut_graph": "",
-                                    "body": "",
-                                    "full_text": "",
-                                },
-                                event_text=event_desc,
-                                embedding=event_embedding,  # P0: Now uses actual embedding
-                                category=category,
-                                claims=result.get("claims"),
-                                verification_result=verification_result,
-                                sources=sources,
-                                is_update=result.get("is_update", False),
-                                update_type=result.get("update_type"),
-                                update_reason=result.get("update_reason"),
-                                existing_event_id=result.get("matched_event_id"),
-                                embedding_generator=embedding_generator,  # Phase 6
-                            )
-                            print(f"[SCANNER] [{i+1}] SAVED: event_id={saved_event.id}, article_id={saved_article.id}")
-                            investigation_count += 1
-                            # P2: Track published event for in-cycle duplicate prevention
-                            published_in_cycle.append(event_desc)
-                        except CanonicalDuplicateError as e:
-                            print(f"[SCANNER] [{i+1}] SKIPPING: Post-LLM duplicate detected (matched event_id={e.matched_event_id}, similarity={e.similarity:.2%})")
-                            logger.info(f"[CANONICAL-DEDUP] Skipped duplicate: {e.message}")
-                            continue
-
-                # Output the generated article
-                article = result.get("article")
-                if article:
-                    # Print English article
-                    full_text_en = article.get("full_text_en") or article.get("full_text", "")
-                    if full_text_en:
-                        print("\n" + "=" * 70)
-                        print("ENGLISH ARTICLE")
-                        print("=" * 70)
-                        print(full_text_en)
-
-                    # Print Korean article if available
-                    full_text_ko = article.get("full_text_ko", "")
-                    if full_text_ko:
-                        print("\n" + "=" * 70)
-                        print("KOREAN ARTICLE (한국어 기사)")
-                        print("=" * 70)
-                        print(full_text_ko)
-                else:
-                    # Fallback: Show raw results
-                    print("\n" + "=" * 70)
-                    print(f"ARTICLE [{i+1}] - {category.upper()}")
-                    print("=" * 70)
-
-                    # Claims extracted
-                    claims = result.get("claims", [])
-                    print(f"\nCLAIMS EXTRACTED: {len(claims)}")
-                    for c in claims[:5]:
-                        print(f"  - {c.get('text', '')[:100]}")
-
-                    # Verdicts
-                    supported = result.get("supported_claims", [])
-                    refuted = result.get("refuted_claims", [])
-                    unverified = result.get("unverifiable_claims", [])
-
-                    if supported:
-                        print(f"\nSUPPORTED ({len(supported)}):")
-                        for v in supported[:3]:
-                            print(f"  + {v.get('claim_text', '')[:100]}")
-                            print(f"    Confidence: {v.get('confidence', 0)}/5")
-
-                    if refuted:
-                        print(f"\nREFUTED ({len(refuted)}):")
-                        for v in refuted[:3]:
-                            print(f"  - {v.get('claim_text', '')[:100]}")
-                            print(f"    Reason: {v.get('reasoning', '')[:100]}")
-
-                    if unverified:
-                        print(f"\nUNVERIFIED ({len(unverified)}):")
-                        for v in unverified[:3]:
-                            print(f"  ? {v.get('claim_text', '')[:100]}")
-
-                    reliability = result.get("overall_reliability", 0)
-                    print(f"\nRELIABILITY: {reliability:.1%}")
-
-                    sources = result.get("evidence_docs", [])
-                    print(f"\nSOURCES ({len(sources)}):")
-                    seen = set()
-                    for s in sources[:10]:
-                        name = s.get("source_name", s.get("source", "unknown"))
-                        if name not in seen:
-                            seen.add(name)
-                            print(f"  - {name}")
-
-                    print("\n" + "=" * 70 + "\n")
-
-            except asyncio.TimeoutError:
-                print(f"[SCANNER] [{i+1}] Investigation timed out after 5 minutes")
-                logger.error(f"Investigation timed out for: {event_desc[:50]}")
-            except Exception as e:
-                print(f"[SCANNER] [{i+1}] Investigation failed: {e}")
-                import traceback
-                traceback.print_exc()
-
-    except Exception as e:
-        print(f"[SCANNER] Scan failed: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-async def scanner_loop():
-    """Run scanner in a loop every N minutes with error recovery."""
-    interval = agent_settings.scan_interval_minutes * 60  # Convert to seconds
-    retry_delay = 60  # Wait 60s before retrying after error
-
-    print(f"\n[SCHEDULER] Scanner will run every {agent_settings.scan_interval_minutes} minutes")
-    print("[SCHEDULER] Running initial scan NOW...\n")
-
-    # Run immediately on startup
-    try:
-        await run_scheduled_scan()
-    except Exception as e:
-        logger.error(f"[SCHEDULER] Initial scan failed: {e}")
-        print(f"[SCHEDULER] Initial scan failed: {e}")
-
-    # Then run on schedule with error recovery
-    while True:
-        print(f"\n[SCHEDULER] Next scan in {agent_settings.scan_interval_minutes} minutes...")
-        await asyncio.sleep(interval)
-        try:
-            await run_scheduled_scan()
-        except Exception as e:
-            logger.error(f"[SCHEDULER] Scan failed, retrying in {retry_delay}s: {e}")
-            print(f"[SCHEDULER] Scan failed: {e}")
-            await asyncio.sleep(retry_delay)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
-    global _scanner_task
-
     # Setup logging first (creates new timestamped log file)
     setup_logging()
 
     # Clean up old logs (keep last 7 days)
     cleanup_old_logs(keep_days=7)
 
-    # Validate required configuration
-    if not agent_settings.openai_api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is required. Please set it in your environment or .env file."
-        )
-
     print("\n" + "=" * 60)
-    print("  LIVEMAP API - Multi-Source News Agent")
-    print("=" * 60)
-    print(f"  LLM Model: {agent_settings.llm_model}")
-    print(f"  Scan Interval: {agent_settings.scan_interval_minutes} min")
-    print("-" * 60)
-    print("  [Tier-1 Sources]")
-    print(f"    GDELT: {agent_settings.gdelt_enabled} (Anomaly: {agent_settings.gdelt_anomaly_enabled})")
-    print(f"    USGS: {agent_settings.usgs_enabled} (M{agent_settings.usgs_min_magnitude}+)")
-    print(f"    NOAA: {agent_settings.noaa_enabled}")
-    print("  [Tier-2 Sources]")
-    print(f"    Currents: {agent_settings.currents_enabled}")
-    print(f"    WorldNews: {agent_settings.worldnews_enabled}")
-    print(f"    ACLED: {agent_settings.acled_enabled}")
-    print("  [Tier-3 Sources]")
-    print(f"    Reddit: {agent_settings.reddit_enabled}")
-    print(f"    Bluesky: {agent_settings.bluesky_enabled}")
-    print(f"    Google Trends: {agent_settings.google_trends_enabled}")
-    print(f"    Telegram: {agent_settings.telegram_enabled}")
-    print("-" * 60)
-    print(f"  Min Confidence: {agent_settings.min_confidence_score}")
-    print(f"  Deduplication: {'Enabled' if agent_settings.dedup_enabled else 'Disabled'}")
-    print(f"  Korean Articles: {'Enabled' if agent_settings.generate_korean else 'Disabled'}")
+    print("  Grapoll API - 여론조사 플랫폼")
     print("=" * 60 + "\n")
-
-    # Start scanner in background
-    _scanner_task = asyncio.create_task(scanner_loop())
 
     yield
 
-    # Cleanup on shutdown with timeouts
-    if _scanner_task:
-        print("\n[SCHEDULER] Stopping scanner...")
-        _scanner_task.cancel()
-        try:
-            await asyncio.wait_for(_scanner_task, timeout=10.0)
-        except asyncio.CancelledError:
-            pass
-        except asyncio.TimeoutError:
-            logger.warning("Scanner task did not cancel within 10s")
-
     # Dispose DB engine with timeout
+    import asyncio
     try:
         from app.core.database import engine
         await asyncio.wait_for(engine.dispose(), timeout=10.0)
     except asyncio.TimeoutError:
         logger.warning("Database dispose timed out after 10s")
 
-    print("[SHUTDOWN] Livemap API stopped.")
+    print("[SHUTDOWN] Grapoll API stopped.")

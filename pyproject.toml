@@ -1,7 +1,7 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Livemap backend - Real-time verified news feed API"
+description = "Grapoll backend - 여론조사 플랫폼 API"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,30 +17,11 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
-    "pgvector>=0.3.0",
     "greenlet>=3.0.0",
-    # Autonomous Agent (LangGraph)
-    "langgraph>=0.2.0",
-    "langchain>=0.3.0",
-    "langchain-openai>=0.2.0",
-    "tavily-python>=0.5.0",
-    # Multi-source Triggers
-    "telethon>=1.42.0", # Telegram
-    "twikit>=2.0.0", # X/Twitter (personal account)
-    "yt-dlp>=2024.0.0", # YouTube/video download
-    # Free Search (DuckDuckGo - new package name)
-    "ddgs>=9.10.0",
-    # Embedding (for semantic clustering)
-    "sentence-transformers>=3.0.0",
-    # MCP Server (optional)
-    "mcp>=1.25.0",
     # Production utilities
     "tenacity>=8.2.0", # Retry with exponential backoff
     # JWT Authentication (NextAuth JWE decryption)
     "fastapi-nextauth-jwt>=0.2.4", # Decode NextAuth JWE tokens
-    "pytrends>=4.9.2",
-    # Date parsing (for evidence date filtering)
-    "python-dateutil>=2.8.2",
     # AWS S3 (for media uploads)
     "boto3>=1.34.0",
 ]
