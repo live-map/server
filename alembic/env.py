@@ -13,17 +13,20 @@ from alembic import context
 
 # Import models and Base for autogenerate
 from app.core.database import Base
-from app.models import Channel, Feed, Event, Article  # noqa: F401 - Import to register models
 from app.models import (  # noqa: F401 - Import to register models
-    Channel,
-    Feed,
     Post,
     Comment,
+    PostMedia,
+    PostLike,
+    Poll,
+    PollOption,
+    PollSource,
+    Vote,
+    PollComment,
     User,
     Account,
     Session,
     VerificationToken,
-    Item,
 )
 from app.core.config import settings
 

@@ -17,10 +17,12 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.account import Account
     from app.models.comment import Comment
-    from app.models.item import Item
+    from app.models.poll import Poll
+    from app.models.poll_comment import PollComment
     from app.models.post import Post
     from app.models.post_like import PostLike
     from app.models.session import Session
+    from app.models.vote import Vote
 
 
 class Role(str, Enum):
@@ -73,9 +75,6 @@ class User(Base):
     sessions: Mapped[list["Session"]] = relationship(
         "Session", back_populates="user", cascade="all, delete-orphan"
     )
-    items: Mapped[list["Item"]] = relationship(
-        "Item", back_populates="user", cascade="all, delete-orphan"
-    )
     posts: Mapped[list["Post"]] = relationship(
         "Post", back_populates="user", cascade="all, delete-orphan"
     )
@@ -84,6 +83,17 @@ class User(Base):
     )
     post_likes: Mapped[list["PostLike"]] = relationship(
         "PostLike", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    # Poll relationships
+    polls: Mapped[list["Poll"]] = relationship(
+        "Poll", back_populates="user", cascade="all, delete-orphan"
+    )
+    poll_comments: Mapped[list["PollComment"]] = relationship(
+        "PollComment", back_populates="user", cascade="all, delete-orphan"
+    )
+    votes: Mapped[list["Vote"]] = relationship(
+        "Vote", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
