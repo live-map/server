@@ -274,6 +274,29 @@ class PollCommentResponse(BaseModel):
         populate_by_name = True
 
 
+# ========================================
+# Research Schemas
+# ========================================
+
+class ResearchStatusResponse(BaseModel):
+    """리서치 상태 응답."""
+    status: str = Field(description="pending | running | completed | failed")
+    poll_id: uuid.UUID = Field(alias="pollId")
+    error: str | None = None
+
+    class Config:
+        populate_by_name = True
+
+
+class ResearchTriggerResponse(BaseModel):
+    """리서치 트리거 응답."""
+    status: str
+    poll_id: uuid.UUID = Field(alias="pollId")
+
+    class Config:
+        populate_by_name = True
+
+
 # Update forward refs
 PollDetailResponse.model_rebuild()
 PollCommentResponse.model_rebuild()

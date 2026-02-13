@@ -129,6 +129,22 @@ async def lifespan(app: FastAPI):
     # Clean up old logs (keep last 7 days)
     cleanup_old_logs(keep_days=7)
 
+    # Initialize Research Service (optional - depends on API keys)
+    try:
+        from app.services.research.config import ai_settings
+
+        if ai_settings.research_enabled:
+            from app.services.research.service import ResearchService
+
+            app.state.research_service = ResearchService()
+            logger.info("Research Agent initialized (AI research enabled)")
+        else:
+            app.state.research_service = None
+            logger.info("Research Agent disabled (API keys not configured)")
+    except Exception as e:
+        app.state.research_service = None
+        logger.warning(f"Research Agent initialization failed: {e}")
+
     print("\n" + "=" * 60)
     print("  Grapoll API - 여론조사 플랫폼")
     print("=" * 60 + "\n")

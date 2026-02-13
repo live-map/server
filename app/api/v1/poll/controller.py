@@ -8,10 +8,10 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.interpreter import CurrentUser, CurrentUserOptional
+from app.api.v1.interpreter import CurrentAdmin, CurrentUser, CurrentUserOptional
 from app.api.v1.poll.dto.schemas import (
     CastVoteBinary,
     CastVoteMultiple,
@@ -28,6 +28,8 @@ from app.api.v1.poll.dto.schemas import (
     PollDetailResponse,
     PollListResponse,
     PollUpdate,
+    ResearchStatusResponse,
+    ResearchTriggerResponse,
     SourceResponse,
     UserBrief,
     UserVoteResponse,
@@ -494,6 +496,77 @@ async def list_comments(
         )
 
     return [node_to_response(n) for n in tree]
+
+
+# ========================================
+# Research Endpoints (Admin Only)
+# ========================================
+
+@router.post(
+    "/{poll_id}/research",
+    response_model=ResearchTriggerResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="팩트 리서치 트리거 (관리자)",
+)
+async def trigger_research(
+    poll_id: uuid.UUID,
+    current_admin: CurrentAdmin,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ResearchTriggerResponse:
+    """여론조사에 대한 팩트 리서치를 비동기로 시작합니다. 관리자 전용."""
+    research_service = request.app.state.research_service
+    if research_service is None or not research_service.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Research service is not configured. Check API keys.",
+        )
+
+    # Poll 존재 확인
+    service = PollService(session)
+    poll = await service.get_poll(poll_id)
+    if poll is None:
+        raise HTTPException(status_code=404, detail="Poll not found")
+
+    # 이미 실행 중인지 확인
+    status_info = research_service.get_status(str(poll_id))
+    if status_info["status"] == "running":
+        raise HTTPException(status_code=409, detail="Research is already running for this poll")
+
+    # 백그라운드에서 새 세션으로 리서치 실행
+    from app.core.database import AsyncSessionLocal
+
+    async def _run_research():
+        async with AsyncSessionLocal() as bg_session:
+            await research_service.run_research(poll_id, bg_session)
+
+    background_tasks.add_task(_run_research)
+
+    return ResearchTriggerResponse(status="started", pollId=poll_id)
+
+
+@router.get(
+    "/{poll_id}/research/status",
+    response_model=ResearchStatusResponse,
+    summary="리서치 상태 조회 (관리자)",
+)
+async def get_research_status(
+    poll_id: uuid.UUID,
+    current_admin: CurrentAdmin,
+    request: Request,
+) -> ResearchStatusResponse:
+    """여론조사 팩트 리서치의 진행 상태를 조회합니다. 관리자 전용."""
+    research_service = request.app.state.research_service
+    if research_service is None:
+        raise HTTPException(status_code=503, detail="Research service is not available")
+
+    status_info = research_service.get_status(str(poll_id))
+    return ResearchStatusResponse(
+        status=status_info["status"],
+        pollId=poll_id,
+        error=status_info.get("error"),
+    )
 
 
 # ========================================
