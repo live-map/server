@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.poll import Poll
+from app.models.poll_comment import PollComment
 from app.models.poll_option import PollOption
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class PollRepository:
             .options(
                 selectinload(Poll.options),
                 selectinload(Poll.sources),
-                selectinload(Poll.comments),
+                selectinload(Poll.comments).selectinload(PollComment.user),
                 selectinload(Poll.user),
             )
             .where(Poll.id == poll_id, Poll.is_deleted == False)
@@ -139,21 +140,23 @@ class PollRepository:
         return True
 
     async def get_hot_debate(self) -> Poll | None:
-        """핫 디베이트 조회 - BINARY 중 가장 접전인 poll."""
+        """핫 디베이트 조회 - 모든 타입 중 가장 접전인 poll.
+
+        접전도 = 1위와 2위 옵션의 득표율 차이가 가장 작은 것.
+        """
         stmt = (
             select(Poll)
             .options(
                 selectinload(Poll.options),
-                selectinload(Poll.comments),
+                selectinload(Poll.comments).selectinload(PollComment.user),
             )
             .where(
                 Poll.is_deleted == False,
                 Poll.status == "ACTIVE",
-                Poll.interaction_type == "BINARY",
                 Poll.total_votes > 0,
             )
             .order_by(desc(Poll.total_votes))
-            .limit(5)
+            .limit(10)
         )
         result = await self.session.execute(stmt)
         polls = result.scalars().all()
@@ -161,16 +164,18 @@ class PollRepository:
         if not polls:
             return None
 
-        # 가장 접전인 poll 찾기 (percentage 차이가 가장 작은 것)
+        # 가장 접전인 poll 찾기 (1위와 2위의 득표율 차이가 가장 작은 것)
         best_poll = polls[0]
         min_diff = float("inf")
 
         for poll in polls:
             if len(poll.options) < 2 or poll.total_votes == 0:
                 continue
-            pct_a = (poll.options[0].vote_count / poll.total_votes) * 100
-            pct_b = (poll.options[1].vote_count / poll.total_votes) * 100
-            diff = abs(pct_a - pct_b)
+            # 득표수 기준 상위 2개 옵션
+            sorted_opts = sorted(poll.options, key=lambda o: o.vote_count, reverse=True)
+            pct_1st = (sorted_opts[0].vote_count / poll.total_votes) * 100
+            pct_2nd = (sorted_opts[1].vote_count / poll.total_votes) * 100
+            diff = abs(pct_1st - pct_2nd)
             if diff < min_diff:
                 min_diff = diff
                 best_poll = poll
