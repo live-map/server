@@ -6,9 +6,9 @@ Pydantic schemas for Poll API endpoints.
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 
 # ========================================
@@ -25,6 +25,7 @@ class OptionResponse(BaseModel):
     """선택지 응답."""
     id: uuid.UUID
     text: str
+    order: int = 0
     vote_count: int = Field(alias="voteCount", default=0)
 
     class Config:
@@ -85,7 +86,7 @@ class PollUpdate(BaseModel):
     """여론조사 수정 요청."""
     title: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
-    status: str | None = None
+    status: Literal["ACTIVE", "CLOSED", "PENDING"] | None = None
 
     class Config:
         populate_by_name = True
@@ -132,6 +133,7 @@ class PollDetailResponse(PollCardResponse):
     comments: list["PollCommentResponse"] = []
     ai_content: str | None = Field(None, alias="aiContent")
     ai_updated_at: datetime | None = Field(None, alias="aiUpdatedAt")
+    average_slider_value: float | None = Field(None, alias="averageSliderValue")
 
     class Config:
         from_attributes = True
@@ -186,7 +188,24 @@ class CastVoteRanking(BaseModel):
         populate_by_name = True
 
 
-CastVoteRequest = CastVoteBinary | CastVoteSlider | CastVoteMultiple | CastVoteRanking
+def _vote_discriminator(v: dict) -> str:
+    """CastVoteRequest 판별자: interactionType 또는 interaction_type 필드로 분기."""
+    if isinstance(v, dict):
+        return v.get("interactionType") or v.get("interaction_type", "BINARY")
+    return getattr(v, "interaction_type", "BINARY")
+
+
+CastVoteRequest = Annotated[
+    Union[
+        Annotated[CastVoteBinary, Tag("BINARY")],
+        Annotated[CastVoteBinary, Tag("SINGLE_CHOICE")],
+        Annotated[CastVoteBinary, Tag("EMOJI_REACTION")],
+        Annotated[CastVoteSlider, Tag("SLIDER")],
+        Annotated[CastVoteMultiple, Tag("MULTIPLE_CHOICE")],
+        Annotated[CastVoteRanking, Tag("RANKING")],
+    ],
+    Discriminator(_vote_discriminator),
+]
 
 
 class VoteResponse(BaseModel):
@@ -245,6 +264,8 @@ class HotDebateResponse(BaseModel):
     con_percent: float | None = Field(None, alias="conPercent")
     # 다중 옵션 타입
     options: list[HotDebateOption] | None = None
+    # scale 전용
+    scale_average: float | None = Field(None, alias="scaleAverage")
     # 공통
     total_votes: int = Field(alias="totalVotes")
     comments: list[HotDebateComment] = []
@@ -276,6 +297,7 @@ class PollCommentResponse(BaseModel):
     user_image: str | None = Field(None, alias="userImage")
     content: str
     option_id: uuid.UUID | None = Field(None, alias="optionId")
+    parent_id: uuid.UUID | None = Field(None, alias="parentId")
     likes: int = 0
     depth: int = 0
     created_at: datetime = Field(alias="createdAt")
@@ -309,22 +331,6 @@ class ResearchTriggerResponse(BaseModel):
     class Config:
         populate_by_name = True
 
-
-class ResearchMetricsResponse(BaseModel):
-    """리서치 메트릭스 응답 — 투자 대시보드용."""
-    poll_id: uuid.UUID = Field(alias="pollId")
-    total_sources_found: int = Field(alias="totalSourcesFound")
-    korean_source_ratio: float = Field(alias="koreanSourceRatio")
-    execution_time_seconds: float = Field(alias="executionTimeSeconds")
-    retry_count: int = Field(alias="retryCount")
-    review_score: int = Field(alias="reviewScore")
-    has_table: bool = Field(alias="hasTable")
-    has_blockquote: bool = Field(alias="hasBlockquote")
-    article_length: int = Field(alias="articleLength")
-    confidence: dict = Field(default_factory=dict)
-
-    class Config:
-        populate_by_name = True
 
 
 # Update forward refs

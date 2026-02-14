@@ -71,6 +71,10 @@ class ResearchState(TypedDict):
     review_feedback: str
     final_article: str
     extracted_sources: list[SourceItem]
+    confidence: dict
+
+    # 리뷰
+    review_score: int
 
     # 제어
     retry_count: int

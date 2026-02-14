@@ -140,3 +140,17 @@ class PollCommentService:
         result = await self.comment_repo.soft_delete(comment_id)
         await self.session.commit()
         return result
+
+    async def like_comment(
+        self, comment_id: uuid.UUID, user_id: str
+    ) -> dict | None:
+        """댓글 좋아요 토글 (단순 증가 방식)."""
+        comment = await self.comment_repo.get_by_id(comment_id)
+        if comment is None:
+            return None
+
+        comment.likes += 1
+        await self.session.flush()
+        await self.session.commit()
+        logger.info(f"Poll comment {comment_id} liked by {user_id}")
+        return {"likes": comment.likes}

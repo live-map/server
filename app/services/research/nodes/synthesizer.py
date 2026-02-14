@@ -17,6 +17,7 @@ from app.services.research.prompts.synthesizer_prompt import (
     SYNTHESIZER_USER,
 )
 from app.services.research.state import ResearchState, SourceItem
+from app.services.research.utils import CONCLUSION_RE
 
 logger = logging.getLogger(__name__)
 
@@ -123,15 +124,9 @@ def _format_academic_sources(sources: list[SourceItem]) -> str:
     return "\n\n".join(parts)
 
 
-_CONCLUSION_RE = re.compile(
-    r"\n#{2,3}\s*(결론|요약|정리|마무리|맺음|종합)[^\n]*\n",
-    re.MULTILINE,
-)
-
-
 def _strip_conclusion(article: str) -> str:
     """결론/요약/정리/마무리 섹션을 프로그래밍적으로 제거합니다."""
-    match = _CONCLUSION_RE.search(article)
+    match = CONCLUSION_RE.search(article)
     if not match:
         return article
 

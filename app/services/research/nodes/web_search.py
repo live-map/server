@@ -146,12 +146,13 @@ async def web_search_node(state: ResearchState) -> dict:
     if filtered_count:
         logger.info(f"[WebSearch] Filtered out {filtered_count} irrelevant sources")
 
-    # Jina Reader로 짧은 snippet 보강 (상위 결과만)
+    # Jina Reader로 짧은 snippet 보강 (상위 결과만, 나머지 보존)
     if all_sources:
         short_count = sum(1 for s in all_sources if len(s.get("content_snippet", "")) < 200)
         if short_count > 0:
             logger.info(f"[WebSearch] Enriching {short_count} sources with short snippets via Jina")
-            all_sources = await _enrich_with_jina(all_sources[:20])
+            enriched = await _enrich_with_jina(all_sources[:20])
+            all_sources = enriched + all_sources[20:]
 
     # 신뢰 도메인 출처를 상위로 정렬
     all_sources.sort(

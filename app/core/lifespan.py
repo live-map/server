@@ -11,8 +11,6 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
-
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)

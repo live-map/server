@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Sequence
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -105,8 +105,9 @@ class PollRepository:
         search: str | None = None,
         status: str | None = None,
         poll_type: str | None = None,
+        sort: str = "popular",
     ) -> int:
-        """여론조사 총 개수."""
+        """여론조사 총 개수 (sort 필터 반영)."""
         stmt = select(func.count()).select_from(Poll).where(Poll.is_deleted == False)
 
         if status:
@@ -117,6 +118,13 @@ class PollRepository:
             stmt = stmt.where(
                 Poll.title.ilike(f"%{search}%") | Poll.description.ilike(f"%{search}%")
             )
+
+        # sort 필터와 동일한 조건 적용
+        now = datetime.now(timezone.utc)
+        if sort == "ending_soon":
+            stmt = stmt.where(Poll.status == "ACTIVE", Poll.ends_at > now)
+        elif sort == "closed":
+            stmt = stmt.where(Poll.status == "CLOSED")
 
         result = await self.session.execute(stmt)
         return result.scalar_one()
@@ -181,6 +189,15 @@ class PollRepository:
                 best_poll = poll
 
         return best_poll
+
+    async def atomic_increment_view_count(self, poll_id: uuid.UUID) -> None:
+        """조회수 원자적 증가 (SQL UPDATE)."""
+        stmt = (
+            update(Poll)
+            .where(Poll.id == poll_id, Poll.is_deleted == False)
+            .values(view_count=Poll.view_count + 1)
+        )
+        await self.session.execute(stmt)
 
     async def get_suggested(self, limit: int = 10) -> Sequence[Poll]:
         """유저 제안 여론조사 목록."""

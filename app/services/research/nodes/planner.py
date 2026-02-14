@@ -15,17 +15,9 @@ from app.services.research.prompts.planner_prompt import (
 )
 from app.services.research.schemas import PlannerOutput
 from app.services.research.state import ResearchState
+from app.services.research.utils import format_perspectives_inline
 
 logger = logging.getLogger(__name__)
-
-
-def _format_perspectives(perspectives: list[dict]) -> str:
-    """관점 목록을 프롬프트용 텍스트로 변환합니다."""
-    parts = []
-    for p in perspectives:
-        questions = ", ".join(p.get("key_questions", []))
-        parts.append(f"- **{p['label']}**: {p['description']} (핵심 질문: {questions})")
-    return "\n".join(parts)
 
 
 async def planner_node(state: ResearchState) -> dict:
@@ -41,7 +33,7 @@ async def planner_node(state: ResearchState) -> dict:
         description=state.get("poll_description", "") or "설명 없음",
         category=state.get("poll_category", "") or "일반",
         options=", ".join(state.get("poll_options", [])),
-        perspectives=_format_perspectives(perspectives) if perspectives else "(관점 발견 결과 없음)",
+        perspectives=format_perspectives_inline(perspectives) if perspectives else "(관점 발견 결과 없음)",
     )
 
     try:

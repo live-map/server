@@ -21,6 +21,7 @@ from app.services.research.prompts.reviewer_prompt import (
 )
 from app.services.research.schemas import ReviewerOutput
 from app.services.research.state import ResearchState
+from app.services.research.utils import CONCLUSION_KEYWORDS_RE
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,6 @@ _BLOCKED_DOMAINS = [
     "brunch.co.kr",
 ]
 
-# 결론 섹션 패턴
-_CONCLUSION_RE = re.compile(r"#{2,3}\s*(결론|요약|정리|마무리|맺음|종합)")
-
 
 def _programmatic_review(article: str) -> tuple[bool, list[str]]:
     """LLM 우회 불가한 프로그래밍 검증.
@@ -48,7 +46,7 @@ def _programmatic_review(article: str) -> tuple[bool, list[str]]:
     failures: list[str] = []
 
     # 1. 결론 섹션 체크
-    if _CONCLUSION_RE.search(article):
+    if CONCLUSION_KEYWORDS_RE.search(article):
         failures.append("결론/요약/정리 섹션이 존재합니다.")
 
     # 2. 차단 도메인 인용 체크

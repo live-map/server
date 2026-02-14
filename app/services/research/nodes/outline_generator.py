@@ -15,7 +15,8 @@ from app.services.research.prompts.outline_prompt import (
     OUTLINE_USER,
 )
 from app.services.research.schemas import OutlineOutput
-from app.services.research.state import ResearchState, SourceItem
+from app.services.research.state import ResearchState
+from app.services.research.utils import build_numbered_sources_brief
 
 logger = logging.getLogger(__name__)
 
@@ -29,34 +30,6 @@ def _format_perspectives(perspectives: list[dict]) -> str:
         questions = "\n".join(f"  - {q}" for q in p.get("key_questions", []))
         parts.append(f"### {p['label']}\n{p['description']}\n{questions}")
     return "\n\n".join(parts)
-
-
-def _build_numbered_sources(
-    web_sources: list[SourceItem],
-    academic_sources: list[SourceItem],
-) -> str:
-    """출처를 통합 번호로 매핑하여 텍스트로 반환합니다."""
-    seen_urls: set[str] = set()
-    parts: list[str] = []
-    idx = 1
-
-    for s in web_sources[:15]:
-        if s["url"] in seen_urls:
-            continue
-        seen_urls.add(s["url"])
-        snippet = s["content_snippet"][:200] if s.get("content_snippet") else ""
-        parts.append(f"[{idx}] {s['title']} ({s['credibility']}) — {snippet}")
-        idx += 1
-
-    for s in academic_sources[:10]:
-        if s["url"] in seen_urls:
-            continue
-        seen_urls.add(s["url"])
-        snippet = s["content_snippet"][:200] if s.get("content_snippet") else ""
-        parts.append(f"[{idx}] {s['title']} (학술) — {snippet}")
-        idx += 1
-
-    return "\n".join(parts) if parts else "(출처 없음)"
 
 
 def _remove_conclusion_sections(sections: list[dict]) -> list[dict]:
@@ -117,7 +90,7 @@ async def outline_generator_node(state: ResearchState) -> dict:
         options=", ".join(poll_options),
         perspectives=_format_perspectives(perspectives),
         gap_summary=gap_report.get("summary", "갭 분석 없음"),
-        numbered_sources=_build_numbered_sources(
+        numbered_sources=build_numbered_sources_brief(
             state.get("web_sources", []),
             state.get("academic_sources", []),
         ),

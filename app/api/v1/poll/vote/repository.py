@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.vote import Vote
@@ -51,3 +51,13 @@ class VoteRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def get_average_slider_value(self, poll_id: uuid.UUID) -> float | None:
+        """SLIDER 타입 poll의 평균 슬라이더 값을 SQL로 계산."""
+        stmt = select(func.avg(Vote.slider_value)).where(
+            Vote.poll_id == poll_id,
+            Vote.slider_value.is_not(None),
+        )
+        result = await self.session.execute(stmt)
+        avg = result.scalar_one_or_none()
+        return round(float(avg), 1) if avg is not None else None

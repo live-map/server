@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Grapoll API"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database (Backend - polls, posts, etc.)
     DATABASE_URL: str = "postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap"

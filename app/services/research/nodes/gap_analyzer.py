@@ -10,9 +10,11 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.services.research.config import ai_settings
+from app.services.research.nodes.web_search import _is_relevant_source
 from app.services.research.schemas import GapReport
 from app.services.research.state import ResearchState, SourceItem
 from app.services.research.tools.tavily_client import TavilyClient
+from app.services.research.utils import format_perspectives_inline
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +37,6 @@ _GAP_USER = """## 관점 목록
 {academic_sources}
 
 각 관점별 출처 커버리지를 분석하고, 부족한 관점에 대한 추가 검색 쿼리를 생성해주세요."""
-
-
-def _format_perspectives(perspectives: list[dict]) -> str:
-    parts = []
-    for p in perspectives:
-        questions = ", ".join(p.get("key_questions", []))
-        parts.append(f"- **{p['label']}**: {p['description']} (질문: {questions})")
-    return "\n".join(parts)
 
 
 def _format_sources_brief(sources: list[SourceItem]) -> str:
@@ -73,7 +67,7 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
     structured_llm = llm.with_structured_output(GapReport)
 
     user_msg = _GAP_USER.format(
-        perspectives=_format_perspectives(perspectives),
+        perspectives=format_perspectives_inline(perspectives),
         web_count=len(web_sources),
         web_sources=_format_sources_brief(web_sources),
         academic_count=len(academic_sources),
@@ -110,7 +104,13 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
             except Exception as e:
                 logger.error(f"[GapAnalyzer] Follow-up search failed: {e}")
 
+        # 소스 필터링 적용 (web_search와 동일 기준)
         if extra_sources:
+            before = len(extra_sources)
+            extra_sources = [s for s in extra_sources if _is_relevant_source(s)]
+            filtered = before - len(extra_sources)
+            if filtered:
+                logger.info(f"[GapAnalyzer] Filtered {filtered} irrelevant follow-up sources")
             logger.info(f"[GapAnalyzer] Found {len(extra_sources)} additional sources")
 
     result: dict = {"gap_report": gap_report}

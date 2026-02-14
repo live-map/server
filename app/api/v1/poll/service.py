@@ -114,9 +114,11 @@ class PollService:
             limit=limit, offset=offset, sort=sort, search=search,
         )
 
-    async def count_polls(self, search: str | None = None) -> int:
-        """여론조사 총 개수."""
-        return await self.poll_repo.count(search=search)
+    async def count_polls(
+        self, search: str | None = None, sort: str = "popular"
+    ) -> int:
+        """여론조사 총 개수 (sort 필터 반영)."""
+        return await self.poll_repo.count(search=search, sort=sort)
 
     async def update_poll(
         self,
@@ -165,9 +167,6 @@ class PollService:
         return await self.poll_repo.get_suggested(limit)
 
     async def increment_view_count(self, poll_id: uuid.UUID) -> None:
-        """조회수 증가."""
-        poll = await self.poll_repo.get_by_id(poll_id)
-        if poll:
-            poll.view_count += 1
-            await self.session.flush()
-            await self.session.commit()
+        """조회수 원자적 증가."""
+        await self.poll_repo.atomic_increment_view_count(poll_id)
+        await self.session.commit()

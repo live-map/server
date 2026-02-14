@@ -97,7 +97,7 @@ def _poll_to_card(poll) -> PollCardResponse:
         createdAt=poll.created_at,
         endsAt=poll.ends_at,
         options=[
-            OptionResponse(id=o.id, text=o.text, voteCount=o.vote_count)
+            OptionResponse(id=o.id, text=o.text, order=o.order, voteCount=o.vote_count)
             for o in (poll.options or [])
         ],
         user=UserBrief(
@@ -108,7 +108,7 @@ def _poll_to_card(poll) -> PollCardResponse:
     )
 
 
-def _poll_to_detail(poll) -> PollDetailResponse:
+def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDetailResponse:
     return PollDetailResponse(
         id=poll.id,
         title=poll.title,
@@ -127,8 +127,9 @@ def _poll_to_detail(poll) -> PollDetailResponse:
         updatedAt=poll.updated_at,
         aiContent=poll.ai_content,
         aiUpdatedAt=poll.ai_updated_at,
+        averageSliderValue=average_slider_value,
         options=[
-            OptionResponse(id=o.id, text=o.text, voteCount=o.vote_count)
+            OptionResponse(id=o.id, text=o.text, order=o.order, voteCount=o.vote_count)
             for o in (poll.options or [])
         ],
         sources=[
@@ -145,7 +146,8 @@ def _poll_to_detail(poll) -> PollDetailResponse:
                 userName=c.user.name if c.user else None,
                 userImage=c.user.image if c.user else None,
                 content=c.content if not c.is_deleted else "삭제된 댓글입니다.",
-                optionId=c.option_id, likes=c.likes, depth=c.depth,
+                optionId=c.option_id, parentId=c.parent_id,
+                likes=c.likes, depth=c.depth,
                 createdAt=c.created_at, isDeleted=c.is_deleted,
             )
             for c in (poll.comments or []) if c.parent_id is None
@@ -210,7 +212,7 @@ async def list_polls(
 ) -> PollListResponse:
     """여론조사 목록을 조회합니다."""
     polls = await service.list_polls(limit=limit, offset=offset, sort=sort, search=search)
-    total = await service.count_polls(search=search)
+    total = await service.count_polls(search=search, sort=sort)
 
     return PollListResponse(
         items=[_poll_to_card(p) for p in polls],
@@ -226,6 +228,7 @@ _INTERACTION_TO_POLL_TYPE: dict[str, str] = {
     "SINGLE_CHOICE": "multiple",
     "MULTIPLE_CHOICE": "checkbox",
     "SLIDER": "scale",
+    "EMOJI_REACTION": "multiple",
     "RANKING": "ranking",
 }
 
@@ -240,6 +243,7 @@ _OPTION_COLORS = ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#8B5CF6"]
 )
 async def get_hot_debate(
     service: PollServiceDep,
+    vote_service: VoteServiceDep,
 ) -> HotDebateResponse | None:
     """가장 접전인 여론조사를 조회합니다 (모든 타입 지원)."""
     poll = await service.get_hot_debate()
@@ -282,6 +286,11 @@ async def get_hot_debate(
             comments=comments,
         )
 
+    # scale 타입: 평균값 계산
+    scale_average = None
+    if poll_type == "scale":
+        scale_average = await vote_service.get_average_slider_value(poll.id)
+
     # 다중 옵션 타입: 모든 옵션의 비율 계산 (합 = 100%)
     sorted_opts = sorted(poll.options, key=lambda o: o.vote_count, reverse=True)
     options = [
@@ -299,6 +308,7 @@ async def get_hot_debate(
         title=poll.title,
         pollType=poll_type,
         options=options,
+        scaleAverage=scale_average,
         totalVotes=poll.total_votes,
         comments=comments,
     )
@@ -326,13 +336,17 @@ async def get_suggested_polls(
 async def get_poll(
     poll_id: uuid.UUID,
     service: PollServiceDep,
+    vote_service: VoteServiceDep,
     current_user: CurrentUserOptional = None,
 ) -> PollDetailResponse:
     """여론조사 상세 정보를 조회합니다."""
     poll = await service.get_poll_with_details(poll_id)
     if poll is None:
         raise HTTPException(status_code=404, detail="Poll not found")
-    return _poll_to_detail(poll)
+    avg_slider = None
+    if poll.interaction_type == "SLIDER":
+        avg_slider = await vote_service.get_average_slider_value(poll_id)
+    return _poll_to_detail(poll, average_slider_value=avg_slider)
 
 
 @router.patch(
@@ -536,6 +550,47 @@ async def list_comments(
         )
 
     return [node_to_response(n) for n in tree]
+
+
+@router.delete(
+    "/{poll_id}/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="댓글 삭제",
+)
+async def delete_comment(
+    poll_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    current_user: CurrentUser,
+    service: CommentServiceDep,
+) -> None:
+    """여론조사 댓글을 삭제합니다. 작성자만 가능."""
+    result = await service.delete_comment(
+        comment_id=comment_id, user_id=current_user.user_id
+    )
+    if not result:
+        raise HTTPException(
+            status_code=404, detail="Comment not found or not authorized"
+        )
+
+
+@router.post(
+    "/{poll_id}/comments/{comment_id}/like",
+    status_code=status.HTTP_200_OK,
+    summary="댓글 좋아요",
+)
+async def like_comment(
+    poll_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    current_user: CurrentUser,
+    service: CommentServiceDep,
+) -> dict:
+    """여론조사 댓글에 좋아요를 토글합니다."""
+    result = await service.like_comment(
+        comment_id=comment_id, user_id=current_user.user_id
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return result
 
 
 # ========================================
