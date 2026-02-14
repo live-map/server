@@ -1,8 +1,8 @@
 """
 Reviewer node — 크로스 모델로 아티클 품질을 검증합니다.
 
-v3: LLM 판정 후 프로그래밍 검증 (결론/차단도메인/포맷팅) 추가.
-    우회 불가한 하드 체크로 품질 보장.
+v4: 프로그래밍 검증을 primary gate로 전환.
+    LLM 스코어는 메타데이터로만 사용 (< 60일 때만 retry 트리거).
 """
 
 import logging
@@ -56,12 +56,16 @@ def _programmatic_review(article: str) -> tuple[bool, list[str]]:
         if domain in article:
             failures.append(f"차단 도메인 '{domain}'이 아티클에 포함되어 있습니다.")
 
-    # 3. 시각 요소 체크 (볼드, 테이블, blockquote 중 하나는 있어야)
+    # 3. 시각 요소 체크 (볼드 + 테이블 또는 blockquote = 2개+ 필수)
     has_bold = "**" in article
     has_table = "|" in article and "---" in article
     has_blockquote = "\n> " in article or article.startswith("> ")
-    if not has_bold and not has_table and not has_blockquote:
-        failures.append("시각 요소(볼드/테이블/blockquote)가 하나도 없습니다.")
+    visual_count = sum([has_bold, has_table, has_blockquote])
+    if visual_count < 2:
+        failures.append(
+            f"시각 요소 2개+ 필수 (현재: bold={has_bold}, table={has_table}, "
+            f"blockquote={has_blockquote}). 테이블 또는 blockquote를 추가하세요."
+        )
 
     # 4. [^출처명|URL] 레거시 형식 체크
     if re.search(r"\[\^[^\]]+\|[^\]]+\]", article):
@@ -105,26 +109,29 @@ async def reviewer_node(state: ResearchState) -> dict:
             HumanMessage(content=user_msg),
         ])
 
-        passed = result.passed and result.score >= 75
         score = result.score
         feedback = result.feedback
 
     except Exception as e:
         logger.warning(f"[Reviewer] Structured output failed: {e}. Defaulting to pass.")
-        passed = True
         score = 80
         feedback = ""
 
-    logger.info(f"[Reviewer] Score: {score}, Pass: {passed}")
+    # v4: 프로그래밍 검증 통과 = primary gate 통과.
+    # LLM 스코어 < 60일 때만 retry 트리거 (극히 낮은 품질만 걸러냄)
+    passed = score >= 60
+    logger.info(f"[Reviewer] LLM Score: {score}, Pass: {passed}")
 
     if passed:
         return {
             "final_article": article,
             "review_feedback": "",
+            "review_score": score,
         }
     else:
-        logger.info(f"[Reviewer] Feedback: {feedback[:200]}")
+        logger.info(f"[Reviewer] Score < 60, triggering retry. Feedback: {feedback[:200]}")
         return {
             "review_feedback": feedback,
             "retry_count": state.get("retry_count", 0) + 1,
+            "review_score": score,
         }

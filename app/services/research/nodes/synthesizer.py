@@ -171,6 +171,86 @@ def _ensure_bold_numbers(article: str) -> str:
     return bolded
 
 
+# 수치 비교 패턴: "A는 X%, B는 Y%" 또는 "A X명, B Y명" 같은 패턴
+_COMPARISON_RE = re.compile(
+    r"(\*\*[\d,.]+\s*(?:%|퍼센트|조|억|만|명|위|개|건|곳|TWh|GW|MW)\*\*)"
+    r"[^*\n]{0,80}"
+    r"(\*\*[\d,.]+\s*(?:%|퍼센트|조|억|만|명|위|개|건|곳|TWh|GW|MW)\*\*)"
+)
+
+
+def _ensure_visual_elements(article: str) -> str:
+    """테이블/blockquote가 없으면 시각 요소를 보강합니다.
+
+    - blockquote 0개 → "> " 인용 스타일로 첫 번째 기관/전문가 발언 변환
+    - table 0개 → 수치 비교 2개+ 있는 문단을 간이 테이블로 변환 시도하지 않고
+      로그 경고만 (LLM이 생성하도록 프롬프트에서 강제하는 것이 우선)
+    """
+    has_table = "|" in article and "---" in article
+    has_blockquote = "\n> " in article or article.startswith("> ")
+
+    if has_table and has_blockquote:
+        return article
+
+    if not has_blockquote:
+        # 기관/전문가 발언 패턴을 blockquote로 변환
+        # "~에 따르면 "~"이라고/라며/밝혔다" 또는 "~은(는) "~"라고" 패턴
+        quote_pattern = re.compile(
+            r"((?:[가-힣A-Za-z]+(?:은|는|에 따르면|관계자는|위원장은|장관은|총재는))\s*"
+            r'"[^"]{10,}"'
+            r"(?:이?라고|라며|밝혔다|전했다|분석했다|강조했다|설명했다|지적했다)[^\n]*)"
+        )
+        match = quote_pattern.search(article)
+        if match:
+            original = match.group(0)
+            quoted = f"\n> {original}\n"
+            article = article.replace(original, quoted, 1)
+            logger.info("[Synthesizer] Auto-converted expert quote to blockquote")
+
+    if not has_table:
+        logger.warning(
+            "[Synthesizer] No table found in article. "
+            "Prompt should enforce table usage for data comparisons."
+        )
+
+    return article
+
+
+def _compute_confidence(
+    web_sources: list[SourceItem],
+    academic_sources: list[SourceItem],
+) -> dict:
+    """출처 기반 신뢰도 메타데이터를 계산합니다."""
+    all_sources = web_sources + academic_sources
+    total = len(all_sources) or 1
+
+    # 한국어 출처 비율
+    korean_re = re.compile(r"[가-힣]")
+    korean_count = sum(1 for s in all_sources if korean_re.search(s.get("title", "")))
+
+    # 평균 신뢰도 (HIGH=3, MEDIUM=2, LOW=1)
+    cred_map = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    cred_scores = [cred_map.get(s.get("credibility", "LOW"), 1) for s in all_sources]
+    avg_credibility = round(sum(cred_scores) / total, 2) if cred_scores else 0
+
+    # 신뢰도 레벨
+    source_count = len(all_sources)
+    if source_count >= 10 and avg_credibility >= 2.5:
+        level = "HIGH"
+    elif source_count >= 5 and avg_credibility >= 1.5:
+        level = "MEDIUM"
+    else:
+        level = "LOW"
+
+    return {
+        "source_count": source_count,
+        "korean_ratio": round(korean_count / total, 2),
+        "credibility_avg": avg_credibility,
+        "has_academic": len(academic_sources) > 0,
+        "level": level,
+    }
+
+
 async def synthesizer_node(state: ResearchState) -> dict:
     """수집된 자료와 아웃라인을 바탕으로 아티클을 생성합니다."""
     is_revision = bool(state.get("review_feedback"))
@@ -211,15 +291,20 @@ async def synthesizer_node(state: ResearchState) -> dict:
 
     article = _strip_conclusion(response.content)
     article = _ensure_bold_numbers(article)
+    article = _ensure_visual_elements(article)
 
     # 최종 출처 목록 추출 (중복 제거)
     extracted = _extract_sources_from_state(state)
+
+    # 신뢰도 점수 계산
+    confidence = _compute_confidence(web_sources, academic_sources)
 
     logger.info(f"[Synthesizer] Generated article ({len(article)} chars), {len(extracted)} sources")
 
     return {
         "draft_article": article,
         "extracted_sources": extracted,
+        "confidence": confidence,
     }
 
 
