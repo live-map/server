@@ -225,14 +225,27 @@ class HotDebateComment(BaseModel):
     likes: int
 
 
+class HotDebateOption(BaseModel):
+    """핫 디베이트 옵션 (multiple/checkbox/ranking 타입용)."""
+    id: str
+    label: str
+    percent: float
+    color: str
+
+
 class HotDebateResponse(BaseModel):
-    """핫 디베이트 응답."""
+    """핫 디베이트 응답 — 다중 pollType 지원."""
     id: uuid.UUID
     title: str
-    pro_label: str = Field(alias="proLabel")
-    con_label: str = Field(alias="conLabel")
-    pro_percent: float = Field(alias="proPercent")
-    con_percent: float = Field(alias="conPercent")
+    poll_type: str = Field(alias="pollType")
+    # binary/yesno 전용 (하위호환)
+    pro_label: str | None = Field(None, alias="proLabel")
+    con_label: str | None = Field(None, alias="conLabel")
+    pro_percent: float | None = Field(None, alias="proPercent")
+    con_percent: float | None = Field(None, alias="conPercent")
+    # 다중 옵션 타입
+    options: list[HotDebateOption] | None = None
+    # 공통
     total_votes: int = Field(alias="totalVotes")
     comments: list[HotDebateComment] = []
 
@@ -292,6 +305,23 @@ class ResearchTriggerResponse(BaseModel):
     """리서치 트리거 응답."""
     status: str
     poll_id: uuid.UUID = Field(alias="pollId")
+
+    class Config:
+        populate_by_name = True
+
+
+class ResearchMetricsResponse(BaseModel):
+    """리서치 메트릭스 응답 — 투자 대시보드용."""
+    poll_id: uuid.UUID = Field(alias="pollId")
+    total_sources_found: int = Field(alias="totalSourcesFound")
+    korean_source_ratio: float = Field(alias="koreanSourceRatio")
+    execution_time_seconds: float = Field(alias="executionTimeSeconds")
+    retry_count: int = Field(alias="retryCount")
+    review_score: int = Field(alias="reviewScore")
+    has_table: bool = Field(alias="hasTable")
+    has_blockquote: bool = Field(alias="hasBlockquote")
+    article_length: int = Field(alias="articleLength")
+    confidence: dict = Field(default_factory=dict)
 
     class Config:
         populate_by_name = True

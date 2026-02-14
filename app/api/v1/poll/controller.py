@@ -19,6 +19,7 @@ from app.api.v1.poll.dto.schemas import (
     CastVoteRequest,
     CastVoteSlider,
     HotDebateComment,
+    HotDebateOption,
     HotDebateResponse,
     OptionResponse,
     PollCardResponse,
@@ -219,6 +220,19 @@ async def list_polls(
     )
 
 
+# interaction_type → pollType 매핑
+_INTERACTION_TO_POLL_TYPE: dict[str, str] = {
+    "BINARY": "binary",
+    "SINGLE_CHOICE": "multiple",
+    "MULTIPLE_CHOICE": "checkbox",
+    "SLIDER": "scale",
+    "RANKING": "ranking",
+}
+
+# 옵션 색상 팔레트 (프론트엔드 hot-debate.tsx와 매칭)
+_OPTION_COLORS = ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#8B5CF6"]
+
+
 @router.get(
     "/hot-debate",
     response_model=HotDebateResponse | None,
@@ -227,7 +241,7 @@ async def list_polls(
 async def get_hot_debate(
     service: PollServiceDep,
 ) -> HotDebateResponse | None:
-    """BINARY 중 가장 접전인 여론조사를 조회합니다."""
+    """가장 접전인 여론조사를 조회합니다 (모든 타입 지원)."""
     poll = await service.get_hot_debate()
     if poll is None:
         return None
@@ -235,15 +249,14 @@ async def get_hot_debate(
     if len(poll.options) < 2:
         return None
 
-    opt_a = poll.options[0]
-    opt_b = poll.options[1]
     total = poll.total_votes or 1
-    pro_pct = round((opt_a.vote_count / total) * 1000) / 10
-    con_pct = round((opt_b.vote_count / total) * 1000) / 10
+    poll_type = _INTERACTION_TO_POLL_TYPE.get(poll.interaction_type, "multiple")
 
-    comments = []
+    # 댓글 구성
+    comments: list[HotDebateComment] = []
+    first_opt_id = poll.options[0].id if poll.options else None
     for c in (poll.comments or [])[:10]:
-        side = "pro" if c.option_id == opt_a.id else "con"
+        side = "pro" if c.option_id == first_opt_id else "con"
         comments.append(HotDebateComment(
             id=c.id,
             author=c.user.name if c.user else "익명",
@@ -252,13 +265,40 @@ async def get_hot_debate(
             likes=c.likes,
         ))
 
+    # binary 타입: 상위 2개 옵션으로 pro/con 구성
+    if poll_type == "binary" and len(poll.options) == 2:
+        opt_a, opt_b = poll.options[0], poll.options[1]
+        pro_pct = round((opt_a.vote_count / total) * 1000) / 10
+        con_pct = round((opt_b.vote_count / total) * 1000) / 10
+        return HotDebateResponse(
+            id=poll.id,
+            title=poll.title,
+            pollType=poll_type,
+            proLabel=opt_a.text,
+            conLabel=opt_b.text,
+            proPercent=pro_pct,
+            conPercent=con_pct,
+            totalVotes=poll.total_votes,
+            comments=comments,
+        )
+
+    # 다중 옵션 타입: 모든 옵션의 비율 계산 (합 = 100%)
+    sorted_opts = sorted(poll.options, key=lambda o: o.vote_count, reverse=True)
+    options = [
+        HotDebateOption(
+            id=str(opt.id),
+            label=opt.text,
+            percent=round((opt.vote_count / total) * 1000) / 10,
+            color=_OPTION_COLORS[i % len(_OPTION_COLORS)],
+        )
+        for i, opt in enumerate(sorted_opts)
+    ]
+
     return HotDebateResponse(
         id=poll.id,
         title=poll.title,
-        proLabel=opt_a.text,
-        conLabel=opt_b.text,
-        proPercent=pro_pct,
-        conPercent=con_pct,
+        pollType=poll_type,
+        options=options,
         totalVotes=poll.total_votes,
         comments=comments,
     )
