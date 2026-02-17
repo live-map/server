@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.poll.comment.repository import PollCommentRepository
@@ -195,11 +195,11 @@ class PollCommentService:
             delta = 1
             action = "liked"
 
-        # 카운터 원자적 업데이트
+        # 카운터 원자적 업데이트 (음수 방지)
         stmt = (
             update(PollComment)
             .where(PollComment.id == comment_id)
-            .values(likes=PollComment.likes + delta)
+            .values(likes=func.greatest(0, PollComment.likes + delta))
             .returning(PollComment.likes)
         )
         result = await self.session.execute(stmt)

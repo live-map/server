@@ -6,7 +6,7 @@ Poll Controller - API route handlers for poll endpoints.
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -225,7 +225,7 @@ async def list_polls(
     current_user: CurrentUserOptional = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    sort: Annotated[str, Query(description="popular, recent, ending_soon, closed")] = "popular",
+    sort: Annotated[Literal["popular", "recent", "ending_soon", "closed"], Query(description="popular, recent, ending_soon, closed")] = "popular",
     search: Annotated[str | None, Query()] = None,
 ) -> PollListResponse:
     """여론조사 목록을 조회합니다."""
