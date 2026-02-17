@@ -39,7 +39,7 @@ class PollRepository:
 
     async def get_by_id(self, poll_id: uuid.UUID) -> Poll | None:
         """ID로 여론조사 조회."""
-        stmt = select(Poll).where(Poll.id == poll_id, Poll.is_deleted == False)
+        stmt = select(Poll).where(Poll.id == poll_id, Poll.is_deleted.is_(False))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -53,7 +53,7 @@ class PollRepository:
                 selectinload(Poll.comments).selectinload(PollComment.user),
                 selectinload(Poll.user),
             )
-            .where(Poll.id == poll_id, Poll.is_deleted == False)
+            .where(Poll.id == poll_id, Poll.is_deleted.is_(False))
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -74,7 +74,7 @@ class PollRepository:
                 selectinload(Poll.options),
                 selectinload(Poll.user),
             )
-            .where(Poll.is_deleted == False)
+            .where(Poll.is_deleted.is_(False))
         )
 
         # 필터
@@ -115,7 +115,7 @@ class PollRepository:
         sort: str = "popular",
     ) -> int:
         """여론조사 총 개수 (sort 필터 반영)."""
-        stmt = select(func.count()).select_from(Poll).where(Poll.is_deleted == False)
+        stmt = select(func.count()).select_from(Poll).where(Poll.is_deleted.is_(False))
 
         if status:
             stmt = stmt.where(Poll.status == status)
@@ -168,7 +168,7 @@ class PollRepository:
                 selectinload(Poll.comments).selectinload(PollComment.user),
             )
             .where(
-                Poll.is_deleted == False,
+                Poll.is_deleted.is_(False),
                 Poll.status == "ACTIVE",
                 Poll.total_votes > 0,
             )
@@ -203,7 +203,7 @@ class PollRepository:
         """조회수 원자적 증가 (SQL UPDATE)."""
         stmt = (
             update(Poll)
-            .where(Poll.id == poll_id, Poll.is_deleted == False)
+            .where(Poll.id == poll_id, Poll.is_deleted.is_(False))
             .values(view_count=Poll.view_count + 1)
         )
         await self.session.execute(stmt)
@@ -217,7 +217,7 @@ class PollRepository:
                 selectinload(Poll.user),
             )
             .where(
-                Poll.is_deleted == False,
+                Poll.is_deleted.is_(False),
                 Poll.status == "ACTIVE",
                 Poll.type == "SUGGESTED",
             )

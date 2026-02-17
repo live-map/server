@@ -35,7 +35,7 @@ class PollCommentRepository:
         """ID로 댓글 조회."""
         stmt = select(PollComment).where(
             PollComment.id == comment_id,
-            PollComment.is_deleted == False,
+            PollComment.is_deleted.is_(False),
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -56,7 +56,7 @@ class PollCommentRepository:
         )
 
         if not include_deleted:
-            stmt = stmt.where(PollComment.is_deleted == False)
+            stmt = stmt.where(PollComment.is_deleted.is_(False))
 
         stmt = stmt.order_by(PollComment.created_at)
 
@@ -82,7 +82,7 @@ class PollCommentRepository:
             .select_from(PollComment)
             .where(
                 PollComment.poll_id == poll_id,
-                PollComment.is_deleted == False,
+                PollComment.is_deleted.is_(False),
             )
         )
         result = await self.session.execute(stmt)

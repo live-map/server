@@ -5,7 +5,7 @@ This model stores OAuth provider account information linked to users.
 Used by NextAuth.js to manage OAuth connections (Google, Discord, Kakao, etc.)
 """
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -55,7 +55,7 @@ class Account(Base):
 
     # Unique constraint on provider + providerAccountId
     __table_args__ = (
-        {"extend_existing": True},
+        UniqueConstraint("provider", "provider_account_id", name="uq_accounts_provider_account"),
     )
 
     def __repr__(self) -> str:

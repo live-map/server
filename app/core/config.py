@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     # Database (Backend - polls, posts, etc.)
     DATABASE_URL: str = "postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap"
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
 
     # Database (Frontend/Auth - shared with NextAuth for user data)
     AUTH_DATABASE_URL: str | None = None
