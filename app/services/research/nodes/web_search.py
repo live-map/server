@@ -108,7 +108,7 @@ async def _enrich_with_jina(sources: list[SourceItem]) -> list[SourceItem]:
                         content_snippet=content[:1500],
                         credibility=source["credibility"],
                     )
-                    logger.debug(f"[WebSearch] Enriched via Jina: {source['title'][:40]}")
+                    logger.debug("[WebSearch] Enriched via Jina: %s", source["title"][:40])
                     return enriched
             return source
 
@@ -122,7 +122,7 @@ async def web_search_node(state: ResearchState) -> dict:
         logger.warning("[WebSearch] No search queries provided")
         return {"web_sources": []}
 
-    logger.info(f"[WebSearch] Searching {len(queries)} queries")
+    logger.info("[WebSearch] Searching %d queries", len(queries))
 
     client = TavilyClient()
     tasks = [client.search(q, max_results=5) for q in queries]
@@ -134,7 +134,7 @@ async def web_search_node(state: ResearchState) -> dict:
 
     for result in results:
         if isinstance(result, Exception):
-            logger.error(f"[WebSearch] Query failed: {result}")
+            logger.error("[WebSearch] Query failed: %s", result)
             continue
         for source in result:
             if source["url"] in seen_urls:
@@ -146,13 +146,13 @@ async def web_search_node(state: ResearchState) -> dict:
                 filtered_count += 1
 
     if filtered_count:
-        logger.info(f"[WebSearch] Filtered out {filtered_count} irrelevant sources")
+        logger.info("[WebSearch] Filtered out %d irrelevant sources", filtered_count)
 
     # Jina Reader로 짧은 snippet 보강 (상위 결과만, 나머지 보존)
     if all_sources:
         short_count = sum(1 for s in all_sources if len(s.get("content_snippet", "")) < 200)
         if short_count > 0:
-            logger.info(f"[WebSearch] Enriching {short_count} sources with short snippets via Jina")
+            logger.info("[WebSearch] Enriching %d sources with short snippets via Jina", short_count)
             enriched = await _enrich_with_jina(all_sources[:20])
             all_sources = enriched + all_sources[20:]
 
@@ -161,5 +161,5 @@ async def web_search_node(state: ResearchState) -> dict:
         key=lambda s: (0 if s["credibility"] == "HIGH" else 1, s["title"])
     )
 
-    logger.info(f"[WebSearch] Collected {len(all_sources)} unique relevant sources")
+    logger.info("[WebSearch] Collected %d unique relevant sources", len(all_sources))
     return {"web_sources": all_sources}

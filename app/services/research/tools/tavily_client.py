@@ -78,6 +78,39 @@ def _has_korean_chars(text: str) -> bool:
     return bool(_KOREAN_RE.search(text))
 
 
+# 도메인→source_type 매핑 (URL 기반 동적 분류)
+_NEWS_DOMAINS = {
+    "yonhapnews.co.kr", "yna.co.kr", "hani.co.kr", "khan.co.kr",
+    "chosun.com", "donga.com", "joongang.co.kr", "mk.co.kr",
+    "mt.co.kr", "hankyung.com", "sedaily.com", "kbs.co.kr",
+    "sbs.co.kr", "mbc.co.kr", "bbc.com", "reuters.com",
+    "apnews.com", "nytimes.com", "washingtonpost.com",
+}
+_GOV_DOMAINS = {
+    "go.kr", "gov.kr", "bok.or.kr", "kostat.go.kr",
+    "nars.go.kr", "kdi.re.kr",
+}
+_ACADEMIC_DOMAINS = {
+    "scholar.google.com", "arxiv.org", "pubmed.ncbi.nlm.nih.gov",
+    "semanticscholar.org", "jstor.org", "nature.com", "science.org",
+}
+
+
+def _classify_source_type(url: str) -> str:
+    """URL 도메인을 기반으로 source_type을 분류합니다."""
+    url_lower = url.lower()
+    for domain in _NEWS_DOMAINS:
+        if domain in url_lower:
+            return "NEWS"
+    for domain in _GOV_DOMAINS:
+        if domain in url_lower:
+            return "ARTICLE"
+    for domain in _ACADEMIC_DOMAINS:
+        if domain in url_lower:
+            return "PAPER"
+    return "OTHER"
+
+
 class TavilyClient:
     """Tavily 웹 검색 래퍼."""
 
@@ -104,8 +137,11 @@ class TavilyClient:
             }
 
             # 한국어 쿼리: 한국 신뢰 도메인 스티어링
+            # include_domains와 exclude_domains를 동시 사용하면 충돌 —
+            # include가 설정되면 exclude 제거 (include가 우선)
             if is_korean:
                 search_kwargs["include_domains"] = _KOREAN_TRUSTED_DOMAINS
+                del search_kwargs["exclude_domains"]
 
             response = await self.client.search(**search_kwargs)
 
@@ -115,7 +151,7 @@ class TavilyClient:
 
                 # 한국어 쿼리인데 제목에 한글이 없으면 제외
                 if is_korean and not _has_korean_chars(title):
-                    logger.debug(f"Filtered non-Korean result: {title[:60]}")
+                    logger.debug("Filtered non-Korean result: %s", title[:60])
                     continue
 
                 score = result.get("score", 0)
@@ -134,20 +170,23 @@ class TavilyClient:
                 else:
                     snippet = content[:800]
 
+                url = result.get("url", "")
+                source_type = _classify_source_type(url)
+
                 sources.append(
                     SourceItem(
                         title=title,
-                        url=result.get("url", ""),
-                        source_type="NEWS",
+                        url=url,
+                        source_type=source_type,
                         description=title,
                         content_snippet=snippet,
                         credibility=credibility,
                     )
                 )
 
-            logger.info(f"Tavily search '{query[:50]}': {len(sources)} results (korean={is_korean})")
+            logger.info("Tavily search '%s': %d results (korean=%s)", query[:50], len(sources), is_korean)
             return sources
 
         except Exception as e:
-            logger.error(f"Tavily search failed for '{query[:50]}': {e}")
+            logger.error("Tavily search failed for '%s': %s", query[:50], e)
             return []

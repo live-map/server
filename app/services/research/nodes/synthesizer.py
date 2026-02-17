@@ -17,7 +17,7 @@ from app.services.research.prompts.synthesizer_prompt import (
     SYNTHESIZER_USER,
 )
 from app.services.research.state import ResearchState, SourceItem
-from app.services.research.utils import CONCLUSION_RE
+from app.services.research.utils import CONCLUSION_RE, sanitize_user_input
 
 logger = logging.getLogger(__name__)
 
@@ -250,9 +250,10 @@ async def synthesizer_node(state: ResearchState) -> dict:
     """수집된 자료와 아웃라인을 바탕으로 아티클을 생성합니다."""
     is_revision = bool(state.get("review_feedback"))
     mode = "Revising" if is_revision else "Synthesizing"
-    logger.info(f"[Synthesizer] {mode} article for: {state['poll_title'][:50]}")
+    logger.info("[Synthesizer] %s article for: %s", mode, state["poll_title"][:50])
 
-    llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=4096, temperature=0.4)
+    temperature = 0.2 if is_revision else 0.4
+    llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=4096, temperature=temperature)
 
     web_sources = state.get("web_sources", [])
     academic_sources = state.get("academic_sources", [])
@@ -271,9 +272,9 @@ async def synthesizer_node(state: ResearchState) -> dict:
     else:
         outline = state.get("outline", [])
         user_msg = SYNTHESIZER_USER.format(
-            title=state["poll_title"],
-            description=state.get("poll_description", "") or "설명 없음",
-            options=", ".join(state.get("poll_options", [])),
+            title=sanitize_user_input(state["poll_title"], max_length=200, tag="title"),
+            description=sanitize_user_input(state.get("poll_description", "") or "설명 없음", max_length=500, tag="description"),
+            options=sanitize_user_input(", ".join(state.get("poll_options", [])), max_length=500, tag="options"),
             outline=_format_outline(outline),
             numbered_sources=numbered_text,
             fact_check_results=_format_fact_checks(state.get("fact_check_results", [])),
@@ -285,7 +286,7 @@ async def synthesizer_node(state: ResearchState) -> dict:
             HumanMessage(content=user_msg),
         ])
     except Exception as e:
-        logger.error(f"[Synthesizer] LLM call failed: {e}")
+        logger.error("[Synthesizer] LLM call failed: %s", e)
         return {
             "draft_article": state.get("draft_article", ""),
             "error": f"Synthesizer LLM failed: {e}",
@@ -301,7 +302,7 @@ async def synthesizer_node(state: ResearchState) -> dict:
     # 신뢰도 점수 계산
     confidence = _compute_confidence(web_sources, academic_sources)
 
-    logger.info(f"[Synthesizer] Generated article ({len(article)} chars), {len(extracted)} sources")
+    logger.info("[Synthesizer] Generated article (%d chars), %d sources", len(article), len(extracted))
 
     return {
         "draft_article": article,

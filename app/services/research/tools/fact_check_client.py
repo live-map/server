@@ -58,9 +58,9 @@ class FactCheckClient:
                     "title": review.get("title", ""),
                 })
 
-            logger.info(f"Fact Check search '{query[:50]}': {len(results)} results")
+            logger.info("Fact Check search '%s': %d results", query[:50], len(results))
             return results
 
         except Exception as e:
-            logger.error(f"Fact Check search failed for '{query[:50]}': {e}")
+            logger.error("Fact Check search failed for '%s': %s", query[:50], e)
             return []

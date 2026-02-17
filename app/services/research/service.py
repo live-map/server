@@ -116,7 +116,7 @@ class ResearchService:
                 "error": "",
             }
 
-            logger.info(f"[Research] Starting research for poll: {poll.title[:50]}")
+            logger.info("[Research] Starting research for poll: %s", poll.title[:50])
 
             # 그래프 실행 (5분 타임아웃)
             try:
@@ -129,7 +129,7 @@ class ResearchService:
                     "error": "Research timed out after 300 seconds",
                     "_ts": time.monotonic(),
                 }
-                logger.error(f"[Research] Timed out for poll {poll_id_str}")
+                logger.error("[Research] Timed out for poll %s", poll_id_str)
                 return
 
             # 결과 저장
@@ -144,9 +144,15 @@ class ResearchService:
                 }
                 return
 
-            # ai_content 업데이트
+            # ai_content + ai_metrics 업데이트
             poll.ai_content = article
             poll.ai_updated_at = datetime.now(timezone.utc)
+            poll.ai_metrics = {
+                "confidence": final_state.get("confidence", {}),
+                "review_score": final_state.get("review_score", 0),
+                "retry_count": final_state.get("retry_count", 0),
+                "source_count": len(sources),
+            }
 
             # 기존 AI 생성 소스 삭제 후 새로 추가
             existing_sources = await session.execute(
@@ -175,12 +181,12 @@ class ResearchService:
 
             _research_status[poll_id_str] = {"status": "completed", "error": None, "_ts": time.monotonic()}
             logger.info(
-                f"[Research] Completed for poll {poll_id_str}: "
-                f"{len(article)} chars, {len(sources)} sources"
+                "[Research] Completed for poll %s: %d chars, %d sources",
+                poll_id_str, len(article), len(sources),
             )
 
         except Exception as e:
-            logger.error(f"[Research] Failed for poll {poll_id_str}: {e}", exc_info=True)
+            logger.error("[Research] Failed for poll %s: %s", poll_id_str, e, exc_info=True)
             _research_status[poll_id_str] = {
                 "status": "failed",
                 "error": str(e),

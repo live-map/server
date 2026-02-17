@@ -19,6 +19,20 @@ CONCLUSION_RE = re.compile(
 CONCLUSION_KEYWORDS_RE = re.compile(r"#{2,3}\s*(결론|요약|정리|마무리|맺음|종합)")
 
 
+def sanitize_user_input(
+    text: str,
+    max_length: int = 1000,
+    tag: str = "user_input",
+) -> str:
+    """사용자 입력을 LLM 프롬프트용으로 안전하게 래핑합니다.
+
+    - 길이 제한 적용
+    - XML 태그로 래핑하여 프롬프트 인젝션 방지
+    """
+    truncated = text[:max_length] if text else ""
+    return f"<{tag}>{truncated}</{tag}>"
+
+
 def format_perspectives_inline(perspectives: list[dict]) -> str:
     """관점 목록을 인라인 bullet 형식으로 포맷합니다 (planner, gap_analyzer용)."""
     parts = []
