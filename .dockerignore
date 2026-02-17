@@ -45,6 +45,18 @@ docker-compose*.yml
 *.md
 docs/
 
+# Production configs (not needed inside container)
+Caddyfile
+scripts/
+backups/
+
+# Screenshots and test images
+*.png
+*.jpg
+
 # Misc
 .DS_Store
 Thumbs.db
+
+# CI/CD
+.github/

@@ -34,8 +34,12 @@ RUN uv run python -m spacy download en_core_web_lg
 # Copy application code
 COPY . .
 
-# Create directories for sessions and cache
-RUN mkdir -p /app/sessions /root/.cache
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
+    && mkdir -p /app/sessions /app/logs /home/appuser/.cache \
+    && chown -R appuser:appuser /app /home/appuser
+
+USER appuser
 
 # Expose port
 EXPOSE 8000

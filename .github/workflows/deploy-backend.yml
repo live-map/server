@@ -1,0 +1,41 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "app/**"
+      - "alembic/**"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - "Caddyfile"
+      - "pyproject.toml"
+      - "uv.lock"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to OCI VM
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/grapoll/backend
+            git pull origin dev
+
+            # Build and restart API
+            docker compose -f docker-compose.prod.yml build api
+            docker compose -f docker-compose.prod.yml up -d
+
+            # Run pending migrations
+            docker compose -f docker-compose.prod.yml exec -T api uv run alembic upgrade head
+
+            # Health check
+            sleep 10
+            curl -f http://localhost:8000/health || exit 1
+            echo "Deploy successful at $(date)"

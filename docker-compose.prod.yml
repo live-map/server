@@ -1,0 +1,94 @@
+# Grapoll Production - Docker Compose
+# Usage: docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  # PostgreSQL with pgvector (tuned for 12GB RAM VM)
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: grapoll-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: livemap
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: livemap
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    command: >
+      postgres
+      -c shared_buffers=2GB
+      -c effective_cache_size=6GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=512MB
+      -c max_connections=100
+      -c listen_addresses='*'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livemap -d livemap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Application (internal only, accessed via Caddy)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: grapoll-api
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://livemap:${DB_PASSWORD}@db:5432/livemap
+      AUTH_SECRET: ${AUTH_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      GOOGLE_FACT_CHECK_API_KEY: ${GOOGLE_FACT_CHECK_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-5-20250929}
+      AI_MODEL_PLANNER: ${AI_MODEL_PLANNER:-gpt-4o-mini}
+      AI_MODEL_SYNTHESIZER: ${AI_MODEL_SYNTHESIZER:-claude-sonnet-4-5-20250929}
+      AI_MODEL_REVIEWER: ${AI_MODEL_REVIEWER:-gpt-4o}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
+      AWS_S3_REGION: ${AWS_S3_REGION:-ap-northeast-2}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_CLOUDFRONT_DOMAIN: ${AWS_CLOUDFRONT_DOMAIN:-}
+      DEBUG: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - model_cache:/home/appuser/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # Caddy - Reverse proxy with auto SSL (Let's Encrypt)
+  caddy:
+    image: caddy:2-alpine
+    container_name: grapoll-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  model_cache:
+  caddy_data:
+  caddy_config:
