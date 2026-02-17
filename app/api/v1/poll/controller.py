@@ -108,6 +108,35 @@ def _poll_to_card(poll) -> PollCardResponse:
     )
 
 
+def _build_comment_tree(comments) -> list[PollCommentResponse]:
+    """댓글 목록을 트리 구조로 구성합니다."""
+    comment_map: dict[uuid.UUID, PollCommentResponse] = {}
+    top_level: list[PollCommentResponse] = []
+
+    # 1단계: 모든 댓글을 응답 객체로 변환
+    for c in (comments or []):
+        node = PollCommentResponse(
+            id=c.id, pollId=c.poll_id, userId=c.user_id,
+            userName=c.user.name if c.user else None,
+            userImage=c.user.image if c.user else None,
+            content=c.content if not c.is_deleted else "삭제된 댓글입니다.",
+            optionId=c.option_id, parentId=c.parent_id,
+            likes=c.likes, depth=c.depth,
+            createdAt=c.created_at, isDeleted=c.is_deleted,
+        )
+        comment_map[c.id] = node
+
+    # 2단계: 대댓글을 부모에 연결
+    for c in (comments or []):
+        node = comment_map[c.id]
+        if c.parent_id is None:
+            top_level.append(node)
+        elif c.parent_id in comment_map:
+            comment_map[c.parent_id].replies.append(node)
+
+    return top_level
+
+
 def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDetailResponse:
     return PollDetailResponse(
         id=poll.id,
@@ -140,18 +169,7 @@ def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDeta
             )
             for s in (poll.sources or [])
         ],
-        comments=[
-            PollCommentResponse(
-                id=c.id, pollId=c.poll_id, userId=c.user_id,
-                userName=c.user.name if c.user else None,
-                userImage=c.user.image if c.user else None,
-                content=c.content if not c.is_deleted else "삭제된 댓글입니다.",
-                optionId=c.option_id, parentId=c.parent_id,
-                likes=c.likes, depth=c.depth,
-                createdAt=c.created_at, isDeleted=c.is_deleted,
-            )
-            for c in (poll.comments or []) if c.parent_id is None
-        ],
+        comments=_build_comment_tree(poll.comments),
         user=UserBrief(
             id=poll.user.id if poll.user else None,
             name=poll.user.name if poll.user else None,
@@ -498,13 +516,16 @@ async def create_comment(
     service: CommentServiceDep,
 ) -> PollCommentResponse:
     """여론조사에 댓글을 작성합니다."""
-    comment = await service.create_comment(
-        poll_id=poll_id,
-        user_id=current_user.user_id,
-        content=data.content,
-        parent_id=data.parent_id,
-        option_id=data.option_id,
-    )
+    try:
+        comment = await service.create_comment(
+            poll_id=poll_id,
+            user_id=current_user.user_id,
+            content=data.content,
+            parent_id=data.parent_id,
+            option_id=data.option_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if comment is None:
         raise HTTPException(status_code=404, detail="Poll or parent comment not found")
 
@@ -512,8 +533,11 @@ async def create_comment(
         id=comment.id,
         pollId=comment.poll_id,
         userId=comment.user_id,
+        userName=comment.user.name if comment.user else None,
+        userImage=comment.user.image if comment.user else None,
         content=comment.content,
         optionId=comment.option_id,
+        parentId=comment.parent_id,
         likes=comment.likes,
         depth=comment.depth,
         createdAt=comment.created_at,
@@ -565,7 +589,7 @@ async def delete_comment(
 ) -> None:
     """여론조사 댓글을 삭제합니다. 작성자만 가능."""
     result = await service.delete_comment(
-        comment_id=comment_id, user_id=current_user.user_id
+        comment_id=comment_id, user_id=current_user.user_id, poll_id=poll_id,
     )
     if not result:
         raise HTTPException(
@@ -586,7 +610,7 @@ async def like_comment(
 ) -> dict:
     """여론조사 댓글에 좋아요를 토글합니다."""
     result = await service.like_comment(
-        comment_id=comment_id, user_id=current_user.user_id
+        comment_id=comment_id, user_id=current_user.user_id, poll_id=poll_id,
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Comment not found")
@@ -676,6 +700,9 @@ async def get_research_status(
 async def increment_view_count(
     poll_id: uuid.UUID,
     service: PollServiceDep,
+    current_user: CurrentUserOptional = None,
 ) -> None:
-    """여론조사 조회수를 증가시킵니다."""
+    """여론조사 조회수를 증가시킵니다. 인증된 사용자만 카운트."""
+    if current_user is None:
+        return
     await service.increment_view_count(poll_id)

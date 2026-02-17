@@ -4,7 +4,9 @@ ResearchService — DB 연동 오케스트레이터.
 LangGraph 리서치 그래프를 실행하고 결과를 DB에 저장합니다.
 """
 
+import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -20,8 +22,20 @@ from app.services.research.state import ResearchState
 
 logger = logging.getLogger(__name__)
 
-# 리서치 상태 추적 (in-memory)
+# 리서치 상태 추적 (in-memory, TTL 기반)
 _research_status: dict[str, dict] = {}
+_RESEARCH_STATUS_TTL = 86400  # 24시간
+
+
+def _evict_stale_statuses() -> None:
+    """TTL이 만료된 리서치 상태를 제거합니다."""
+    now = time.monotonic()
+    expired = [
+        k for k, v in _research_status.items()
+        if now - v.get("_ts", 0) > _RESEARCH_STATUS_TTL
+    ]
+    for k in expired:
+        del _research_status[k]
 
 
 class ResearchService:
@@ -36,7 +50,11 @@ class ResearchService:
 
     def get_status(self, poll_id: str) -> dict:
         """리서치 상태를 조회합니다."""
-        return _research_status.get(poll_id, {"status": "pending", "error": None})
+        _evict_stale_statuses()
+        entry = _research_status.get(poll_id)
+        if entry is None:
+            return {"status": "pending", "error": None}
+        return {"status": entry["status"], "error": entry.get("error")}
 
     async def run_research(self, poll_id: uuid.UUID, session: AsyncSession) -> None:
         """
@@ -45,7 +63,7 @@ class ResearchService:
         BackgroundTasks에서 호출됩니다.
         """
         poll_id_str = str(poll_id)
-        _research_status[poll_id_str] = {"status": "running", "error": None}
+        _research_status[poll_id_str] = {"status": "running", "error": None, "_ts": time.monotonic()}
 
         try:
             # Poll 조회
@@ -61,6 +79,7 @@ class ResearchService:
                 _research_status[poll_id_str] = {
                     "status": "failed",
                     "error": f"Poll {poll_id} not found",
+                    "_ts": time.monotonic(),
                 }
                 return
 
@@ -92,13 +111,26 @@ class ResearchService:
                 "extracted_sources": [],
                 # 제어
                 "retry_count": 0,
+                "confidence": 0.0,
+                "review_score": 0,
                 "error": "",
             }
 
             logger.info(f"[Research] Starting research for poll: {poll.title[:50]}")
 
-            # 그래프 실행
-            final_state = await self.graph.ainvoke(initial_state)
+            # 그래프 실행 (5분 타임아웃)
+            try:
+                final_state = await asyncio.wait_for(
+                    self.graph.ainvoke(initial_state), timeout=300
+                )
+            except asyncio.TimeoutError:
+                _research_status[poll_id_str] = {
+                    "status": "failed",
+                    "error": "Research timed out after 300 seconds",
+                    "_ts": time.monotonic(),
+                }
+                logger.error(f"[Research] Timed out for poll {poll_id_str}")
+                return
 
             # 결과 저장
             article = final_state.get("final_article") or final_state.get("draft_article", "")
@@ -108,6 +140,7 @@ class ResearchService:
                 _research_status[poll_id_str] = {
                     "status": "failed",
                     "error": "No article generated",
+                    "_ts": time.monotonic(),
                 }
                 return
 
@@ -140,7 +173,7 @@ class ResearchService:
 
             await session.commit()
 
-            _research_status[poll_id_str] = {"status": "completed", "error": None}
+            _research_status[poll_id_str] = {"status": "completed", "error": None, "_ts": time.monotonic()}
             logger.info(
                 f"[Research] Completed for poll {poll_id_str}: "
                 f"{len(article)} chars, {len(sources)} sources"
@@ -151,6 +184,7 @@ class ResearchService:
             _research_status[poll_id_str] = {
                 "status": "failed",
                 "error": str(e),
+                "_ts": time.monotonic(),
             }
             try:
                 await session.rollback()

@@ -151,8 +151,14 @@ class JWTPayload:
         Returns:
             JWTPayload: Structured token payload
         """
+        user_id = data.get("id", data.get("sub", ""))
+        if not user_id:
+            raise InvalidTokenError(
+                status_code=401,
+                message="Invalid JWT: missing user identifier (id or sub)",
+            )
         return cls(
-            user_id=data.get("id", data.get("sub", "")),
+            user_id=user_id,
             email=data.get("email"),
             name=data.get("name"),
             role=data.get("role", "USER"),

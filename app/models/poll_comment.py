@@ -91,7 +91,7 @@ class PollComment(Base):
     )
 
     # Soft delete
-    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
 
     # Relationships
     poll: Mapped["Poll"] = relationship("Poll", back_populates="comments")

@@ -9,6 +9,7 @@ START → perspective_discovery → planner → [web|academic|fact_check] 병렬
 import logging
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from app.services.research.nodes.academic_search import academic_search_node
 from app.services.research.nodes.fact_check import fact_check_node
@@ -34,7 +35,7 @@ def _review_decision(state: ResearchState) -> str:
     return "revise"
 
 
-def build_research_graph() -> StateGraph:
+def build_research_graph() -> CompiledStateGraph:
     """리서치 에이전트 9-node 그래프를 조립하고 컴파일합니다."""
     builder = StateGraph(ResearchState)
 

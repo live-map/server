@@ -120,7 +120,7 @@ class Poll(Base):
     )
 
     # Soft delete
-    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="polls")

@@ -117,24 +117,28 @@ async def outline_generator_node(state: ResearchState) -> dict:
         # 관점 1:1 매핑 검증 — 문제 시 1회 재생성
         if _check_perspective_mapping(outline, poll_options):
             logger.info("[OutlineGenerator] Perspective 1:1 mapping detected, regenerating...")
-            retry_msg = (
-                user_msg
-                + "\n\n⚠️ 이전 시도에서 섹션 제목이 선택지와 1:1 대응했습니다. "
-                "반드시 다른 구조를 사용하세요. 섹션 제목에 선택지 텍스트를 직접 쓰지 마세요."
-            )
-            result2: OutlineOutput = await structured_llm.ainvoke([
-                SystemMessage(content=OUTLINE_SYSTEM),
-                HumanMessage(content=retry_msg),
-            ])
-            outline = [
-                {
-                    "title": s.title,
-                    "key_points": s.key_points,
-                    "source_numbers": s.source_numbers,
-                }
-                for s in result2.sections
-            ]
-            outline = _remove_conclusion_sections(outline)
+            try:
+                retry_msg = (
+                    user_msg
+                    + "\n\n⚠️ 이전 시도에서 섹션 제목이 선택지와 1:1 대응했습니다. "
+                    "반드시 다른 구조를 사용하세요. 섹션 제목에 선택지 텍스트를 직접 쓰지 마세요."
+                )
+                result2: OutlineOutput = await structured_llm.ainvoke([
+                    SystemMessage(content=OUTLINE_SYSTEM),
+                    HumanMessage(content=retry_msg),
+                ])
+                outline = [
+                    {
+                        "title": s.title,
+                        "key_points": s.key_points,
+                        "source_numbers": s.source_numbers,
+                    }
+                    for s in result2.sections
+                ]
+                outline = _remove_conclusion_sections(outline)
+            except Exception as e:
+                logger.warning(f"[OutlineGenerator] Retry failed, using first result: {e}")
+                # 첫 번째 결과를 그대로 사용
 
         logger.info(
             f"[OutlineGenerator] Created outline with {len(outline)} sections: "

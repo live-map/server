@@ -1,5 +1,4 @@
-# Livemap Backend - Production Docker Compose
-# Autonomous Agent System
+# Grapoll Backend - Docker Compose
 
 services:
   # PostgreSQL with pgvector
@@ -33,16 +32,24 @@ services:
     environment:
       # Database
       DATABASE_URL: postgresql+asyncpg://livemap:${DB_PASSWORD:-livemap123}@db:5432/livemap
-      # Telegram
-      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
-      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
-      TELEGRAM_PHONE: ${TELEGRAM_PHONE}
-      # API Keys
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      # Autonomous Agent
-      AGENT_OPENAI_API_KEY: ${AGENT_OPENAI_API_KEY:-}
-      AGENT_TAVILY_API_KEY: ${AGENT_TAVILY_API_KEY:-}
-      AGENT_LLM_MODEL: ${AGENT_LLM_MODEL:-gpt-4o-mini}
+      # Auth (must match frontend AUTH_SECRET)
+      AUTH_SECRET: ${AUTH_SECRET}
+      # Frontend URL for CORS
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # AI Research Agent
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      GOOGLE_FACT_CHECK_API_KEY: ${GOOGLE_FACT_CHECK_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-5-20250929}
+      # AWS S3 (optional)
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
+      AWS_S3_REGION: ${AWS_S3_REGION:-ap-northeast-2}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_CLOUDFRONT_DOMAIN: ${AWS_CLOUDFRONT_DOMAIN:-}
       # App settings
       DEBUG: "false"
     depends_on:
@@ -50,9 +57,7 @@ services:
         condition: service_healthy
     volumes:
       - model_cache:/root/.cache
-      - telegram_session:/app/sessions
 
 volumes:
   postgres_data:
   model_cache:
-  telegram_session:

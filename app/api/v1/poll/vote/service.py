@@ -6,6 +6,7 @@ import logging
 import uuid
 
 from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.poll.repository import PollRepository
@@ -66,6 +67,12 @@ class VoteService:
 
         if poll.status != "ACTIVE":
             raise PollNotActiveError("이 여론조사는 현재 투표를 받지 않습니다.")
+
+        # interaction_type 검증: 클라이언트 요청과 poll 설정 일치 확인
+        if poll.interaction_type != interaction_type:
+            raise InvalidOptionError(
+                f"이 여론조사의 투표 방식은 {poll.interaction_type}입니다."
+            )
 
         # 중복 투표 확인
         existing = await self.vote_repo.get_by_user_and_poll(user_id, poll_id)
@@ -129,8 +136,12 @@ class VoteService:
         )
         await self.session.execute(stmt)
 
-        created = await self.vote_repo.create(vote)
-        await self.session.commit()
+        try:
+            created = await self.vote_repo.create(vote)
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise AlreadyVotedError("이미 투표하셨습니다.")
         logger.info(f"Vote cast: user={user_id}, poll={poll_id}, type={interaction_type}")
         return created
 

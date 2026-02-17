@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Sequence
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.poll.comment.repository import PollCommentRepository
@@ -85,6 +86,9 @@ class PollCommentService:
                 logger.warning(f"Parent comment {parent_id} belongs to different poll")
                 return None
             depth = parent.depth + 1
+            if depth >= 3:
+                logger.warning(f"Comment depth limit exceeded: depth={depth}")
+                raise ValueError("대댓글은 최대 3단계까지만 허용됩니다.")
 
         comment = PollComment(
             poll_id=poll_id,
@@ -97,6 +101,8 @@ class PollCommentService:
 
         created = await self.comment_repo.create(comment)
         await self.session.commit()
+        # user 관계 로드 (응답에 userName/userImage 포함)
+        await self.session.refresh(created, attribute_names=["user"])
         logger.info(f"Poll comment created: {created.id} on poll {poll_id}")
         return created
 
@@ -127,7 +133,7 @@ class PollCommentService:
         return root_nodes
 
     async def delete_comment(
-        self, comment_id: uuid.UUID, user_id: str
+        self, comment_id: uuid.UUID, user_id: str, poll_id: uuid.UUID | None = None,
     ) -> bool:
         """댓글 삭제 (소프트 삭제)."""
         comment = await self.comment_repo.get_by_id(comment_id)
@@ -136,21 +142,34 @@ class PollCommentService:
         if comment.user_id != user_id:
             logger.warning(f"User {user_id} tried to delete poll comment {comment_id}")
             return False
+        # poll_id 검증: URL의 poll_id와 댓글의 poll_id 일치 확인
+        if poll_id is not None and comment.poll_id != poll_id:
+            return False
 
         result = await self.comment_repo.soft_delete(comment_id)
         await self.session.commit()
         return result
 
     async def like_comment(
-        self, comment_id: uuid.UUID, user_id: str
+        self, comment_id: uuid.UUID, user_id: str, poll_id: uuid.UUID | None = None,
     ) -> dict | None:
-        """댓글 좋아요 토글 (단순 증가 방식)."""
+        """댓글 좋아요 토글 (원자적 증가 방식)."""
         comment = await self.comment_repo.get_by_id(comment_id)
         if comment is None:
             return None
 
-        comment.likes += 1
-        await self.session.flush()
+        # poll_id 검증: URL의 poll_id와 댓글의 poll_id 일치 확인
+        if poll_id is not None and comment.poll_id != poll_id:
+            return None
+
+        stmt = (
+            update(PollComment)
+            .where(PollComment.id == comment_id)
+            .values(likes=PollComment.likes + 1)
+            .returning(PollComment.likes)
+        )
+        result = await self.session.execute(stmt)
+        new_likes = result.scalar_one()
         await self.session.commit()
         logger.info(f"Poll comment {comment_id} liked by {user_id}")
-        return {"likes": comment.likes}
+        return {"likes": new_likes}

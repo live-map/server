@@ -4,11 +4,17 @@ Application configuration using Pydantic Settings.
 Environment variables are loaded from .env file.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Application
     APP_NAME: str = "Grapoll API"
@@ -48,11 +54,6 @@ class Settings(BaseSettings):
             and self.AWS_ACCESS_KEY_ID
             and self.AWS_SECRET_ACCESS_KEY
         )
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 settings = Settings()

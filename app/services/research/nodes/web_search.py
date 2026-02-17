@@ -90,27 +90,29 @@ def _boost_trusted_credibility(source: SourceItem) -> SourceItem:
 
 
 async def _enrich_with_jina(sources: list[SourceItem]) -> list[SourceItem]:
-    """content_snippet이 짧은 출처를 Jina Reader로 보강합니다."""
+    """content_snippet이 짧은 출처를 Jina Reader로 병렬 보강합니다."""
     reader = JinaReader()
-    enriched = []
+    sem = asyncio.Semaphore(5)
 
-    for source in sources:
-        snippet = source.get("content_snippet", "")
-        if len(snippet) < 200:
-            content = await reader.extract(source["url"], max_chars=1500)
-            if content and len(content) > len(snippet):
-                source = SourceItem(
-                    title=source["title"],
-                    url=source["url"],
-                    source_type=source["source_type"],
-                    description=source["description"],
-                    content_snippet=content[:1500],
-                    credibility=source["credibility"],
-                )
-                logger.debug(f"[WebSearch] Enriched via Jina: {source['title'][:40]}")
-        enriched.append(source)
+    async def _enrich_one(source: SourceItem) -> SourceItem:
+        async with sem:
+            snippet = source.get("content_snippet", "")
+            if len(snippet) < 200:
+                content = await reader.extract(source["url"], max_chars=1500)
+                if content and len(content) > len(snippet):
+                    enriched = SourceItem(
+                        title=source["title"],
+                        url=source["url"],
+                        source_type=source["source_type"],
+                        description=source["description"],
+                        content_snippet=content[:1500],
+                        credibility=source["credibility"],
+                    )
+                    logger.debug(f"[WebSearch] Enriched via Jina: {source['title'][:40]}")
+                    return enriched
+            return source
 
-    return enriched
+    return await asyncio.gather(*[_enrich_one(s) for s in sources])
 
 
 async def web_search_node(state: ResearchState) -> dict:

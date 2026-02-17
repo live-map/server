@@ -279,10 +279,17 @@ async def synthesizer_node(state: ResearchState) -> dict:
             fact_check_results=_format_fact_checks(state.get("fact_check_results", [])),
         )
 
-    response = await llm.ainvoke([
-        SystemMessage(content=SYNTHESIZER_SYSTEM),
-        HumanMessage(content=user_msg),
-    ])
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content=SYNTHESIZER_SYSTEM),
+            HumanMessage(content=user_msg),
+        ])
+    except Exception as e:
+        logger.error(f"[Synthesizer] LLM call failed: {e}")
+        return {
+            "draft_article": state.get("draft_article", ""),
+            "error": f"Synthesizer LLM failed: {e}",
+        }
 
     article = _strip_conclusion(response.content)
     article = _ensure_bold_numbers(article)

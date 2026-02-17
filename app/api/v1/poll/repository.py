@@ -18,6 +18,11 @@ from app.models.poll_option import PollOption
 logger = logging.getLogger(__name__)
 
 
+def _escape_like(value: str) -> str:
+    """LIKE/ILIKE 패턴 특수문자 이스케이프."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class PollRepository:
     """Repository for Poll database operations."""
 
@@ -78,8 +83,10 @@ class PollRepository:
         if poll_type:
             stmt = stmt.where(Poll.type == poll_type)
         if search:
+            safe = _escape_like(search)
             stmt = stmt.where(
-                Poll.title.ilike(f"%{search}%") | Poll.description.ilike(f"%{search}%")
+                Poll.title.ilike(f"%{safe}%", escape="\\")
+                | Poll.description.ilike(f"%{safe}%", escape="\\")
             )
 
         # 정렬
@@ -115,8 +122,10 @@ class PollRepository:
         if poll_type:
             stmt = stmt.where(Poll.type == poll_type)
         if search:
+            safe = _escape_like(search)
             stmt = stmt.where(
-                Poll.title.ilike(f"%{search}%") | Poll.description.ilike(f"%{search}%")
+                Poll.title.ilike(f"%{safe}%", escape="\\")
+                | Poll.description.ilike(f"%{safe}%", escape="\\")
             )
 
         # sort 필터와 동일한 조건 적용

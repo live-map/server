@@ -1,7 +1,7 @@
 # Livemap Backend Dockerfile
 # Optimized for Oracle Cloud Free Tier (ARM64)
 
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \

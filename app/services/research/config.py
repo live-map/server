@@ -8,11 +8,17 @@ Multi-model 지원: 노드별 최적 모델 배정.
 from __future__ import annotations
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AISettings(BaseSettings):
     """AI Research Agent settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
@@ -94,10 +100,6 @@ class AISettings(BaseSettings):
                 temperature=temperature,
             )
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 ai_settings = AISettings()
