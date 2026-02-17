@@ -16,6 +16,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.poll import Poll
+    from app.models.poll_comment_like import PollCommentLike
     from app.models.poll_option import PollOption
     from app.models.user import User
 
@@ -108,6 +109,11 @@ class PollComment(Base):
         back_populates="parent",
         cascade="all, delete-orphan",
         foreign_keys=[parent_id],
+    )
+    comment_likes: Mapped[list["PollCommentLike"]] = relationship(
+        "PollCommentLike",
+        back_populates="comment",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

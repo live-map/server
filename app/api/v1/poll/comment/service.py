@@ -10,12 +10,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.poll.comment.repository import PollCommentRepository
 from app.api.v1.poll.repository import PollRepository
 from app.models.poll_comment import PollComment
+from app.models.poll_comment_like import PollCommentLike
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ class PollCommentService:
     async def like_comment(
         self, comment_id: uuid.UUID, user_id: str, poll_id: uuid.UUID | None = None,
     ) -> dict | None:
-        """댓글 좋아요 토글 (원자적 증가 방식)."""
+        """댓글 좋아요 토글 (중복 방지)."""
         comment = await self.comment_repo.get_by_id(comment_id)
         if comment is None:
             return None
@@ -174,14 +175,35 @@ class PollCommentService:
         if poll_id is not None and comment.poll_id != poll_id:
             return None
 
+        # 기존 좋아요 확인
+        existing = await self.session.execute(
+            select(PollCommentLike).where(
+                PollCommentLike.comment_id == comment_id,
+                PollCommentLike.user_id == user_id,
+            )
+        )
+        existing_like = existing.scalar_one_or_none()
+
+        if existing_like:
+            # 좋아요 취소 (unlike)
+            await self.session.delete(existing_like)
+            delta = -1
+            action = "unliked"
+        else:
+            # 좋아요 추가
+            self.session.add(PollCommentLike(comment_id=comment_id, user_id=user_id))
+            delta = 1
+            action = "liked"
+
+        # 카운터 원자적 업데이트
         stmt = (
             update(PollComment)
             .where(PollComment.id == comment_id)
-            .values(likes=PollComment.likes + 1)
+            .values(likes=PollComment.likes + delta)
             .returning(PollComment.likes)
         )
         result = await self.session.execute(stmt)
         new_likes = result.scalar_one()
         await self.session.commit()
-        logger.info("Poll comment %s liked by %s", comment_id, user_id)
-        return {"likes": new_likes}
+        logger.info("Poll comment %s %s by %s", comment_id, action, user_id)
+        return {"likes": new_likes, "liked": action == "liked"}

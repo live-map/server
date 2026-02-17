@@ -10,6 +10,7 @@ from app.models.poll_option import PollOption
 from app.models.poll_source import PollSource, SourceType
 from app.models.vote import Vote
 from app.models.poll_comment import PollComment
+from app.models.poll_comment_like import PollCommentLike
 
 # Auth/NextAuth models (synced with frontend Prisma schema)
 from app.models.user import User
@@ -34,6 +35,7 @@ __all__ = [
     "SourceType",
     "Vote",
     "PollComment",
+    "PollCommentLike",
     # Auth/NextAuth models
     "User",
     "Account",
