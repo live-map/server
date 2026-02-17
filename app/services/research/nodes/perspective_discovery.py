@@ -16,22 +16,23 @@ from app.services.research.prompts.perspective_prompt import (
 )
 from app.services.research.schemas import PerspectiveOutput
 from app.services.research.state import ResearchState
+from app.services.research.utils import sanitize_user_input
 
 logger = logging.getLogger(__name__)
 
 
 async def perspective_discovery_node(state: ResearchState) -> dict:
     """여론조사 주제의 관점과 이해관계자를 발견합니다."""
-    logger.info(f"[PerspectiveDiscovery] Analyzing: {state['poll_title'][:50]}")
+    logger.info("[PerspectiveDiscovery] Analyzing: %s", state["poll_title"][:50])
 
     llm = ai_settings.get_chat_model(role="planner", max_tokens=1024, temperature=0.3)
     structured_llm = llm.with_structured_output(PerspectiveOutput)
 
     user_msg = PERSPECTIVE_USER.format(
-        title=state["poll_title"],
-        description=state.get("poll_description", "") or "설명 없음",
+        title=sanitize_user_input(state["poll_title"], max_length=200, tag="title"),
+        description=sanitize_user_input(state.get("poll_description", "") or "설명 없음", max_length=500, tag="description"),
         category=state.get("poll_category", "") or "일반",
-        options=", ".join(state.get("poll_options", [])),
+        options=sanitize_user_input(", ".join(state.get("poll_options", [])), max_length=500, tag="options"),
     )
 
     try:
@@ -50,13 +51,14 @@ async def perspective_discovery_node(state: ResearchState) -> dict:
         ]
 
         logger.info(
-            f"[PerspectiveDiscovery] Found {len(perspectives)} perspectives: "
-            f"{[p['label'] for p in perspectives]}"
+            "[PerspectiveDiscovery] Found %d perspectives: %s",
+            len(perspectives),
+            [p["label"] for p in perspectives],
         )
         return {"perspectives": perspectives}
 
     except Exception as e:
-        logger.error(f"[PerspectiveDiscovery] Failed: {e}", exc_info=True)
+        logger.error("[PerspectiveDiscovery] Failed: %s", e, exc_info=True)
         # fallback: 선택지를 관점으로 사용
         options = state.get("poll_options", [])
         fallback = [

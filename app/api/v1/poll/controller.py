@@ -97,7 +97,7 @@ def _poll_to_card(poll) -> PollCardResponse:
         createdAt=poll.created_at,
         endsAt=poll.ends_at,
         options=[
-            OptionResponse(id=o.id, text=o.text, voteCount=o.vote_count)
+            OptionResponse(id=o.id, text=o.text, order=o.order, voteCount=o.vote_count)
             for o in (poll.options or [])
         ],
         user=UserBrief(
@@ -108,7 +108,36 @@ def _poll_to_card(poll) -> PollCardResponse:
     )
 
 
-def _poll_to_detail(poll) -> PollDetailResponse:
+def _build_comment_tree(comments) -> list[PollCommentResponse]:
+    """댓글 목록을 트리 구조로 구성합니다."""
+    comment_map: dict[uuid.UUID, PollCommentResponse] = {}
+    top_level: list[PollCommentResponse] = []
+
+    # 1단계: 모든 댓글을 응답 객체로 변환
+    for c in (comments or []):
+        node = PollCommentResponse(
+            id=c.id, pollId=c.poll_id, userId=c.user_id,
+            userName=c.user.name if c.user else None,
+            userImage=c.user.image if c.user else None,
+            content=c.content if not c.is_deleted else "삭제된 댓글입니다.",
+            optionId=c.option_id, parentId=c.parent_id,
+            likes=c.likes, depth=c.depth,
+            createdAt=c.created_at, isDeleted=c.is_deleted,
+        )
+        comment_map[c.id] = node
+
+    # 2단계: 대댓글을 부모에 연결
+    for c in (comments or []):
+        node = comment_map[c.id]
+        if c.parent_id is None:
+            top_level.append(node)
+        elif c.parent_id in comment_map:
+            comment_map[c.parent_id].replies.append(node)
+
+    return top_level
+
+
+def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDetailResponse:
     return PollDetailResponse(
         id=poll.id,
         title=poll.title,
@@ -127,8 +156,9 @@ def _poll_to_detail(poll) -> PollDetailResponse:
         updatedAt=poll.updated_at,
         aiContent=poll.ai_content,
         aiUpdatedAt=poll.ai_updated_at,
+        averageSliderValue=average_slider_value,
         options=[
-            OptionResponse(id=o.id, text=o.text, voteCount=o.vote_count)
+            OptionResponse(id=o.id, text=o.text, order=o.order, voteCount=o.vote_count)
             for o in (poll.options or [])
         ],
         sources=[
@@ -139,17 +169,7 @@ def _poll_to_detail(poll) -> PollDetailResponse:
             )
             for s in (poll.sources or [])
         ],
-        comments=[
-            PollCommentResponse(
-                id=c.id, pollId=c.poll_id, userId=c.user_id,
-                userName=c.user.name if c.user else None,
-                userImage=c.user.image if c.user else None,
-                content=c.content if not c.is_deleted else "삭제된 댓글입니다.",
-                optionId=c.option_id, likes=c.likes, depth=c.depth,
-                createdAt=c.created_at, isDeleted=c.is_deleted,
-            )
-            for c in (poll.comments or []) if c.parent_id is None
-        ],
+        comments=_build_comment_tree(poll.comments),
         user=UserBrief(
             id=poll.user.id if poll.user else None,
             name=poll.user.name if poll.user else None,
@@ -210,7 +230,7 @@ async def list_polls(
 ) -> PollListResponse:
     """여론조사 목록을 조회합니다."""
     polls = await service.list_polls(limit=limit, offset=offset, sort=sort, search=search)
-    total = await service.count_polls(search=search)
+    total = await service.count_polls(search=search, sort=sort)
 
     return PollListResponse(
         items=[_poll_to_card(p) for p in polls],
@@ -226,6 +246,7 @@ _INTERACTION_TO_POLL_TYPE: dict[str, str] = {
     "SINGLE_CHOICE": "multiple",
     "MULTIPLE_CHOICE": "checkbox",
     "SLIDER": "scale",
+    "EMOJI_REACTION": "multiple",
     "RANKING": "ranking",
 }
 
@@ -240,6 +261,7 @@ _OPTION_COLORS = ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#8B5CF6"]
 )
 async def get_hot_debate(
     service: PollServiceDep,
+    vote_service: VoteServiceDep,
 ) -> HotDebateResponse | None:
     """가장 접전인 여론조사를 조회합니다 (모든 타입 지원)."""
     poll = await service.get_hot_debate()
@@ -282,6 +304,11 @@ async def get_hot_debate(
             comments=comments,
         )
 
+    # scale 타입: 평균값 계산
+    scale_average = None
+    if poll_type == "scale":
+        scale_average = await vote_service.get_average_slider_value(poll.id)
+
     # 다중 옵션 타입: 모든 옵션의 비율 계산 (합 = 100%)
     sorted_opts = sorted(poll.options, key=lambda o: o.vote_count, reverse=True)
     options = [
@@ -299,6 +326,7 @@ async def get_hot_debate(
         title=poll.title,
         pollType=poll_type,
         options=options,
+        scaleAverage=scale_average,
         totalVotes=poll.total_votes,
         comments=comments,
     )
@@ -326,13 +354,17 @@ async def get_suggested_polls(
 async def get_poll(
     poll_id: uuid.UUID,
     service: PollServiceDep,
+    vote_service: VoteServiceDep,
     current_user: CurrentUserOptional = None,
 ) -> PollDetailResponse:
     """여론조사 상세 정보를 조회합니다."""
     poll = await service.get_poll_with_details(poll_id)
     if poll is None:
         raise HTTPException(status_code=404, detail="Poll not found")
-    return _poll_to_detail(poll)
+    avg_slider = None
+    if poll.interaction_type == "SLIDER":
+        avg_slider = await vote_service.get_average_slider_value(poll_id)
+    return _poll_to_detail(poll, average_slider_value=avg_slider)
 
 
 @router.patch(
@@ -355,19 +387,16 @@ async def update_poll(
             description=data.description,
             status=data.status,
         )
-    except PollNotFoundError:
-        raise HTTPException(status_code=404, detail="Poll not found")
-    except PollPermissionError:
-        raise HTTPException(status_code=403, detail="You are not the owner")
+    except PollNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Poll not found") from exc
+    except PollPermissionError as exc:
+        raise HTTPException(status_code=403, detail="You are not the owner") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return PollCardResponse(
-        id=poll.id, title=poll.title, description=poll.description,
-        imageUrl=poll.image_url, category=poll.category,
-        type=poll.type, status=poll.status,
-        interactionType=poll.interaction_type,
-        totalVotes=poll.total_votes, viewCount=poll.view_count,
-        createdAt=poll.created_at, endsAt=poll.ends_at,
-    )
+    # Reload with eager-loaded relationships for _poll_to_card
+    poll = await service.get_poll_with_details(poll_id)
+    return _poll_to_card(poll)
 
 
 @router.delete(
@@ -383,10 +412,10 @@ async def delete_poll(
     """여론조사를 삭제합니다. 작성자만 가능."""
     try:
         await service.delete_poll(poll_id=poll_id, user_id=current_user.user_id)
-    except PollNotFoundError:
-        raise HTTPException(status_code=404, detail="Poll not found")
-    except PollPermissionError:
-        raise HTTPException(status_code=403, detail="You are not the owner")
+    except PollNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Poll not found") from exc
+    except PollPermissionError as exc:
+        raise HTTPException(status_code=403, detail="You are not the owner") from exc
 
 
 # ========================================
@@ -422,14 +451,14 @@ async def cast_vote(
             poll_id=poll_id,
             **kwargs,
         )
-    except PollNotActiveError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except AlreadyVotedError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except InvalidOptionError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except PollNotFoundError:
-        raise HTTPException(status_code=404, detail="Poll not found")
+    except PollNotActiveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AlreadyVotedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidOptionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PollNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Poll not found") from exc
 
     return VoteResponse(
         success=True,
@@ -484,13 +513,16 @@ async def create_comment(
     service: CommentServiceDep,
 ) -> PollCommentResponse:
     """여론조사에 댓글을 작성합니다."""
-    comment = await service.create_comment(
-        poll_id=poll_id,
-        user_id=current_user.user_id,
-        content=data.content,
-        parent_id=data.parent_id,
-        option_id=data.option_id,
-    )
+    try:
+        comment = await service.create_comment(
+            poll_id=poll_id,
+            user_id=current_user.user_id,
+            content=data.content,
+            parent_id=data.parent_id,
+            option_id=data.option_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if comment is None:
         raise HTTPException(status_code=404, detail="Poll or parent comment not found")
 
@@ -498,8 +530,11 @@ async def create_comment(
         id=comment.id,
         pollId=comment.poll_id,
         userId=comment.user_id,
+        userName=comment.user.name if comment.user else None,
+        userImage=comment.user.image if comment.user else None,
         content=comment.content,
         optionId=comment.option_id,
+        parentId=comment.parent_id,
         likes=comment.likes,
         depth=comment.depth,
         createdAt=comment.created_at,
@@ -528,6 +563,7 @@ async def list_comments(
             userImage=node.user_image,
             content=node.content,
             optionId=node.option_id,
+            parentId=node.parent_id,
             likes=node.likes,
             depth=node.depth,
             createdAt=node.created_at,
@@ -536,6 +572,47 @@ async def list_comments(
         )
 
     return [node_to_response(n) for n in tree]
+
+
+@router.delete(
+    "/{poll_id}/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="댓글 삭제",
+)
+async def delete_comment(
+    poll_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    current_user: CurrentUser,
+    service: CommentServiceDep,
+) -> None:
+    """여론조사 댓글을 삭제합니다. 작성자만 가능."""
+    result = await service.delete_comment(
+        comment_id=comment_id, user_id=current_user.user_id, poll_id=poll_id,
+    )
+    if not result:
+        raise HTTPException(
+            status_code=404, detail="Comment not found or not authorized"
+        )
+
+
+@router.post(
+    "/{poll_id}/comments/{comment_id}/like",
+    status_code=status.HTTP_200_OK,
+    summary="댓글 좋아요",
+)
+async def like_comment(
+    poll_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    current_user: CurrentUser,
+    service: CommentServiceDep,
+) -> dict:
+    """여론조사 댓글에 좋아요를 토글합니다."""
+    result = await service.like_comment(
+        comment_id=comment_id, user_id=current_user.user_id, poll_id=poll_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return result
 
 
 # ========================================
@@ -621,6 +698,9 @@ async def get_research_status(
 async def increment_view_count(
     poll_id: uuid.UUID,
     service: PollServiceDep,
+    current_user: CurrentUserOptional = None,
 ) -> None:
-    """여론조사 조회수를 증가시킵니다."""
+    """여론조사 조회수를 증가시킵니다. 인증된 사용자만 카운트."""
+    if current_user is None:
+        return
     await service.increment_view_count(poll_id)

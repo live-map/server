@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,6 +52,11 @@ class Poll(Base):
     """
 
     __tablename__ = "polls"
+    __table_args__ = (
+        Index("ix_polls_status_total_votes", "status", "total_votes"),
+        CheckConstraint("total_votes >= 0", name="ck_polls_total_votes_non_negative"),
+        CheckConstraint("view_count >= 0", name="ck_polls_view_count_non_negative"),
+    )
 
     # Primary key - UUID
     id: Mapped[uuid.UUID] = mapped_column(
@@ -107,20 +112,18 @@ class Poll(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=func.now(),
         server_default=func.now(),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=func.now(),
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
     )
 
     # Soft delete
-    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="polls")

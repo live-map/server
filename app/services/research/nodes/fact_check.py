@@ -18,7 +18,7 @@ async def fact_check_node(state: ResearchState) -> dict:
         logger.info("[FactCheck] No claims to check, skipping")
         return {"fact_check_results": []}
 
-    logger.info(f"[FactCheck] Checking {len(claims)} claims")
+    logger.info("[FactCheck] Checking %d claims", len(claims))
 
     client = FactCheckClient()
     tasks = [client.search(claim, max_results=3) for claim in claims]
@@ -27,9 +27,9 @@ async def fact_check_node(state: ResearchState) -> dict:
     all_results: list[dict] = []
     for result in results:
         if isinstance(result, Exception):
-            logger.error(f"[FactCheck] Claim check failed: {result}")
+            logger.error("[FactCheck] Claim check failed: %s", result)
             continue
         all_results.extend(result)
 
-    logger.info(f"[FactCheck] Found {len(all_results)} fact check entries")
+    logger.info("[FactCheck] Found %d fact check entries", len(all_results))
     return {"fact_check_results": all_results}

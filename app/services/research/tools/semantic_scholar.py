@@ -69,9 +69,18 @@ class SemanticScholarClient:
                     )
                 )
 
-            logger.info(f"Semantic Scholar search '{query[:50]}': {len(sources)} results")
+            logger.info("Semantic Scholar search '%s': %d results", query[:50], len(sources))
             return sources
 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                logger.warning("Semantic Scholar rate limited for '%s'", query[:50])
+            else:
+                logger.error(
+                    "Semantic Scholar HTTP %d for '%s': %s",
+                    e.response.status_code, query[:50], e,
+                )
+            return []
         except Exception as e:
-            logger.error(f"Semantic Scholar search failed for '{query[:50]}': {e}")
+            logger.error("Semantic Scholar search failed for '%s': %s", query[:50], e)
             return []

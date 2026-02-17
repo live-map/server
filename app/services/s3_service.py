@@ -20,7 +20,7 @@ Usage:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 import boto3
@@ -100,7 +100,7 @@ class S3Service:
             safe_filename = safe_filename[:90] + ("." + ext if ext else "")
 
         # Generate unique prefix
-        date_prefix = datetime.utcnow().strftime("%Y/%m")
+        date_prefix = datetime.now(timezone.utc).strftime("%Y/%m")
         unique_id = uuid.uuid4().hex[:8]
 
         return f"{folder}/{date_prefix}/{unique_id}_{safe_filename}"

@@ -8,7 +8,7 @@ import logging
 import uuid
 from typing import Sequence
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,14 +28,14 @@ class PollCommentRepository:
         self.session.add(comment)
         await self.session.flush()
         await self.session.refresh(comment)
-        logger.debug(f"Created poll comment: {comment.id}")
+        logger.debug("Created poll comment: %s", comment.id)
         return comment
 
     async def get_by_id(self, comment_id: uuid.UUID) -> PollComment | None:
         """ID로 댓글 조회."""
         stmt = select(PollComment).where(
             PollComment.id == comment_id,
-            PollComment.is_deleted == False,
+            PollComment.is_deleted.is_(False),
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -56,23 +56,19 @@ class PollCommentRepository:
         )
 
         if not include_deleted:
-            stmt = stmt.where(PollComment.is_deleted == False)
+            stmt = stmt.where(PollComment.is_deleted.is_(False))
 
         stmt = stmt.order_by(PollComment.created_at)
 
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def soft_delete(self, comment_id: uuid.UUID) -> bool:
-        """댓글 소프트 삭제."""
-        comment = await self.get_by_id(comment_id)
-        if comment is None:
-            raise ValueError(f"PollComment with id {comment_id} not found")
-
+    async def soft_delete(self, comment: PollComment) -> bool:
+        """댓글 소프트 삭제. 호출자가 이미 조회한 comment 객체를 전달."""
         comment.is_deleted = True
         comment.content = "삭제된 댓글입니다."
         await self.session.flush()
-        logger.debug(f"Soft deleted poll comment: {comment_id}")
+        logger.debug("Soft deleted poll comment: %s", comment.id)
         return True
 
     async def count_by_poll(self, poll_id: uuid.UUID) -> int:
@@ -82,7 +78,7 @@ class PollCommentRepository:
             .select_from(PollComment)
             .where(
                 PollComment.poll_id == poll_id,
-                PollComment.is_deleted == False,
+                PollComment.is_deleted.is_(False),
             )
         )
         result = await self.session.execute(stmt)

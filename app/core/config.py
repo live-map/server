@@ -4,18 +4,27 @@ Application configuration using Pydantic Settings.
 Environment variables are loaded from .env file.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic import AnyHttpUrl
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # Application
     APP_NAME: str = "Grapoll API"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database (Backend - polls, posts, etc.)
     DATABASE_URL: str = "postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap"
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
 
     # Database (Frontend/Auth - shared with NextAuth for user data)
     AUTH_DATABASE_URL: str | None = None
@@ -25,7 +34,7 @@ class Settings(BaseSettings):
     AUTH_SECRET: str
 
     # Frontend URL for CORS and cookie settings
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: AnyHttpUrl = "http://localhost:3000"
 
     # AWS S3 Configuration
     AWS_S3_BUCKET_NAME: str | None = None
@@ -48,11 +57,6 @@ class Settings(BaseSettings):
             and self.AWS_ACCESS_KEY_ID
             and self.AWS_SECRET_ACCESS_KEY
         )
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 settings = Settings()

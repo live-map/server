@@ -5,10 +5,14 @@ Vote Service - Business logic for poll voting.
 import logging
 import uuid
 
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.poll.repository import PollRepository
+from app.api.v1.poll.service import PollNotFoundError
 from app.api.v1.poll.vote.repository import VoteRepository
+from app.models.poll import Poll
 from app.models.poll_option import PollOption
 from app.models.vote import Vote
 
@@ -59,11 +63,16 @@ class VoteService:
         # 여론조사 확인
         poll = await self.poll_repo.get_by_id_with_details(poll_id)
         if poll is None:
-            from app.api.v1.poll.service import PollNotFoundError
             raise PollNotFoundError(f"Poll {poll_id} not found")
 
         if poll.status != "ACTIVE":
             raise PollNotActiveError("이 여론조사는 현재 투표를 받지 않습니다.")
+
+        # interaction_type 검증: 클라이언트 요청과 poll 설정 일치 확인
+        if poll.interaction_type != interaction_type:
+            raise InvalidOptionError(
+                f"이 여론조사의 투표 방식은 {poll.interaction_type}입니다."
+            )
 
         # 중복 투표 확인
         existing = await self.vote_repo.get_by_user_and_poll(user_id, poll_id)
@@ -76,15 +85,14 @@ class VoteService:
         # interactionType별 투표 처리
         vote = Vote(user_id=user_id, poll_id=poll_id)
 
+        # 원자적 증가 대상 option_id 목록
+        increment_option_ids: list[uuid.UUID] = []
+
         if interaction_type in ("BINARY", "SINGLE_CHOICE", "EMOJI_REACTION"):
             if option_id is None or option_id not in option_ids:
                 raise InvalidOptionError("유효하지 않은 선택지입니다.")
             vote.option_id = option_id
-            # 선택지 투표수 증가
-            for opt in poll.options:
-                if opt.id == option_id:
-                    opt.vote_count += 1
-                    break
+            increment_option_ids.append(option_id)
 
         elif interaction_type == "SLIDER":
             if slider_value is None:
@@ -98,10 +106,7 @@ class VoteService:
                 if oid not in option_ids:
                     raise InvalidOptionError(f"유효하지 않은 선택지: {oid}")
             vote.selected_option_ids = [str(oid) for oid in selected_option_ids]
-            # 선택된 각 옵션의 투표수 증가
-            for opt in poll.options:
-                if opt.id in selected_option_ids:
-                    opt.vote_count += 1
+            increment_option_ids.extend(selected_option_ids)
 
         elif interaction_type == "RANKING":
             if not ranking_data:
@@ -112,17 +117,32 @@ class VoteService:
             vote.ranking_data = [str(oid) for oid in ranking_data]
             # 1위 옵션의 투표수 증가 (대표 집계용)
             if ranking_data:
-                for opt in poll.options:
-                    if opt.id == ranking_data[0]:
-                        opt.vote_count += 1
-                        break
+                increment_option_ids.append(ranking_data[0])
 
-        # Poll 전체 투표수 증가
-        poll.total_votes += 1
+        # 원자적 옵션 투표수 증가 (SQL UPDATE)
+        for oid in increment_option_ids:
+            stmt = (
+                update(PollOption)
+                .where(PollOption.id == oid)
+                .values(vote_count=PollOption.vote_count + 1)
+            )
+            await self.session.execute(stmt)
 
-        created = await self.vote_repo.create(vote)
-        await self.session.commit()
-        logger.info(f"Vote cast: user={user_id}, poll={poll_id}, type={interaction_type}")
+        # 원자적 Poll 전체 투표수 증가 (SQL UPDATE)
+        stmt = (
+            update(Poll)
+            .where(Poll.id == poll_id)
+            .values(total_votes=Poll.total_votes + 1)
+        )
+        await self.session.execute(stmt)
+
+        try:
+            created = await self.vote_repo.create(vote)
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise AlreadyVotedError("이미 투표하셨습니다.")
+        logger.info("Vote cast: user=%s, poll=%s, type=%s", user_id, poll_id, interaction_type)
         return created
 
     async def get_user_vote(
@@ -137,3 +157,7 @@ class VoteService:
         """여러 여론조사에 대한 사용자 투표 상태."""
         votes = await self.vote_repo.get_user_votes_for_polls(user_id, poll_ids)
         return {vote.poll_id: vote for vote in votes}
+
+    async def get_average_slider_value(self, poll_id: uuid.UUID) -> float | None:
+        """SLIDER 타입 poll의 평균 슬라이더 값."""
+        return await self.vote_repo.get_average_slider_value(poll_id)

@@ -16,6 +16,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.poll import Poll
+    from app.models.poll_comment_like import PollCommentLike
     from app.models.poll_option import PollOption
     from app.models.user import User
 
@@ -78,20 +79,18 @@ class PollComment(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=func.now(),
         server_default=func.now(),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=func.now(),
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
     )
 
     # Soft delete
-    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
 
     # Relationships
     poll: Mapped["Poll"] = relationship("Poll", back_populates="comments")
@@ -110,6 +109,11 @@ class PollComment(Base):
         back_populates="parent",
         cascade="all, delete-orphan",
         foreign_keys=[parent_id],
+    )
+    comment_likes: Mapped[list["PollCommentLike"]] = relationship(
+        "PollCommentLike",
+        back_populates="comment",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

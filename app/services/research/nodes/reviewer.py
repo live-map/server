@@ -21,6 +21,7 @@ from app.services.research.prompts.reviewer_prompt import (
 )
 from app.services.research.schemas import ReviewerOutput
 from app.services.research.state import ResearchState
+from app.services.research.utils import CONCLUSION_KEYWORDS_RE
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,6 @@ _BLOCKED_DOMAINS = [
     "brunch.co.kr",
 ]
 
-# 결론 섹션 패턴
-_CONCLUSION_RE = re.compile(r"#{2,3}\s*(결론|요약|정리|마무리|맺음|종합)")
-
 
 def _programmatic_review(article: str) -> tuple[bool, list[str]]:
     """LLM 우회 불가한 프로그래밍 검증.
@@ -48,7 +46,7 @@ def _programmatic_review(article: str) -> tuple[bool, list[str]]:
     failures: list[str] = []
 
     # 1. 결론 섹션 체크
-    if _CONCLUSION_RE.search(article):
+    if CONCLUSION_KEYWORDS_RE.search(article):
         failures.append("결론/요약/정리 섹션이 존재합니다.")
 
     # 2. 차단 도메인 인용 체크
@@ -84,11 +82,12 @@ async def reviewer_node(state: ResearchState) -> dict:
     # ── Step 1: 프로그래밍 검증 (LLM 우회 불가) ──
     prog_passed, prog_failures = _programmatic_review(article)
     if not prog_passed:
-        logger.warning(f"[Reviewer] Programmatic check FAILED: {prog_failures}")
+        logger.warning("[Reviewer] Programmatic check FAILED: %s", prog_failures)
         feedback = "프로그래밍 검증 실패:\n" + "\n".join(f"- {f}" for f in prog_failures)
         return {
             "review_feedback": feedback,
             "retry_count": state.get("retry_count", 0) + 1,
+            "review_score": 0,
         }
 
     # ── Step 2: LLM 크로스 모델 리뷰 ──
@@ -113,14 +112,14 @@ async def reviewer_node(state: ResearchState) -> dict:
         feedback = result.feedback
 
     except Exception as e:
-        logger.warning(f"[Reviewer] Structured output failed: {e}. Defaulting to pass.")
+        logger.warning("[Reviewer] Structured output failed: %s. Defaulting to pass.", e)
         score = 80
         feedback = ""
 
     # v4: 프로그래밍 검증 통과 = primary gate 통과.
     # LLM 스코어 < 60일 때만 retry 트리거 (극히 낮은 품질만 걸러냄)
     passed = score >= 60
-    logger.info(f"[Reviewer] LLM Score: {score}, Pass: {passed}")
+    logger.info("[Reviewer] LLM Score: %d, Pass: %s", score, passed)
 
     if passed:
         return {
@@ -129,7 +128,7 @@ async def reviewer_node(state: ResearchState) -> dict:
             "review_score": score,
         }
     else:
-        logger.info(f"[Reviewer] Score < 60, triggering retry. Feedback: {feedback[:200]}")
+        logger.info("[Reviewer] Score < 60, triggering retry. Feedback: %s", feedback[:200])
         return {
             "review_feedback": feedback,
             "retry_count": state.get("retry_count", 0) + 1,

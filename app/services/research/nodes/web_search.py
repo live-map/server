@@ -90,27 +90,29 @@ def _boost_trusted_credibility(source: SourceItem) -> SourceItem:
 
 
 async def _enrich_with_jina(sources: list[SourceItem]) -> list[SourceItem]:
-    """content_snippet이 짧은 출처를 Jina Reader로 보강합니다."""
+    """content_snippet이 짧은 출처를 Jina Reader로 병렬 보강합니다."""
     reader = JinaReader()
-    enriched = []
+    sem = asyncio.Semaphore(5)
 
-    for source in sources:
-        snippet = source.get("content_snippet", "")
-        if len(snippet) < 200:
-            content = await reader.extract(source["url"], max_chars=1500)
-            if content and len(content) > len(snippet):
-                source = SourceItem(
-                    title=source["title"],
-                    url=source["url"],
-                    source_type=source["source_type"],
-                    description=source["description"],
-                    content_snippet=content[:1500],
-                    credibility=source["credibility"],
-                )
-                logger.debug(f"[WebSearch] Enriched via Jina: {source['title'][:40]}")
-        enriched.append(source)
+    async def _enrich_one(source: SourceItem) -> SourceItem:
+        async with sem:
+            snippet = source.get("content_snippet", "")
+            if len(snippet) < 200:
+                content = await reader.extract(source["url"], max_chars=1500)
+                if content and len(content) > len(snippet):
+                    enriched = SourceItem(
+                        title=source["title"],
+                        url=source["url"],
+                        source_type=source["source_type"],
+                        description=source["description"],
+                        content_snippet=content[:1500],
+                        credibility=source["credibility"],
+                    )
+                    logger.debug("[WebSearch] Enriched via Jina: %s", source["title"][:40])
+                    return enriched
+            return source
 
-    return enriched
+    return await asyncio.gather(*[_enrich_one(s) for s in sources])
 
 
 async def web_search_node(state: ResearchState) -> dict:
@@ -120,7 +122,7 @@ async def web_search_node(state: ResearchState) -> dict:
         logger.warning("[WebSearch] No search queries provided")
         return {"web_sources": []}
 
-    logger.info(f"[WebSearch] Searching {len(queries)} queries")
+    logger.info("[WebSearch] Searching %d queries", len(queries))
 
     client = TavilyClient()
     tasks = [client.search(q, max_results=5) for q in queries]
@@ -132,7 +134,7 @@ async def web_search_node(state: ResearchState) -> dict:
 
     for result in results:
         if isinstance(result, Exception):
-            logger.error(f"[WebSearch] Query failed: {result}")
+            logger.error("[WebSearch] Query failed: %s", result)
             continue
         for source in result:
             if source["url"] in seen_urls:
@@ -144,19 +146,20 @@ async def web_search_node(state: ResearchState) -> dict:
                 filtered_count += 1
 
     if filtered_count:
-        logger.info(f"[WebSearch] Filtered out {filtered_count} irrelevant sources")
+        logger.info("[WebSearch] Filtered out %d irrelevant sources", filtered_count)
 
-    # Jina Reader로 짧은 snippet 보강 (상위 결과만)
+    # Jina Reader로 짧은 snippet 보강 (상위 결과만, 나머지 보존)
     if all_sources:
         short_count = sum(1 for s in all_sources if len(s.get("content_snippet", "")) < 200)
         if short_count > 0:
-            logger.info(f"[WebSearch] Enriching {short_count} sources with short snippets via Jina")
-            all_sources = await _enrich_with_jina(all_sources[:20])
+            logger.info("[WebSearch] Enriching %d sources with short snippets via Jina", short_count)
+            enriched = await _enrich_with_jina(all_sources[:20])
+            all_sources = enriched + all_sources[20:]
 
     # 신뢰 도메인 출처를 상위로 정렬
     all_sources.sort(
         key=lambda s: (0 if s["credibility"] == "HIGH" else 1, s["title"])
     )
 
-    logger.info(f"[WebSearch] Collected {len(all_sources)} unique relevant sources")
+    logger.info("[WebSearch] Collected %d unique relevant sources", len(all_sources))
     return {"web_sources": all_sources}

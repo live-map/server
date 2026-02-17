@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Sequence
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,11 @@ from app.models.poll_comment import PollComment
 from app.models.poll_option import PollOption
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_like(value: str) -> str:
+    """LIKE/ILIKE 패턴 특수문자 이스케이프."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class PollRepository:
@@ -29,12 +34,12 @@ class PollRepository:
         self.session.add(poll)
         await self.session.flush()
         await self.session.refresh(poll)
-        logger.debug(f"Created poll: {poll.id}")
+        logger.debug("Created poll: %s", poll.id)
         return poll
 
     async def get_by_id(self, poll_id: uuid.UUID) -> Poll | None:
         """ID로 여론조사 조회."""
-        stmt = select(Poll).where(Poll.id == poll_id, Poll.is_deleted == False)
+        stmt = select(Poll).where(Poll.id == poll_id, Poll.is_deleted.is_(False))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -48,7 +53,7 @@ class PollRepository:
                 selectinload(Poll.comments).selectinload(PollComment.user),
                 selectinload(Poll.user),
             )
-            .where(Poll.id == poll_id, Poll.is_deleted == False)
+            .where(Poll.id == poll_id, Poll.is_deleted.is_(False))
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -69,7 +74,7 @@ class PollRepository:
                 selectinload(Poll.options),
                 selectinload(Poll.user),
             )
-            .where(Poll.is_deleted == False)
+            .where(Poll.is_deleted.is_(False))
         )
 
         # 필터
@@ -78,8 +83,10 @@ class PollRepository:
         if poll_type:
             stmt = stmt.where(Poll.type == poll_type)
         if search:
+            safe = _escape_like(search)
             stmt = stmt.where(
-                Poll.title.ilike(f"%{search}%") | Poll.description.ilike(f"%{search}%")
+                Poll.title.ilike(f"%{safe}%", escape="\\")
+                | Poll.description.ilike(f"%{safe}%", escape="\\")
             )
 
         # 정렬
@@ -105,18 +112,28 @@ class PollRepository:
         search: str | None = None,
         status: str | None = None,
         poll_type: str | None = None,
+        sort: str = "popular",
     ) -> int:
-        """여론조사 총 개수."""
-        stmt = select(func.count()).select_from(Poll).where(Poll.is_deleted == False)
+        """여론조사 총 개수 (sort 필터 반영)."""
+        stmt = select(func.count()).select_from(Poll).where(Poll.is_deleted.is_(False))
 
         if status:
             stmt = stmt.where(Poll.status == status)
         if poll_type:
             stmt = stmt.where(Poll.type == poll_type)
         if search:
+            safe = _escape_like(search)
             stmt = stmt.where(
-                Poll.title.ilike(f"%{search}%") | Poll.description.ilike(f"%{search}%")
+                Poll.title.ilike(f"%{safe}%", escape="\\")
+                | Poll.description.ilike(f"%{safe}%", escape="\\")
             )
+
+        # sort 필터와 동일한 조건 적용
+        now = datetime.now(timezone.utc)
+        if sort == "ending_soon":
+            stmt = stmt.where(Poll.status == "ACTIVE", Poll.ends_at > now)
+        elif sort == "closed":
+            stmt = stmt.where(Poll.status == "CLOSED")
 
         result = await self.session.execute(stmt)
         return result.scalar_one()
@@ -125,7 +142,7 @@ class PollRepository:
         """여론조사 수정."""
         await self.session.flush()
         await self.session.refresh(poll)
-        logger.debug(f"Updated poll: {poll.id}")
+        logger.debug("Updated poll: %s", poll.id)
         return poll
 
     async def soft_delete(self, poll_id: uuid.UUID) -> bool:
@@ -136,7 +153,7 @@ class PollRepository:
 
         poll.is_deleted = True
         await self.session.flush()
-        logger.debug(f"Soft deleted poll: {poll_id}")
+        logger.debug("Soft deleted poll: %s", poll_id)
         return True
 
     async def get_hot_debate(self) -> Poll | None:
@@ -151,7 +168,7 @@ class PollRepository:
                 selectinload(Poll.comments).selectinload(PollComment.user),
             )
             .where(
-                Poll.is_deleted == False,
+                Poll.is_deleted.is_(False),
                 Poll.status == "ACTIVE",
                 Poll.total_votes > 0,
             )
@@ -182,6 +199,15 @@ class PollRepository:
 
         return best_poll
 
+    async def atomic_increment_view_count(self, poll_id: uuid.UUID) -> None:
+        """조회수 원자적 증가 (SQL UPDATE)."""
+        stmt = (
+            update(Poll)
+            .where(Poll.id == poll_id, Poll.is_deleted.is_(False))
+            .values(view_count=Poll.view_count + 1)
+        )
+        await self.session.execute(stmt)
+
     async def get_suggested(self, limit: int = 10) -> Sequence[Poll]:
         """유저 제안 여론조사 목록."""
         stmt = (
@@ -191,7 +217,7 @@ class PollRepository:
                 selectinload(Poll.user),
             )
             .where(
-                Poll.is_deleted == False,
+                Poll.is_deleted.is_(False),
                 Poll.status == "ACTIVE",
                 Poll.type == "SUGGESTED",
             )

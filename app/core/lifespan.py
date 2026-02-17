@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
@@ -48,7 +48,7 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)
 
     # Create timestamped log filename for this session
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     log_filename = f"grapoll_{timestamp}.log"
     log_path = os.path.join(log_dir, log_filename)
     _current_log_file = log_path
@@ -62,9 +62,11 @@ def setup_logging():
     except OSError:
         pass
 
-    file_handler = logging.FileHandler(
+    file_handler = RotatingFileHandler(
         log_path,
         encoding="utf-8",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
     )
     file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter(
@@ -88,7 +90,7 @@ def setup_logging():
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
     # Log startup
-    logger.info(f"Logging initialized - session log: {log_path}")
+    logger.info("Logging initialized - session log: %s", log_path)
 
 
 def cleanup_old_logs(keep_days: int = 7):
@@ -97,7 +99,7 @@ def cleanup_old_logs(keep_days: int = 7):
     if not os.path.exists(log_dir):
         return
 
-    cutoff_time = datetime.now().timestamp() - (keep_days * 24 * 60 * 60)
+    cutoff_time = datetime.now(timezone.utc).timestamp() - (keep_days * 24 * 60 * 60)
     removed_count = 0
 
     for filename in os.listdir(log_dir):
@@ -117,7 +119,7 @@ def cleanup_old_logs(keep_days: int = 7):
                     pass
 
     if removed_count > 0:
-        logger.info(f"Cleaned up {removed_count} old log files (older than {keep_days} days)")
+        logger.info("Cleaned up %d old log files (older than %d days)", removed_count, keep_days)
 
 
 @asynccontextmanager
@@ -143,7 +145,7 @@ async def lifespan(app: FastAPI):
             logger.info("Research Agent disabled (API keys not configured)")
     except Exception as e:
         app.state.research_service = None
-        logger.warning(f"Research Agent initialization failed: {e}")
+        logger.warning("Research Agent initialization failed: %s", e)
 
     print("\n" + "=" * 60)
     print("  Grapoll API - 여론조사 플랫폼")

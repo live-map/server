@@ -99,7 +99,7 @@ async def generate_presigned_url(
     """
     # Check if S3 is available
     if not s3_service.is_available:
-        logger.error(f"S3 upload attempted but service not available. User: {current_user.sub}")
+        logger.error(f"S3 upload attempted but service not available. User: {current_user.user_id}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Media upload service is not available. Please contact administrator.",

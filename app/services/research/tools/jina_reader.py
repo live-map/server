@@ -33,5 +33,5 @@ class JinaReader:
                     content = data.get("data", {}).get("content", "")
                     return content[:max_chars] if content else ""
         except Exception as e:
-            logger.debug(f"[JinaReader] Failed to extract {url[:60]}: {e}")
+            logger.debug("[JinaReader] Failed to extract %s: %s", url[:60], e)
         return ""

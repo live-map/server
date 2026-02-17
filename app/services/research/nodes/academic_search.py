@@ -18,7 +18,7 @@ async def academic_search_node(state: ResearchState) -> dict:
         logger.info("[AcademicSearch] No academic queries, skipping")
         return {"academic_sources": []}
 
-    logger.info(f"[AcademicSearch] Searching {len(queries)} queries (sequential)")
+    logger.info("[AcademicSearch] Searching %d queries (sequential)", len(queries))
 
     client = SemanticScholarClient()
     all_sources: list[SourceItem] = []
@@ -32,11 +32,11 @@ async def academic_search_node(state: ResearchState) -> dict:
                     seen_urls.add(source["url"])
                     all_sources.append(source)
         except Exception as e:
-            logger.error(f"[AcademicSearch] Query failed: {e}")
+            logger.error("[AcademicSearch] Query failed: %s", e)
 
         # rate limit 방지: 쿼리 간 1초 대기
         if i < len(queries) - 1:
             await asyncio.sleep(1)
 
-    logger.info(f"[AcademicSearch] Collected {len(all_sources)} unique papers")
+    logger.info("[AcademicSearch] Collected %d unique papers", len(all_sources))
     return {"academic_sources": all_sources}

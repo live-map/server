@@ -91,7 +91,7 @@ class PollService:
         await self.session.commit()
         # 관계 데이터 포함하여 다시 로드
         poll = await self.poll_repo.get_by_id_with_details(created.id)
-        logger.info(f"Poll created: {created.id} by user {user_id}")
+        logger.info("Poll created: %s by user %s", created.id, user_id)
         return poll
 
     async def get_poll(self, poll_id: uuid.UUID) -> Poll | None:
@@ -114,9 +114,11 @@ class PollService:
             limit=limit, offset=offset, sort=sort, search=search,
         )
 
-    async def count_polls(self, search: str | None = None) -> int:
-        """여론조사 총 개수."""
-        return await self.poll_repo.count(search=search)
+    async def count_polls(
+        self, search: str | None = None, sort: str = "popular"
+    ) -> int:
+        """여론조사 총 개수 (sort 필터 반영)."""
+        return await self.poll_repo.count(search=search, sort=sort)
 
     async def update_poll(
         self,
@@ -138,6 +140,9 @@ class PollService:
         if description is not None:
             poll.description = description
         if status is not None:
+            # 상태 전이 규칙: CLOSED → ACTIVE 불가
+            if poll.status == "CLOSED" and status == "ACTIVE":
+                raise ValueError("종료된 여론조사는 다시 활성화할 수 없습니다.")
             poll.status = status
 
         updated = await self.poll_repo.update(poll)
@@ -165,9 +170,6 @@ class PollService:
         return await self.poll_repo.get_suggested(limit)
 
     async def increment_view_count(self, poll_id: uuid.UUID) -> None:
-        """조회수 증가."""
-        poll = await self.poll_repo.get_by_id(poll_id)
-        if poll:
-            poll.view_count += 1
-            await self.session.flush()
-            await self.session.commit()
+        """조회수 원자적 증가."""
+        await self.poll_repo.atomic_increment_view_count(poll_id)
+        await self.session.commit()

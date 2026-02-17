@@ -12,6 +12,6 @@ Structure:
 - dto/commentTreeNode.py  : Tree structure DTO
 """
 
-from app.api.v1.comment.commentController import router
+from app.api.v1.comment.controller import router
 
 __all__ = ["router"]

@@ -6,9 +6,9 @@ Pydantic schemas for Poll API endpoints.
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, HttpUrl, Tag
 
 
 # ========================================
@@ -23,13 +23,12 @@ class OptionCreate(BaseModel):
 
 class OptionResponse(BaseModel):
     """선택지 응답."""
+    model_config = ConfigDict(from_attributes=True, validate_by_name=True, validate_by_alias=True)
+
     id: uuid.UUID
     text: str
+    order: int = 0
     vote_count: int = Field(alias="voteCount", default=0)
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
 
 
 # ========================================
@@ -38,27 +37,24 @@ class OptionResponse(BaseModel):
 
 class SourceCreate(BaseModel):
     """출처 생성 요청."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     title: str = Field(..., min_length=1, max_length=200)
-    url: str = Field(..., min_length=1)
+    url: HttpUrl
     source_type: str = Field(alias="sourceType", default="OTHER")
     description: str | None = None
-
-    class Config:
-        populate_by_name = True
 
 
 class SourceResponse(BaseModel):
     """출처 응답."""
+    model_config = ConfigDict(from_attributes=True, validate_by_name=True, validate_by_alias=True)
+
     id: uuid.UUID
     title: str
     url: str
     source_type: str = Field(alias="sourceType")
     description: str | None = None
     created_at: datetime = Field(alias="createdAt")
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
 
 
 # ========================================
@@ -67,6 +63,8 @@ class SourceResponse(BaseModel):
 
 class PollCreate(BaseModel):
     """여론조사 생성 요청."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
     image_url: str | None = Field(None, alias="imageUrl")
@@ -77,32 +75,29 @@ class PollCreate(BaseModel):
     options: list[OptionCreate] = Field(..., min_length=2, max_length=10)
     sources: list[SourceCreate] | None = None
 
-    class Config:
-        populate_by_name = True
-
 
 class PollUpdate(BaseModel):
     """여론조사 수정 요청."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     title: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
-    status: str | None = None
-
-    class Config:
-        populate_by_name = True
+    status: Literal["ACTIVE", "CLOSED", "DRAFT"] | None = None
 
 
 class UserBrief(BaseModel):
     """유저 간략 정보."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str | None = None
     name: str | None = None
     image: str | None = None
 
-    class Config:
-        from_attributes = True
-
 
 class PollCardResponse(BaseModel):
     """여론조사 카드 응답 (목록용)."""
+    model_config = ConfigDict(from_attributes=True, validate_by_name=True, validate_by_alias=True)
+
     id: uuid.UUID
     title: str
     description: str | None = None
@@ -118,13 +113,11 @@ class PollCardResponse(BaseModel):
     options: list[OptionResponse] = []
     user: UserBrief | None = None
 
-    class Config:
-        from_attributes = True
-        populate_by_name = True
-
 
 class PollDetailResponse(PollCardResponse):
     """여론조사 상세 응답."""
+    model_config = ConfigDict(from_attributes=True, validate_by_name=True, validate_by_alias=True)
+
     starts_at: datetime | None = Field(None, alias="startsAt")
     user_id: str = Field(alias="userId")
     updated_at: datetime = Field(alias="updatedAt")
@@ -132,10 +125,7 @@ class PollDetailResponse(PollCardResponse):
     comments: list["PollCommentResponse"] = []
     ai_content: str | None = Field(None, alias="aiContent")
     ai_updated_at: datetime | None = Field(None, alias="aiUpdatedAt")
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    average_slider_value: float | None = Field(None, alias="averageSliderValue")
 
 
 class PollListResponse(BaseModel):
@@ -152,64 +142,74 @@ class PollListResponse(BaseModel):
 
 class CastVoteBinary(BaseModel):
     """BINARY / SINGLE_CHOICE / EMOJI_REACTION 투표."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     interaction_type: Literal["BINARY", "SINGLE_CHOICE", "EMOJI_REACTION"] = Field(alias="interactionType")
     option_id: uuid.UUID = Field(alias="optionId")
-
-    class Config:
-        populate_by_name = True
 
 
 class CastVoteSlider(BaseModel):
     """SLIDER 투표."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     interaction_type: Literal["SLIDER"] = Field(alias="interactionType")
     slider_value: int = Field(alias="sliderValue", ge=0, le=100)
-
-    class Config:
-        populate_by_name = True
 
 
 class CastVoteMultiple(BaseModel):
     """MULTIPLE_CHOICE 투표."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     interaction_type: Literal["MULTIPLE_CHOICE"] = Field(alias="interactionType")
     selected_option_ids: list[uuid.UUID] = Field(alias="selectedOptionIds", min_length=1)
-
-    class Config:
-        populate_by_name = True
 
 
 class CastVoteRanking(BaseModel):
     """RANKING 투표."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     interaction_type: Literal["RANKING"] = Field(alias="interactionType")
     ranking_data: list[uuid.UUID] = Field(alias="rankingData", min_length=1)
 
-    class Config:
-        populate_by_name = True
+
+def _vote_discriminator(v: dict) -> str:
+    """CastVoteRequest 판별자: interactionType 또는 interaction_type 필드로 분기."""
+    if isinstance(v, dict):
+        return v.get("interactionType") or v.get("interaction_type", "BINARY")
+    return getattr(v, "interaction_type", "BINARY")
 
 
-CastVoteRequest = CastVoteBinary | CastVoteSlider | CastVoteMultiple | CastVoteRanking
+CastVoteRequest = Annotated[
+    Union[
+        Annotated[CastVoteBinary, Tag("BINARY")],
+        Annotated[CastVoteBinary, Tag("SINGLE_CHOICE")],
+        Annotated[CastVoteBinary, Tag("EMOJI_REACTION")],
+        Annotated[CastVoteSlider, Tag("SLIDER")],
+        Annotated[CastVoteMultiple, Tag("MULTIPLE_CHOICE")],
+        Annotated[CastVoteRanking, Tag("RANKING")],
+    ],
+    Discriminator(_vote_discriminator),
+]
 
 
 class VoteResponse(BaseModel):
     """투표 응답."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     success: bool
     poll_id: uuid.UUID = Field(alias="pollId")
     vote_data: dict = Field(alias="voteData")
 
-    class Config:
-        populate_by_name = True
-
 
 class UserVoteResponse(BaseModel):
     """사용자 투표 현황 응답."""
+    model_config = ConfigDict(from_attributes=True, validate_by_name=True, validate_by_alias=True)
+
     id: uuid.UUID
     option_id: uuid.UUID | None = Field(None, alias="optionId")
     slider_value: int | None = Field(None, alias="sliderValue")
     selected_option_ids: list | None = Field(None, alias="selectedOptionIds")
     ranking_data: list | None = Field(None, alias="rankingData")
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
 
 
 # ========================================
@@ -235,6 +235,8 @@ class HotDebateOption(BaseModel):
 
 class HotDebateResponse(BaseModel):
     """핫 디베이트 응답 — 다중 pollType 지원."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     id: uuid.UUID
     title: str
     poll_type: str = Field(alias="pollType")
@@ -245,12 +247,11 @@ class HotDebateResponse(BaseModel):
     con_percent: float | None = Field(None, alias="conPercent")
     # 다중 옵션 타입
     options: list[HotDebateOption] | None = None
+    # scale 전용
+    scale_average: float | None = Field(None, alias="scaleAverage")
     # 공통
     total_votes: int = Field(alias="totalVotes")
     comments: list[HotDebateComment] = []
-
-    class Config:
-        populate_by_name = True
 
 
 # ========================================
@@ -259,16 +260,17 @@ class HotDebateResponse(BaseModel):
 
 class PollCommentCreate(BaseModel):
     """여론조사 댓글 생성 요청."""
-    content: str = Field(..., min_length=1)
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
+    content: str = Field(..., min_length=1, max_length=2000)
     parent_id: uuid.UUID | None = Field(None, alias="parentId")
     option_id: uuid.UUID | None = Field(None, alias="optionId")
-
-    class Config:
-        populate_by_name = True
 
 
 class PollCommentResponse(BaseModel):
     """여론조사 댓글 응답."""
+    model_config = ConfigDict(from_attributes=True, validate_by_name=True, validate_by_alias=True)
+
     id: uuid.UUID
     poll_id: uuid.UUID = Field(alias="pollId")
     user_id: str = Field(alias="userId")
@@ -276,15 +278,12 @@ class PollCommentResponse(BaseModel):
     user_image: str | None = Field(None, alias="userImage")
     content: str
     option_id: uuid.UUID | None = Field(None, alias="optionId")
+    parent_id: uuid.UUID | None = Field(None, alias="parentId")
     likes: int = 0
     depth: int = 0
     created_at: datetime = Field(alias="createdAt")
     is_deleted: bool = Field(False, alias="isDeleted")
     replies: list["PollCommentResponse"] = []
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
 
 
 # ========================================
@@ -293,38 +292,19 @@ class PollCommentResponse(BaseModel):
 
 class ResearchStatusResponse(BaseModel):
     """리서치 상태 응답."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     status: str = Field(description="pending | running | completed | failed")
     poll_id: uuid.UUID = Field(alias="pollId")
     error: str | None = None
 
-    class Config:
-        populate_by_name = True
-
 
 class ResearchTriggerResponse(BaseModel):
     """리서치 트리거 응답."""
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
     status: str
     poll_id: uuid.UUID = Field(alias="pollId")
-
-    class Config:
-        populate_by_name = True
-
-
-class ResearchMetricsResponse(BaseModel):
-    """리서치 메트릭스 응답 — 투자 대시보드용."""
-    poll_id: uuid.UUID = Field(alias="pollId")
-    total_sources_found: int = Field(alias="totalSourcesFound")
-    korean_source_ratio: float = Field(alias="koreanSourceRatio")
-    execution_time_seconds: float = Field(alias="executionTimeSeconds")
-    retry_count: int = Field(alias="retryCount")
-    review_score: int = Field(alias="reviewScore")
-    has_table: bool = Field(alias="hasTable")
-    has_blockquote: bool = Field(alias="hasBlockquote")
-    article_length: int = Field(alias="articleLength")
-    confidence: dict = Field(default_factory=dict)
-
-    class Config:
-        populate_by_name = True
 
 
 # Update forward refs

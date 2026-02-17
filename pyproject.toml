@@ -24,10 +24,12 @@ dependencies = [
     "fastapi-nextauth-jwt>=0.2.4", # Decode NextAuth JWE tokens
     # AWS S3 (for media uploads)
     "boto3>=1.34.0",
+    # Rate limiting
+    "slowapi>=0.1.9",
     # AI Research Agent
-    "langgraph>=0.4.0",
-    "langchain-anthropic>=0.3.0",
-    "langchain-openai>=0.3.0",
+    "langgraph>=0.4.0,<0.5",
+    "langchain-anthropic>=0.3.0,<0.5",
+    "langchain-openai>=0.3.0,<0.5",
     "tavily-python>=0.5.0",
 ]
 
