@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from sqlalchemy import text
 
@@ -41,7 +42,7 @@ app = FastAPI(
 app.state.limiter = limiter
 
 # CORS middleware for Next.js frontend
-_cors_origins = [str(settings.FRONTEND_URL)]
+_cors_origins = [str(settings.FRONTEND_URL).rstrip("/")]
 if settings.DEBUG:
     _cors_origins.extend([
         "http://localhost:3000",
@@ -56,6 +57,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "Cookie"],
 )
 
+
+# Rate limiting middleware (must be after CORS)
+app.add_middleware(SlowAPIMiddleware)
 
 # X-Request-ID middleware
 @app.middleware("http")
