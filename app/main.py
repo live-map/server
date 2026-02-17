@@ -6,11 +6,15 @@ API docs: http://localhost:8000/docs
 """
 
 import logging
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 
 from app.api.v1.router import api_router
@@ -19,6 +23,9 @@ from app.core.database import AsyncSessionLocal
 from app.core.lifespan import lifespan
 
 logger = logging.getLogger(__name__)
+
+# Rate limiter (global default: 60 requests/minute per IP)
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 app = FastAPI(
@@ -29,6 +36,9 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+# Attach rate limiter to app state
+app.state.limiter = limiter
 
 # CORS middleware for Next.js frontend
 _cors_origins = [str(settings.FRONTEND_URL)]
@@ -45,6 +55,26 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "Cookie"],
 )
+
+
+# X-Request-ID middleware
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Attach a unique X-Request-ID to every request/response."""
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+# Rate limit exceeded handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Return 429 when rate limit is exceeded."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please try again later."},
+    )
 
 
 # Global exception handler
