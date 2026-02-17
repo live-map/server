@@ -6,76 +6,25 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.interpreter import CurrentUser
-from app.core.config import settings
+from app.api.v1.auth.dto.schemas import (
+    AuthResponse,
+    AuthUrlResponse,
+    LogoutRequest,
+    OAuthCallbackRequest,
+    TokenRefreshRequest,
+    TokenResponse,
+    UserResponse,
+)
+from app.api.v1.auth.jwt_guard import CurrentUser
+from app.api.v1.auth.oauth import get_authorization_url, get_provider_config
+from app.api.v1.auth.service import authenticate_oauth, refresh_access_token, revoke_refresh_token
 from app.core.database import get_db
-from app.services.auth.oauth import get_authorization_url, get_provider_config
-from app.services.auth.service import authenticate_oauth, refresh_access_token, revoke_refresh_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-# ============================================================
-# Request/Response Schemas / DTO
-# ============================================================
-
-
-class OAuthCallbackRequest(BaseModel):
-    """Request body for OAuth callback."""
-
-    code: str
-    state: str | None = None
-    redirect_uri: str
-
-
-class TokenRefreshRequest(BaseModel):
-    """Request body for token refresh."""
-
-    refresh_token: str
-
-
-class LogoutRequest(BaseModel):
-    """Request body for logout."""
-
-    refresh_token: str | None = None
-
-
-class AuthResponse(BaseModel):
-    """Response for successful authentication."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "Bearer"
-    user: dict
-
-
-class TokenResponse(BaseModel):
-    """Response for token refresh."""
-
-    access_token: str
-    token_type: str = "Bearer"
-
-
-class AuthUrlResponse(BaseModel):
-    """Response containing OAuth authorization URL."""
-
-    url: str
-    state: str
-
-
-class UserResponse(BaseModel):
-    """Response for current user info."""
-
-    id: str
-    email: str | None
-    name: str | None
-    image: str | None
-    role: str
 
 
 # ============================================================

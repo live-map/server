@@ -1,10 +1,8 @@
 """
-Interpreter module - JWT authentication guards and token validation.
-
-Validates JWT access tokens issued by the backend auth service.
+Interpreter module - re-exports JWT authentication guards from auth module.
 """
 
-from app.api.v1.interpreter.jwt_guard import (
+from app.api.v1.auth.jwt_guard import (
     CurrentAdmin,
     CurrentUser,
     CurrentUserOptional,

@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
 from app.models.user import User
-from app.services.auth.jwt import create_access_token, create_refresh_token
-from app.services.auth.oauth import exchange_code_for_token, fetch_user_profile
+from app.api.v1.auth.jwt import create_access_token, create_refresh_token
+from app.api.v1.auth.oauth import exchange_code_for_token, fetch_user_profile
 
 logger = logging.getLogger(__name__)
 

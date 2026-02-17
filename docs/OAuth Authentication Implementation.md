@@ -69,7 +69,7 @@ async def get_oauth_authorize_url(
     return AuthUrlResponse(url=url, state=state)
 ```
 
-**OAuth Service**: `app/services/auth/oauth.py`
+**OAuth Service**: `app/api/v1/auth/oauth.py`
 
 ```python
 def get_authorization_url(provider: str, redirect_uri: str, state: str) -> str:
@@ -86,7 +86,7 @@ Authlib의 `AsyncOAuth2Client`가 `client_id`, `redirect_uri`, `scope`, `state`�
 
 ### Provider 설정
 
-`app/services/auth/oauth.py`에서 각 Provider의 엔드포인트를 관리합니다:
+`app/api/v1/auth/oauth.py`에서 각 Provider의 엔드포인트를 관리합니다:
 
 ```python
 OAUTH_PROVIDERS = {
@@ -156,7 +156,7 @@ async def oauth_callback(
     return AuthResponse(**result)
 ```
 
-**Auth Service**: `app/services/auth/service.py`
+**Auth Service**: `app/api/v1/auth/service.py`
 
 ```python
 async def authenticate_oauth(db, provider, code, redirect_uri):
@@ -167,7 +167,7 @@ async def authenticate_oauth(db, provider, code, redirect_uri):
     # oauth_tokens에 access_token, refresh_token 등이 포함됨
 ```
 
-**OAuth Service**: `app/services/auth/oauth.py`
+**OAuth Service**: `app/api/v1/auth/oauth.py`
 
 ```python
 async def exchange_code_for_token(provider, code, redirect_uri):
@@ -189,7 +189,7 @@ Authlib가 `fetch_token()`을 통해 Authorization Code를 Provider의 Token End
 
 ### 구현 위치
 
-**OAuth Service**: `app/services/auth/oauth.py`
+**OAuth Service**: `app/api/v1/auth/oauth.py`
 
 ```python
 async def fetch_user_profile(provider: str, access_token: str) -> dict:
@@ -228,7 +228,7 @@ async def fetch_user_profile(provider: str, access_token: str) -> dict:
 
 ### 구현 위치
 
-**Auth Service**: `app/services/auth/service.py`
+**Auth Service**: `app/api/v1/auth/service.py`
 
 ```python
 async def get_or_create_user(db, provider, profile, oauth_tokens):
@@ -271,7 +271,7 @@ async def get_or_create_user(db, provider, profile, oauth_tokens):
 
 ### 구현 위치
 
-**JWT Service**: `app/services/auth/jwt.py`
+**JWT Service**: `app/api/v1/auth/jwt.py`
 
 ```python
 def create_access_token(user_id, email, name, role):
@@ -293,7 +293,7 @@ def create_refresh_token(user_id):
     return token, expires_at
 ```
 
-**Auth Service**: `app/services/auth/service.py`
+**Auth Service**: `app/api/v1/auth/service.py`
 
 ```python
 # JWT 토큰 발급
@@ -335,7 +335,7 @@ db.add(session)
 
 ### JWT Guard (인증 인터셉터)
 
-**위치**: `app/api/v1/interpreter/jwt_guard.py`
+**위치**: `app/api/v1/auth/jwt_guard.py`
 
 ```python
 async def get_current_user(request, token_from_header):
@@ -388,7 +388,7 @@ POST /api/v1/auth/refresh
 
 ### 구현 위치
 
-**Auth Service**: `app/services/auth/service.py`
+**Auth Service**: `app/api/v1/auth/service.py`
 
 ```python
 async def refresh_access_token(db, refresh_token):
@@ -425,16 +425,16 @@ Refresh Token을 sessions 테이블에서 삭제합니다. Access Token은 만�
 server/app/
 ├── api/v1/
 │   ├── auth/
-│   │   ├── __init__.py
-│   │   └── controller.py        # Auth 엔드포인트 (authorize, callback, refresh, logout, me)
+│   │   ├── __init__.py          # 모듈 export (router + JWT 가드)
+│   │   ├── controller.py        # Auth 엔드포인트 (authorize, callback, refresh, logout, me)
+│   │   ├── service.py           # 인증 비즈니스 로직 (사용자 생성, 토큰 발급, 갱신)
+│   │   ├── oauth.py             # Authlib OAuth 클라이언트 (URL 생성, 코드 교환, 프로필 조회)
+│   │   ├── jwt.py               # JWT 토큰 생성/검증 (PyJWT)
+│   │   ├── jwt_guard.py         # JWT 검증 가드 (CurrentUser, CurrentAdmin)
+│   │   └── dto/
+│   │       └── schemas.py       # Request/Response DTO (Pydantic)
 │   └── interpreter/
-│       ├── __init__.py
-│       └── jwt_guard.py         # JWT 검증 가드 (CurrentUser, CurrentAdmin)
-├── services/auth/
-│   ├── __init__.py
-│   ├── oauth.py                 # Authlib OAuth 클라이언트 (URL 생성, 코드 교환, 프로필 조회)
-│   ├── jwt.py                   # JWT 토큰 생성/검증 (PyJWT)
-│   └── service.py               # 인증 비즈니스 로직 (사용자 생성, 토큰 발급, 갱신)
+│       └── __init__.py          # auth/jwt_guard 재export (하위 호환)
 ├── models/
 │   ├── user.py                  # User 모델
 │   ├── account.py               # Account 모델 (OAuth 계정 연동)
