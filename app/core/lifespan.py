@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)
 
     # Create timestamped log filename for this session
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     log_filename = f"grapoll_{timestamp}.log"
     log_path = os.path.join(log_dir, log_filename)
     _current_log_file = log_path
@@ -95,7 +95,7 @@ def cleanup_old_logs(keep_days: int = 7):
     if not os.path.exists(log_dir):
         return
 
-    cutoff_time = datetime.now().timestamp() - (keep_days * 24 * 60 * 60)
+    cutoff_time = datetime.now(timezone.utc).timestamp() - (keep_days * 24 * 60 * 60)
     removed_count = 0
 
     for filename in os.listdir(log_dir):

@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.poll.repository import PollRepository
+from app.api.v1.poll.service import PollNotFoundError
 from app.api.v1.poll.vote.repository import VoteRepository
 from app.models.poll import Poll
 from app.models.poll_option import PollOption
@@ -62,7 +63,6 @@ class VoteService:
         # 여론조사 확인
         poll = await self.poll_repo.get_by_id_with_details(poll_id)
         if poll is None:
-            from app.api.v1.poll.service import PollNotFoundError
             raise PollNotFoundError(f"Poll {poll_id} not found")
 
         if poll.status != "ACTIVE":
@@ -142,7 +142,7 @@ class VoteService:
         except IntegrityError:
             await self.session.rollback()
             raise AlreadyVotedError("이미 투표하셨습니다.")
-        logger.info(f"Vote cast: user={user_id}, poll={poll_id}, type={interaction_type}")
+        logger.info("Vote cast: user=%s, poll=%s, type=%s", user_id, poll_id, interaction_type)
         return created
 
     async def get_user_vote(

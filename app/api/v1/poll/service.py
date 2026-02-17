@@ -91,7 +91,7 @@ class PollService:
         await self.session.commit()
         # 관계 데이터 포함하여 다시 로드
         poll = await self.poll_repo.get_by_id_with_details(created.id)
-        logger.info(f"Poll created: {created.id} by user {user_id}")
+        logger.info("Poll created: %s by user %s", created.id, user_id)
         return poll
 
     async def get_poll(self, poll_id: uuid.UUID) -> Poll | None:
@@ -140,6 +140,9 @@ class PollService:
         if description is not None:
             poll.description = description
         if status is not None:
+            # 상태 전이 규칙: CLOSED → ACTIVE 불가
+            if poll.status == "CLOSED" and status == "ACTIVE":
+                raise ValueError("종료된 여론조사는 다시 활성화할 수 없습니다.")
             poll.status = status
 
         updated = await self.poll_repo.update(poll)

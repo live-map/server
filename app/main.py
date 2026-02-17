@@ -31,7 +31,7 @@ app = FastAPI(
 )
 
 # CORS middleware for Next.js frontend
-_cors_origins = [settings.FRONTEND_URL]
+_cors_origins = [str(settings.FRONTEND_URL)]
 if settings.DEBUG:
     _cors_origins.extend([
         "http://localhost:3000",
@@ -51,7 +51,7 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected exceptions with consistent error response."""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
     content: dict = {"detail": "Internal server error"}
     if settings.DEBUG:
         content["type"] = type(exc).__name__
@@ -81,7 +81,7 @@ async def health_check():
             await session.execute(text("SELECT 1"))
         return {"status": "healthy", "service": settings.APP_NAME}
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error("Health check failed: %s", e)
         return JSONResponse(
             status_code=503,
             content={"status": "unhealthy", "service": settings.APP_NAME, "error": "database connection failed"},

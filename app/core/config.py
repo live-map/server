@@ -4,6 +4,7 @@ Application configuration using Pydantic Settings.
 Environment variables are loaded from .env file.
 """
 
+from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
     AUTH_SECRET: str
 
     # Frontend URL for CORS and cookie settings
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: AnyHttpUrl = "http://localhost:3000"
 
     # AWS S3 Configuration
     AWS_S3_BUCKET_NAME: str | None = None

@@ -34,7 +34,7 @@ class PollRepository:
         self.session.add(poll)
         await self.session.flush()
         await self.session.refresh(poll)
-        logger.debug(f"Created poll: {poll.id}")
+        logger.debug("Created poll: %s", poll.id)
         return poll
 
     async def get_by_id(self, poll_id: uuid.UUID) -> Poll | None:
@@ -142,7 +142,7 @@ class PollRepository:
         """여론조사 수정."""
         await self.session.flush()
         await self.session.refresh(poll)
-        logger.debug(f"Updated poll: {poll.id}")
+        logger.debug("Updated poll: %s", poll.id)
         return poll
 
     async def soft_delete(self, poll_id: uuid.UUID) -> bool:
@@ -153,7 +153,7 @@ class PollRepository:
 
         poll.is_deleted = True
         await self.session.flush()
-        logger.debug(f"Soft deleted poll: {poll_id}")
+        logger.debug("Soft deleted poll: %s", poll_id)
         return True
 
     async def get_hot_debate(self) -> Poll | None:

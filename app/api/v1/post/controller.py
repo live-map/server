@@ -70,9 +70,9 @@ async def get_like_service(
     return PostLikeService(session)
 
 
-postServiceDep = Annotated[PostService, Depends(get_post_service)]
-mediaServiceDep = Annotated[PostMediaService, Depends(get_media_service)]
-likeServiceDep = Annotated[PostLikeService, Depends(get_like_service)]
+PostServiceDep = Annotated[PostService, Depends(get_post_service)]
+MediaServiceDep = Annotated[PostMediaService, Depends(get_media_service)]
+LikeServiceDep = Annotated[PostLikeService, Depends(get_like_service)]
 
 # ========================================
 # Post Endpoints
@@ -89,7 +89,7 @@ async def create_post(
     data: PostCreate,
     current_user: CurrentUser,
     postService: Annotated[PostService, Depends(get_post_service)],
-    mediaService: mediaServiceDep,
+    mediaService: MediaServiceDep,
 ) -> PostResponse:
     """
     새 게시글을 작성합니다.
@@ -173,7 +173,7 @@ async def create_post(
 )
 async def list_posts(
     postService: Annotated[PostService, Depends(get_post_service)],
-    likeService: likeServiceDep,
+    likeService: LikeServiceDep,
     current_user: CurrentUserOptional = None,
     limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 20,
     offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
@@ -248,8 +248,8 @@ async def list_posts(
 )
 async def get_post(
     post_id: uuid.UUID,
-    service: postServiceDep,
-    likeService: likeServiceDep,
+    service: PostServiceDep,
+    likeService: LikeServiceDep,
     current_user: CurrentUserOptional = None,
 ) -> PostResponse:
     """게시글 상세 정보를 조회합니다."""
@@ -314,7 +314,7 @@ async def update_post(
     post_id: uuid.UUID,
     data: PostUpdate,
     current_user: CurrentUser,
-    service: postServiceDep,
+    service: PostServiceDep,
 ) -> PostResponse:
     """
     게시글을 수정합니다.
@@ -358,7 +358,7 @@ async def update_post(
 async def delete_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
-    service: postServiceDep,
+    service: PostServiceDep,
 ) -> None:
     """
     게시글을 삭제합니다 (소프트 삭제).
@@ -391,7 +391,7 @@ async def delete_post(
 async def hard_delete_post(
     post_id: uuid.UUID,
     current_admin: CurrentAdmin,
-    service: postServiceDep,
+    service: PostServiceDep,
 ) -> None:
     """
     게시글을 완전 삭제합니다 (하드 삭제).
@@ -423,7 +423,7 @@ async def hard_delete_post(
 async def like_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
-    likeService: likeServiceDep,
+    likeService: LikeServiceDep,
 ) -> LikeResponse:
     """
     게시글에 좋아요를 추가합니다.
@@ -458,7 +458,7 @@ async def like_post(
 async def unlike_post(
     post_id: uuid.UUID,
     current_user: CurrentUser,
-    likeService: likeServiceDep,
+    likeService: LikeServiceDep,
 ) -> LikeResponse:
     """
     게시글 좋아요를 취소합니다.
@@ -482,8 +482,8 @@ async def unlike_post(
 )
 async def get_post_likers(
     post_id: uuid.UUID,
-    likeService: likeServiceDep,
-    postService: postServiceDep,
+    likeService: LikeServiceDep,
+    postService: PostServiceDep,
     limit: Annotated[int, Query(ge=1, le=100, description="최대 조회 수")] = 20,
     offset: Annotated[int, Query(ge=0, description="건너뛸 수")] = 0,
 ) -> PostLikersListResponse:
@@ -534,8 +534,8 @@ async def add_media_to_post(
     post_id: uuid.UUID,
     data: PostMediaCreate,
     current_user: CurrentUser,
-    postService: postServiceDep,
-    mediaService: mediaServiceDep,
+    postService: PostServiceDep,
+    mediaService: MediaServiceDep,
 ) -> PostMediaResponse:
     """
     기존 게시글에 미디어를 추가합니다.
@@ -595,8 +595,8 @@ async def delete_media_from_post(
     post_id: uuid.UUID,
     media_id: uuid.UUID,
     current_user: CurrentUser,
-    postService: postServiceDep,
-    mediaService: mediaServiceDep,
+    postService: PostServiceDep,
+    mediaService: MediaServiceDep,
 ) -> None:
     """
     게시글의 특정 미디어를 삭제합니다.

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, HttpUrl, Tag
 
 
 # ========================================
@@ -40,7 +40,7 @@ class SourceCreate(BaseModel):
     model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
 
     title: str = Field(..., min_length=1, max_length=200)
-    url: str = Field(..., min_length=1)
+    url: HttpUrl
     source_type: str = Field(alias="sourceType", default="OTHER")
     description: str | None = None
 
@@ -262,7 +262,7 @@ class PollCommentCreate(BaseModel):
     """여론조사 댓글 생성 요청."""
     model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
 
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=2000)
     parent_id: uuid.UUID | None = Field(None, alias="parentId")
     option_id: uuid.UUID | None = Field(None, alias="optionId")
 

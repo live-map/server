@@ -25,7 +25,7 @@ class VoteRepository:
         self.session.add(vote)
         await self.session.flush()
         await self.session.refresh(vote)
-        logger.debug(f"Created vote: {vote.id}")
+        logger.debug("Created vote: %s", vote.id)
         return vote
 
     async def get_by_user_and_poll(

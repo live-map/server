@@ -387,19 +387,16 @@ async def update_poll(
             description=data.description,
             status=data.status,
         )
-    except PollNotFoundError:
-        raise HTTPException(status_code=404, detail="Poll not found")
-    except PollPermissionError:
-        raise HTTPException(status_code=403, detail="You are not the owner")
+    except PollNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Poll not found") from exc
+    except PollPermissionError as exc:
+        raise HTTPException(status_code=403, detail="You are not the owner") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return PollCardResponse(
-        id=poll.id, title=poll.title, description=poll.description,
-        imageUrl=poll.image_url, category=poll.category,
-        type=poll.type, status=poll.status,
-        interactionType=poll.interaction_type,
-        totalVotes=poll.total_votes, viewCount=poll.view_count,
-        createdAt=poll.created_at, endsAt=poll.ends_at,
-    )
+    # Reload with eager-loaded relationships for _poll_to_card
+    poll = await service.get_poll_with_details(poll_id)
+    return _poll_to_card(poll)
 
 
 @router.delete(
@@ -415,10 +412,10 @@ async def delete_poll(
     """여론조사를 삭제합니다. 작성자만 가능."""
     try:
         await service.delete_poll(poll_id=poll_id, user_id=current_user.user_id)
-    except PollNotFoundError:
-        raise HTTPException(status_code=404, detail="Poll not found")
-    except PollPermissionError:
-        raise HTTPException(status_code=403, detail="You are not the owner")
+    except PollNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Poll not found") from exc
+    except PollPermissionError as exc:
+        raise HTTPException(status_code=403, detail="You are not the owner") from exc
 
 
 # ========================================
@@ -454,14 +451,14 @@ async def cast_vote(
             poll_id=poll_id,
             **kwargs,
         )
-    except PollNotActiveError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except AlreadyVotedError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except InvalidOptionError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except PollNotFoundError:
-        raise HTTPException(status_code=404, detail="Poll not found")
+    except PollNotActiveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AlreadyVotedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidOptionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PollNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Poll not found") from exc
 
     return VoteResponse(
         success=True,
@@ -524,8 +521,8 @@ async def create_comment(
             parent_id=data.parent_id,
             option_id=data.option_id,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if comment is None:
         raise HTTPException(status_code=404, detail="Poll or parent comment not found")
 
@@ -566,6 +563,7 @@ async def list_comments(
             userImage=node.user_image,
             content=node.content,
             optionId=node.option_id,
+            parentId=node.parent_id,
             likes=node.likes,
             depth=node.depth,
             createdAt=node.created_at,
