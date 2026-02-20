@@ -297,6 +297,7 @@ class ResearchStatusResponse(BaseModel):
     status: str = Field(description="pending | running | completed | failed")
     poll_id: uuid.UUID = Field(alias="pollId")
     error: str | None = None
+    current_step: str | None = Field(None, alias="currentStep")
 
 
 class ResearchTriggerResponse(BaseModel):
