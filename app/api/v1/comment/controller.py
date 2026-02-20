@@ -134,10 +134,29 @@ async def list_comments_flat(
             detail="post_id 또는 user_id 중 하나는 반드시 제공해야 합니다.",
         )
 
-    # user_id만 제공된 경우: 사용자별 댓글 수만 반환
+    # user_id만 제공된 경우: 사용자별 댓글 목록 + 수 반환
     if user_id and not post_id:
+        comments = await service.get_user_comments(user_id, limit=limit, offset=offset)
         total = await service.get_user_comment_count(user_id)
-        return CommentListResponse(items=[], total=total)
+
+        items = [
+            CommentResponse(
+                id=comment.id,
+                post_id=comment.post_id,
+                user_id=comment.user_id,
+                user_name=comment.user.name if comment.user else None,
+                parent_id=comment.parent_id,
+                content=comment.content,
+                depth=comment.depth,
+                created_at=comment.created_at,
+                updated_at=comment.updated_at,
+                is_deleted=comment.is_deleted,
+                reply_count=0,
+            )
+            for comment in comments
+        ]
+
+        return CommentListResponse(items=items, total=total)
 
     # post_id가 제공된 경우: 기존 로직
     comments = await service.get_flat_comments(post_id, limit=limit, offset=offset)
