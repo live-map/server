@@ -27,6 +27,7 @@ engine = create_async_engine(
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=30,
     pool_recycle=1800,
+    connect_args={"statement_cache_size": 0},  # asyncpg 캐시 비활성화 (스키마 변경 호환)
 )
 
 # Session factory
