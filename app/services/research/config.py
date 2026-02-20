@@ -25,6 +25,7 @@ class AISettings(BaseSettings):
     TAVILY_API_KEY: str = ""
     SEMANTIC_SCHOLAR_API_KEY: str = ""
     GOOGLE_FACT_CHECK_API_KEY: str = ""
+    UNSPLASH_ACCESS_KEY: str = ""
 
     # 기본 모델
     AI_MODEL: str = "claude-sonnet-4-5-20250929"
@@ -50,7 +51,7 @@ class AISettings(BaseSettings):
     def research_enabled(self) -> bool:
         """Check if minimum required API keys are configured."""
         has_llm = bool(self.ANTHROPIC_API_KEY or self.OPENAI_API_KEY)
-        return has_llm and bool(self.TAVILY_API_KEY)
+        return has_llm  # Tavily 키 없어도 DuckDuckGo fallback 가능
 
     def _resolve_model(self, role: str) -> str:
         """역할에 맞는 모델명을 반환합니다."""

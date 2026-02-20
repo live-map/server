@@ -8,8 +8,11 @@ import logging
 import uuid
 from typing import Annotated, Literal
 
+import sqlalchemy as sa
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Poll
 
 from app.api.v1.interpreter import CurrentAdmin, CurrentUser, CurrentUserOptional
 from app.api.v1.poll.dto.schemas import (
@@ -182,6 +185,9 @@ def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDeta
 # Poll Endpoints
 # ========================================
 
+DEMO_USER_ID = "demo_hackathon_user"
+
+
 @router.post(
     "",
     response_model=PollDetailResponse,
@@ -190,12 +196,16 @@ def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDeta
 )
 async def create_poll(
     data: PollCreate,
-    current_user: CurrentUser,
     service: PollServiceDep,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: CurrentUserOptional = None,
 ) -> PollDetailResponse:
-    """새 여론조사를 생성합니다. 인증 필요."""
+    """새 여론조사를 생성합니다. 비로그인 시 데모 유저로 생성."""
+    user_id = current_user.user_id if current_user else DEMO_USER_ID
+
     poll = await service.create_poll(
-        user_id=current_user.user_id,
+        user_id=user_id,
         title=data.title,
         description=data.description,
         image_url=data.image_url,
@@ -212,6 +222,40 @@ async def create_poll(
             for s in data.sources
         ] if data.sources else None,
     )
+
+    poll_id = poll.id
+
+    # 썸네일 자동 생성 (image_url이 없을 때)
+    if not poll.image_url:
+        async def _fetch_thumbnail():
+            from app.core.database import AsyncSessionLocal
+            from app.services.research.tools.unsplash_client import fetch_thumbnail
+            try:
+                url = await fetch_thumbnail(data.title, data.category)
+                if url:
+                    async with AsyncSessionLocal() as bg_session:
+                        await bg_session.execute(
+                            sa.update(Poll)
+                            .where(Poll.id == poll_id)
+                            .values(image_url=url)
+                        )
+                        await bg_session.commit()
+            except Exception:
+                pass  # 썸네일 실패는 무시
+
+        background_tasks.add_task(_fetch_thumbnail)
+
+    # 리서치 자동 트리거
+    research_service = getattr(request.app.state, "research_service", None)
+    if research_service is not None and research_service.enabled:
+        from app.core.database import AsyncSessionLocal
+
+        async def _run_research():
+            async with AsyncSessionLocal() as bg_session:
+                await research_service.run_research(poll_id, bg_session)
+
+        background_tasks.add_task(_run_research)
+
     return _poll_to_detail(poll)
 
 
@@ -430,11 +474,14 @@ async def delete_poll(
 async def cast_vote(
     poll_id: uuid.UUID,
     data: CastVoteRequest,
-    current_user: CurrentUser,
+    current_user: CurrentUserOptional,
     service: VoteServiceDep,
 ) -> VoteResponse:
-    """여론조사에 투표합니다. 인증 필요."""
+    """여론조사에 투표합니다. 비로그인도 허용."""
     try:
+        # 비로그인 사용자는 anonymous UUID
+        user_id = current_user.user_id if current_user else f"anon-{uuid.uuid4()}"
+
         # Discriminated union에서 필드 추출
         kwargs = {"interaction_type": data.interaction_type}
         if isinstance(data, CastVoteBinary):
@@ -447,7 +494,7 @@ async def cast_vote(
             kwargs["ranking_data"] = data.ranking_data
 
         vote = await service.cast_vote(
-            user_id=current_user.user_id,
+            user_id=user_id,
             poll_id=poll_id,
             **kwargs,
         )
@@ -666,15 +713,14 @@ async def trigger_research(
 @router.get(
     "/{poll_id}/research/status",
     response_model=ResearchStatusResponse,
-    summary="리서치 상태 조회 (관리자)",
+    summary="리서치 상태 조회",
 )
 async def get_research_status(
     poll_id: uuid.UUID,
-    current_admin: CurrentAdmin,
     request: Request,
 ) -> ResearchStatusResponse:
-    """여론조사 팩트 리서치의 진행 상태를 조회합니다. 관리자 전용."""
-    research_service = request.app.state.research_service
+    """여론조사 팩트 리서치의 진행 상태를 조회합니다."""
+    research_service = getattr(request.app.state, "research_service", None)
     if research_service is None:
         raise HTTPException(status_code=503, detail="Research service is not available")
 
@@ -683,6 +729,7 @@ async def get_research_status(
         status=status_info["status"],
         pollId=poll_id,
         error=status_info.get("error"),
+        currentStep=status_info.get("current_step"),
     )
 
 
