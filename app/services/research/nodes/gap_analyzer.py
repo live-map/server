@@ -14,6 +14,7 @@ from app.services.research.nodes.web_search import _is_relevant_source
 from app.services.research.prompts.gap_analyzer_prompt import GAP_SYSTEM, GAP_USER
 from app.services.research.schemas import GapReport
 from app.services.research.state import ResearchState, SourceItem
+from app.services.research.tools.duckduckgo_client import DuckDuckGoClient
 from app.services.research.tools.tavily_client import TavilyClient
 from app.services.research.utils import format_perspectives_inline
 
@@ -77,7 +78,10 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
             "[GapAnalyzer] Found gaps in %s. Running %d follow-up queries",
             report.gap_perspectives, len(report.follow_up_queries),
         )
-        client = TavilyClient()
+        if ai_settings.TAVILY_API_KEY:
+            client = TavilyClient()
+        else:
+            client = DuckDuckGoClient()
         for query in report.follow_up_queries[:3]:
             try:
                 results = await client.search(query, max_results=3)
