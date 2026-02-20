@@ -13,7 +13,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 
 # revision identifiers, used by Alembic.
@@ -41,7 +40,7 @@ def upgrade() -> None:
     op.drop_column('feeds', 'embedding')
 
     # Step 3: Create new column with 1024 dimensions (BGE-M3)
-    op.add_column('feeds', sa.Column('embedding', Vector(1024), nullable=True))
+    op.add_column('feeds', sa.Column('embedding', sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
@@ -57,4 +56,4 @@ def downgrade() -> None:
     op.drop_column('feeds', 'embedding')
 
     # Recreate old column with 384 dimensions
-    op.add_column('feeds', sa.Column('embedding', Vector(384), nullable=True))
+    op.add_column('feeds', sa.Column('embedding', sa.Text(), nullable=True))

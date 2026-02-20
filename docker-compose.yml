@@ -56,7 +56,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - model_cache:/root/.cache
+      - model_cache:/home/appuser/.cache
 
 volumes:
   postgres_data:

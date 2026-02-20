@@ -1,5 +1,5 @@
-# Livemap Backend Dockerfile
-# Optimized for Oracle Cloud Free Tier (ARM64)
+# Grapoll Backend Dockerfile
+# Deployed on Railway (Hobby)
 
 FROM python:3.11-slim
 
@@ -16,7 +16,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management
@@ -28,14 +27,15 @@ COPY pyproject.toml uv.lock ./
 # Install Python dependencies
 RUN uv sync --frozen --no-dev
 
-# Download spaCy model
-RUN uv run python -m spacy download en_core_web_lg
-
 # Copy application code
 COPY . .
 
-# Create directories for sessions and cache
-RUN mkdir -p /app/sessions /root/.cache
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
+    && mkdir -p /app/sessions /app/logs /home/appuser/.cache \
+    && chown -R appuser:appuser /app /home/appuser
+
+USER appuser
 
 # Expose port
 EXPOSE 8000

@@ -9,12 +9,11 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 
 # revision identifiers, used by Alembic.
 revision: str = '19464169de84'
-down_revision: Union[str, Sequence[str], None] = None
+down_revision: Union[str, Sequence[str], None] = '000000000001'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -40,7 +39,7 @@ def upgrade() -> None:
     sa.Column('verification_status', sa.String(length=50), nullable=True),
     sa.Column('fake_probability', sa.Float(), nullable=True),
     sa.Column('subjectivity_score', sa.Float(), nullable=True),
-    sa.Column('embedding', Vector(384), nullable=True),
+    sa.Column('embedding', sa.Text(), nullable=True),
     sa.Column('published_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

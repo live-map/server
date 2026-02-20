@@ -19,7 +19,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 
 # revision identifiers, used by Alembic.
@@ -46,7 +45,7 @@ def upgrade() -> None:
         sa.Column('canonical_title', sa.String(500), nullable=False),
 
         # Embedding for semantic similarity (BGE-M3: 1024 dims)
-        sa.Column('embedding', Vector(1024), nullable=True),
+        sa.Column('embedding', sa.Text(), nullable=True),
 
         # Key facts for update detection
         sa.Column('key_entities', sa.Text(), nullable=True),
@@ -120,21 +119,12 @@ def upgrade() -> None:
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
     )
 
-    # Create index for embedding similarity search
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ix_events_embedding_cosine
-        ON events USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100);
-    """)
 
 
 def downgrade() -> None:
     """
     Drop events and articles tables.
     """
-    # Drop index first
-    op.execute("DROP INDEX IF EXISTS ix_events_embedding_cosine;")
-
     # Drop tables (articles first due to foreign key)
     op.drop_table('articles')
     op.drop_table('events')
