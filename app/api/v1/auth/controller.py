@@ -49,6 +49,7 @@ async def get_oauth_authorize_url(
     """
     try:
         get_provider_config(provider)
+        logger.debug(f"redirect_uri: {redirect_uri}")
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
