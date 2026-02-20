@@ -92,9 +92,7 @@ class User(Base):
     poll_comments: Mapped[list["PollComment"]] = relationship(
         "PollComment", back_populates="user", cascade="all, delete-orphan"
     )
-    votes: Mapped[list["Vote"]] = relationship(
-        "Vote", back_populates="user", cascade="all, delete-orphan"
-    )
+    # votes relationship removed — votes.user_id no longer has FK to users
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"

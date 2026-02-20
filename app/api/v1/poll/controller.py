@@ -474,11 +474,14 @@ async def delete_poll(
 async def cast_vote(
     poll_id: uuid.UUID,
     data: CastVoteRequest,
-    current_user: CurrentUser,
+    current_user: CurrentUserOptional,
     service: VoteServiceDep,
 ) -> VoteResponse:
-    """여론조사에 투표합니다. 인증 필요."""
+    """여론조사에 투표합니다. 비로그인도 허용."""
     try:
+        # 비로그인 사용자는 anonymous UUID
+        user_id = current_user.user_id if current_user else f"anon-{uuid.uuid4()}"
+
         # Discriminated union에서 필드 추출
         kwargs = {"interaction_type": data.interaction_type}
         if isinstance(data, CastVoteBinary):
@@ -491,7 +494,7 @@ async def cast_vote(
             kwargs["ranking_data"] = data.ranking_data
 
         vote = await service.cast_vote(
-            user_id=current_user.user_id,
+            user_id=user_id,
             poll_id=poll_id,
             **kwargs,
         )

@@ -15,7 +15,6 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.poll import Poll
     from app.models.poll_option import PollOption
-    from app.models.user import User
 
 
 class Vote(Base):
@@ -46,8 +45,7 @@ class Vote(Base):
 
     # Foreign keys
     user_id: Mapped[str] = mapped_column(
-        String(25),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        String(50),
         nullable=False,
         index=True,
     )
@@ -77,7 +75,6 @@ class Vote(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="votes")
     poll: Mapped["Poll"] = relationship("Poll", back_populates="votes")
     option: Mapped[Optional["PollOption"]] = relationship("PollOption", back_populates="votes")
 
