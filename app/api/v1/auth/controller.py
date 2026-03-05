@@ -19,7 +19,7 @@ from app.api.v1.auth.dto.schemas import (
 )
 from app.api.v1.auth.jwt_guard import CurrentUser
 from app.api.v1.auth.oauth import get_authorization_url, get_provider_config
-from app.api.v1.auth.service import authenticate_oauth, refresh_access_token, revoke_refresh_token
+from app.api.v1.auth.service import authenticate_oauth, refresh_access_token
 from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -105,18 +105,18 @@ async def oauth_callback(
     "/refresh",
     response_model=TokenResponse,
 )
-async def refresh_token(
-    body: TokenRefreshRequest,
-    db: AsyncSession = Depends(get_db),
-):
+async def refresh_token(body: TokenRefreshRequest):
     """
     Refresh an access token using a valid refresh token.
 
     The frontend sends its refresh token when the access token expires.
     Returns a new access token without requiring the user to log in again.
+
+    This is a stateless operation — the refresh token is a JWT and is
+    validated by decoding it (no DB lookup needed).
     """
     try:
-        result = await refresh_access_token(db, body.refresh_token)
+        result = refresh_access_token(body.refresh_token)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -127,18 +127,15 @@ async def refresh_token(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    body: LogoutRequest,
-    db: AsyncSession = Depends(get_db),
-):
+async def logout(body: LogoutRequest):
     """
-    Logout - revoke the refresh token.
+    Logout endpoint.
 
-    The frontend sends the refresh token to invalidate it.
-    The access token will expire naturally (short-lived).
+    With stateless JWT refresh tokens, server-side revocation is not performed.
+    The client clears its cookies. The access token expires naturally (30 min).
     """
-    if body.refresh_token:
-        await revoke_refresh_token(db, body.refresh_token)
+    # No-op on the server side. Client clears cookies.
+    pass
 
 
 @router.get("/me", response_model=UserResponse)

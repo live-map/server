@@ -1,8 +1,9 @@
 """
 Authentication service - orchestrates OAuth, user management, and token issuance.
+
+Refresh tokens are now stateless JWTs (no DB storage needed).
 """
 
-import hashlib
 import logging
 
 from sqlalchemy import select
@@ -10,15 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
 from app.models.user import User
-from app.api.v1.auth.jwt import create_access_token, create_refresh_token
+from app.api.v1.auth.jwt import create_access_token, create_refresh_token, decode_refresh_token
 from app.api.v1.auth.oauth import exchange_code_for_token, fetch_user_profile
 
 logger = logging.getLogger(__name__)
-
-
-def _hash_token(token: str) -> str:
-    """Hash a refresh token for storage."""
-    return hashlib.sha256(token.encode()).hexdigest()
 
 
 async def get_or_create_user(
@@ -145,28 +141,19 @@ async def authenticate_oauth(
     # Step 3: Find or create user
     user = await get_or_create_user(db, provider, profile, oauth_tokens)
 
-    # Step 4: Issue our own tokens
+    # Step 4: Issue our own tokens (both are stateless JWTs)
     access_token = create_access_token(
         user_id=user.id,
         email=user.email,
         name=user.name,
         role=user.role,
     )
-    refresh_token, refresh_expires_at = create_refresh_token(user.id)
-
-    # Store refresh token hash in sessions table
-    from app.models.session import Session as SessionModel
-    from cuid2 import cuid_wrapper
-
-    generate_cuid = cuid_wrapper()
-    session_record = SessionModel(
-        id=generate_cuid(),
-        session_token=_hash_token(refresh_token),
+    refresh_token = create_refresh_token(
         user_id=user.id,
-        expires=refresh_expires_at,
+        email=user.email,
+        name=user.name,
+        role=user.role,
     )
-    db.add(session_record)
-    await db.commit()
 
     return {
         "access_token": access_token,
@@ -182,13 +169,15 @@ async def authenticate_oauth(
     }
 
 
-async def refresh_access_token(db: AsyncSession, refresh_token: str) -> dict:
+def refresh_access_token(refresh_token: str) -> dict:
     """
-    Validate refresh token and issue a new access token.
+    Validate a JWT refresh token and issue a new access token.
+
+    Stateless: decodes the refresh JWT and creates a new access token
+    from its claims. No DB lookup needed.
 
     Args:
-        db: Database session
-        refresh_token: The refresh token string
+        refresh_token: The refresh token JWT string
 
     Returns:
         Dict with new access_token
@@ -196,68 +185,23 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> dict:
     Raises:
         ValueError: If refresh token is invalid or expired
     """
-    from datetime import datetime, timezone
+    import jwt
 
-    from sqlalchemy import select
-
-    from app.models.session import Session as SessionModel
-
-    token_hash = _hash_token(refresh_token)
-
-    result = await db.execute(
-        select(SessionModel).where(SessionModel.session_token == token_hash)
-    )
-    session_record = result.scalar_one_or_none()
-
-    if not session_record:
-        raise ValueError("Invalid refresh token")
-
-    if session_record.expires < datetime.now(timezone.utc):
-        # Clean up expired token
-        await db.delete(session_record)
-        await db.commit()
+    try:
+        payload = decode_refresh_token(refresh_token)
+    except jwt.ExpiredSignatureError:
         raise ValueError("Refresh token has expired")
+    except jwt.InvalidTokenError as e:
+        raise ValueError(f"Invalid refresh token: {e}")
 
-    # Fetch user
-    result = await db.execute(
-        select(User).where(User.id == session_record.user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise ValueError("User not found")
-
-    # Issue new access token
     access_token = create_access_token(
-        user_id=user.id,
-        email=user.email,
-        name=user.name,
-        role=user.role,
+        user_id=payload["sub"],
+        email=payload.get("email"),
+        name=payload.get("name"),
+        role=payload.get("role", "USER"),
     )
 
     return {
         "access_token": access_token,
         "token_type": "Bearer",
     }
-
-
-async def revoke_refresh_token(db: AsyncSession, refresh_token: str) -> None:
-    """
-    Revoke (delete) a refresh token.
-
-    Args:
-        db: Database session
-        refresh_token: The refresh token string to revoke
-    """
-    from app.models.session import Session as SessionModel
-
-    token_hash = _hash_token(refresh_token)
-
-    result = await db.execute(
-        select(SessionModel).where(SessionModel.session_token == token_hash)
-    )
-    session_record = result.scalar_one_or_none()
-
-    if session_record:
-        await db.delete(session_record)
-        await db.commit()
