@@ -252,6 +252,15 @@ class CommentService:
         """게시글의 총 댓글 수 조회."""
         return await self.comment_repo.count_by_post(post_id)
 
+    async def get_user_comments(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Sequence[Comment]:
+        """특정 사용자의 댓글 목록 조회."""
+        return await self.comment_repo.get_by_user(user_id, limit, offset)
+
     async def get_user_comment_count(self, user_id: str) -> int:
         """특정 사용자의 총 댓글 수 조회."""
         return await self.comment_repo.count_by_user(user_id)

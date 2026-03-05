@@ -1,7 +1,6 @@
-"""
-Interpreter module - re-exports JWT authentication guards from auth module.
-"""
+"""Auth module - OAuth login, token management, JWT guards."""
 
+from app.api.v1.auth.controller import router
 from app.api.v1.auth.jwt_guard import (
     CurrentAdmin,
     CurrentUser,
@@ -13,6 +12,7 @@ from app.api.v1.auth.jwt_guard import (
 )
 
 __all__ = [
+    "router",
     "JWTPayload",
     "get_current_user",
     "get_current_user_optional",

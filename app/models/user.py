@@ -1,8 +1,8 @@
 """
-User model for authentication - mirrors the frontend Prisma User schema.
+User model for authentication.
 
-This model allows the backend to query user information from the shared database
-after validating the JWT token from NextAuth.
+The backend is the sole owner of user data. Users are created during
+OAuth authentication and queried for JWT token validation.
 """
 
 from datetime import datetime
@@ -34,13 +34,11 @@ class Role(str, Enum):
 
 class User(Base):
     """
-    User model matching the frontend Prisma User schema.
+    User model.
 
-    Table name: 'users' (matches Prisma @@map("users"))
+    Table name: 'users'
 
-    This model is read-only from the backend's perspective.
-    User creation/management is handled by the frontend (NextAuth).
-    The backend uses this to fetch user details after JWT validation.
+    Users are created by the backend auth service during OAuth login.
     """
 
     __tablename__ = "users"

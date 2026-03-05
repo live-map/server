@@ -20,8 +20,10 @@ dependencies = [
     "greenlet>=3.0.0",
     # Production utilities
     "tenacity>=8.2.0", # Retry with exponential backoff
-    # JWT Authentication (NextAuth JWE decryption)
-    "fastapi-nextauth-jwt>=0.2.4", # Decode NextAuth JWE tokens
+    # OAuth & JWT Authentication
+    "authlib>=1.3.0",
+    "PyJWT>=2.8.0",
+    "cuid2>=2.0.0",
     # AWS S3 (for media uploads)
     "boto3>=1.34.0",
     # Rate limiting

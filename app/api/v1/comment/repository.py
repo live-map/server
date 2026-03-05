@@ -259,6 +259,34 @@ class CommentRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def get_by_user(
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Sequence[Comment]:
+        """
+        특정 사용자의 댓글 목록 조회.
+
+        Args:
+            user_id: 사용자 ID
+            limit: 최대 조회 수
+            offset: 건너뛸 수
+
+        Returns:
+            Sequence[Comment]: 사용자의 댓글 목록
+        """
+        stmt = (
+            select(Comment)
+            .options(selectinload(Comment.user))
+            .where(Comment.user_id == user_id, Comment.is_deleted == False)
+            .order_by(Comment.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def count_by_user(self, user_id: str) -> int:
         """
         특정 사용자의 댓글 총 개수.

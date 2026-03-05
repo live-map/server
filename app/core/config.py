@@ -29,9 +29,11 @@ class Settings(BaseSettings):
     # Database (Frontend/Auth - shared with NextAuth for user data)
     AUTH_DATABASE_URL: str | None = None
 
-    # JWT/Auth Configuration
-    # This MUST match the AUTH_SECRET in the frontend's .env file
-    AUTH_SECRET: str
+    # JWT Configuration
+    JWT_SECRET: str = ""  # For signing our own JWTs (generate with: openssl rand -hex 32)
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # Frontend URL for CORS and cookie settings
     FRONTEND_URL: AnyHttpUrl = "http://localhost:3000"
