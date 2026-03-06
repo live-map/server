@@ -1,5 +1,5 @@
 # Grapoll Backend Dockerfile
-# Deployed on Railway (Hobby)
+# Deployed on Fly.io (Tokyo nrt)
 
 FROM python:3.11-slim
 
@@ -37,7 +37,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
 
 USER appuser
 
-# Expose port (Railway sets $PORT dynamically)
+# Expose port (Fly.io sets $PORT via fly.toml env)
 EXPOSE 8000
 
 # Run the application — use shell form to expand $PORT
