@@ -239,6 +239,7 @@ class HotDebateResponse(BaseModel):
 
     id: uuid.UUID
     title: str
+    image_url: str | None = Field(None, alias="imageUrl")
     poll_type: str = Field(alias="pollType")
     # binary/yesno 전용 (하위호환)
     pro_label: str | None = Field(None, alias="proLabel")

@@ -228,7 +228,7 @@ EU AI Act는 전면 금지(사회적 점수 부여 등) → 고위험 → 제한
         "user_idx": 4,
         "title": "고령 운전자 면허 반납 의무화해야 할까?",
         "description": "고령 운전자 교통사고 증가에 따른 면허 반납 정책의 방향을 논의합니다.",
-        "image_url": "https://images.unsplash.com/photo-1449965408869-ebd3fee6d4ca?w=800&h=400&fit=crop",
+        "image_url": "https://images.unsplash.com/photo-1494976388531-d1058494cdd8?w=800&h=400&fit=crop",
         "category": "사회",
         "poll_type": "OFFICIAL",
         "interaction_type": "SINGLE_CHOICE",
