@@ -339,6 +339,7 @@ async def get_hot_debate(
         return HotDebateResponse(
             id=poll.id,
             title=poll.title,
+            imageUrl=poll.image_url,
             pollType=poll_type,
             proLabel=opt_a.text,
             conLabel=opt_b.text,
@@ -368,6 +369,7 @@ async def get_hot_debate(
     return HotDebateResponse(
         id=poll.id,
         title=poll.title,
+        imageUrl=poll.image_url,
         pollType=poll_type,
         options=options,
         scaleAverage=scale_average,
