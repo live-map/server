@@ -1184,10 +1184,385 @@ CurrentAdmin = Annotated[JWTPayload, Depends(get_current_admin)]        # [3]
 
 ---
 
-## 8. Token Refresh Middleware (`refresh_middleware.py`)
+## 8. How Middleware Works in FastAPI (Prerequisite)
 
-> **Why pure ASGI, not `BaseHTTPMiddleware`?**
-> Starlette's `BaseHTTPMiddleware` runs the downstream handler in a separate async task via `call_next()`. This breaks SQLAlchemy's async session greenlet context, causing `MissingGreenlet` (`f405`) errors on any endpoint that uses DB sessions. The pure ASGI approach (`__call__(scope, receive, send)`) avoids this by keeping everything in the same async context.
+Before looking at the `TokenRefreshMiddleware` implementation, you need to understand how middleware works in FastAPI/Starlette. Without this, the `scope`, `receive`, `send` pattern won't make sense.
+
+> ### When to use FastAPI Middleware?
+
+To handle cross-cutting concerns that apply to **every request** — authentication, logging, rate limiting, CORS — without duplicating code in every route handler.
+
+> ### Syntax
+
+**How FastAPI Middleware works:**
+
+```
+# Success
+HTTP Request → Uvicorn(ASGI Server) → Middleware Stack → Router → Route Handler
+# Fail
+HTTP Request → Uvicorn(ASGI Server) → Middleware Stack → Failed (e.g. 401, 429)
+```
+
+FastAPI is built on **ASGI** (Asynchronous Server Gateway Interface). Unlike Spring's Servlet-based architecture (where Interceptors run after DispatcherServlet), ASGI middleware wraps the **entire application**. Every ASGI application — including every middleware — is an async callable with three parameters:
+
+```python
+async def app(scope: dict, receive: Callable, send: Callable) -> None:
+```
+
+**The ASGI Interface (equivalent to Spring's `HandlerInterceptor`):**
+
+```python
+class ASGIMiddleware:
+    """
+    scope   = request metadata dict (like HttpServletRequest)
+    receive = read request body     (like request.getInputStream())
+    send    = write response        (like HttpServletResponse)
+    """
+
+    def __init__(self, app: ASGIApp) -> None:            # [1]
+        self.app = app
+
+    async def __call__(                                   # [2]
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        # --- Pre-request logic (like preHandle) ---
+        #     Read/modify scope["headers"], scope["path"], etc.
+
+        await self.app(scope, receive, send)              # [3]
+
+        # --- Post-response (like afterCompletion) ---
+        #     By this point, the response is ALREADY sent.
+        #     You can log, but CANNOT modify the response here.
+```
+
+| Line | Explanation |
+|------|-------------|
+| `[1]` | `app` is the next ASGI application in the chain (another middleware, or the router). Stored during initialization — same as Spring where interceptors are beans. |
+| `[2]` | The ASGI interface — every request calls this method. This is both `preHandle()` and `afterCompletion()` combined into one method. |
+| `[3]` | Call the inner app. Like `return true` in Spring's `preHandle()` — passing the request to the next interceptor or handler. To reject a request (like `return false` in `preHandle()`), skip this call and write a response directly via `send`. |
+
+**`scope`** — A dict containing request metadata. Mutable and shared across the middleware stack:
+
+| Field | Type | Example |
+|-------|------|---------|
+| `type` | `str` | `"http"` (or `"websocket"`, `"lifespan"`) |
+| `method` | `str` | `"GET"` |
+| `path` | `str` | `"/api/v1/polls"` |
+| `query_string` | `bytes` | `b"sort=recent&limit=20"` |
+| `headers` | `list[tuple[bytes, bytes]]` | `[(b"authorization", b"Bearer eyJ...")]` |
+| `client` | `tuple[str, int]` | `("127.0.0.1", 52431)` |
+
+**`receive`** — Async function to read the request body:
+
+```python
+message = await receive()
+# message = {"type": "http.request", "body": b'{"title": "New Poll"}', "more_body": False}
+```
+
+**`send`** — Async function to write the response. HTTP responses are sent as **two sequential messages**:
+
+```python
+# Message 1: Status code + headers (sent first, exactly once)
+await send({"type": "http.response.start", "status": 200, "headers": [...]})
+
+# Message 2: Response body (sent after, one or more times)
+await send({"type": "http.response.body", "body": b'{"id": "abc123"}', "more_body": False})
+```
+
+Once `http.response.start` is sent, the status code and headers are **committed** — you cannot change them. This is why middleware must intercept this message *before* forwarding it (see "Intercepting the Response" example below).
+
+> **Things to notice!**
+>
+> **Why we don't use `BaseHTTPMiddleware`:** Starlette provides a simpler abstraction:
+>
+> ```python
+> from starlette.middleware.base import BaseHTTPMiddleware
+>
+> class SimpleMiddleware(BaseHTTPMiddleware):
+>     async def dispatch(self, request: Request, call_next) -> Response:
+>         response = await call_next(request)    # <-- the problem
+>         response.headers["x-custom"] = "value"
+>         return response
+> ```
+>
+> This looks simpler — but **`call_next()` internally spawns the downstream handler in a separate async task**:
+>
+> | Problem | Explanation |
+> |---------|-------------|
+> | **SQLAlchemy `MissingGreenlet`** | Async sessions use `greenlet` for context tracking. `call_next()` spawns a new task → greenlet context lost → `MissingGreenlet` error. |
+> | **Context variables broken** | `contextvars.ContextVar` values don't propagate back from the route handler to `dispatch()`. |
+> | **Response body buffered** | Entire response read into memory before `dispatch()` returns → breaks streaming, memory issues. |
+> | **Task cancellation** | Internal task group cancels downstream coroutines after `dispatch()` returns → can interrupt DB connection cleanup. |
+>
+> **This is why `TokenRefreshMiddleware` uses pure ASGI** — it avoids all issues by keeping everything in the same async context.
+
+> ### Implementation
+
+**Step 1: Build a pure ASGI middleware class**
+
+```python
+from starlette.types import ASGIApp, Scope, Receive, Send, Message
+
+class LoggingMiddleware:
+    def __init__(self, app: ASGIApp) -> None:                   # [1]
+        self.app = app
+
+    async def __call__(                                          # [2]
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        if scope["type"] != "http":                              # [3]
+            await self.app(scope, receive, send)
+            return
+
+        method = scope["method"]                                 # [4]
+        path = scope["path"]
+        print(f"→ {method} {path}")
+
+        await self.app(scope, receive, send)                     # [5]
+
+        print(f"← {method} {path} completed")                   # [6]
+```
+
+| Line | Explanation |
+|------|-------------|
+| `[1]` | `app` is the next application in the chain. `add_middleware()` passes it automatically. |
+| `[2]` | The ASGI interface — called on every request. |
+| `[3]` | Only handle HTTP requests. Pass through WebSocket and lifespan events unchanged. |
+| `[4]` | Pre-request logic — read request metadata from `scope`. |
+| `[5]` | Forward to the next middleware or route handler. Blocks until the response is fully sent. |
+| `[6]` | Post-response logic — runs after the response is sent. Can log, but cannot modify the response. |
+
+**Step 2: Register the middleware with `add_middleware()`**
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+app.add_middleware(CORSMiddleware, ...)                 # [1]
+app.add_middleware(TokenRefreshMiddleware)               # [2]
+app.add_middleware(LoggingMiddleware)                    # [3]
+```
+
+| Line | Explanation |
+|------|-------------|
+| `[1]` | Starlette processes in **reverse order** — last `add_middleware()` is outermost (runs first). So CORS runs first. |
+| `[2]` | Token refresh runs second. |
+| `[3]` | Logging runs third (innermost, closest to the route handler). |
+
+- `add_middleware(MiddlewareClass, **kwargs)` — registers the middleware and passes `kwargs` to the constructor (after `app`).
+- **Ordering matters** — unlike Spring's `.order()`, FastAPI uses call order: first added = outermost = runs first.
+- **Path filtering** — unlike Spring's `.addPathPatterns()` / `.excludePathPatterns()`, ASGI middleware has no built-in path filtering. You must check `scope["path"]` inside `__call__` manually:
+
+```python
+async def __call__(self, scope, receive, send):
+    # Equivalent to Spring's excludePathPatterns("/css/**", "/error")
+    skip_paths = ("/health", "/docs", "/openapi.json")
+    if scope["type"] != "http" or scope["path"].startswith(skip_paths):
+        await self.app(scope, receive, send)
+        return
+    # ... middleware logic
+```
+
+Request flow:
+
+```
+Request → CORS → TokenRefresh → Logging → Route Handler
+                                                 ↓
+Response ← CORS ← TokenRefresh ← Logging ← Route Handler
+```
+
+> ### Example
+
+**Intercepting the Response — Adding a custom response header (wrapping `send`)**
+
+<details>
+<summary>Step 1: Build the middleware</summary>
+
+```python
+class AddHeaderMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message: Message) -> None:    # [1]
+            if message["type"] == "http.response.start":     # [2]
+                headers = list(message.get("headers", []))   # [3]
+                headers.append(                              # [4]
+                    (b"x-request-id", b"abc123")
+                )
+                message["headers"] = headers                 # [5]
+            await send(message)                              # [6]
+
+        await self.app(scope, receive, send_wrapper)         # [7]
+```
+
+| Line | Explanation |
+|------|-------------|
+| `[1]` | Create a wrapper function with the same signature as `send`. |
+| `[2]` | Check if this is the headers message (not the body message). |
+| `[3]` | Get existing headers as a mutable list. |
+| `[4]` | Append a custom header. |
+| `[5]` | Replace headers in the message dict. |
+| `[6]` | Forward the (possibly modified) message to the original `send`. |
+| `[7]` | Pass `send_wrapper` instead of `send`. The inner app calls `send_wrapper` when writing the response — our wrapper intercepts it before it reaches the client. |
+
+</details>
+
+<details>
+<summary>Step 2: Register in app</summary>
+
+```python
+app.add_middleware(AddHeaderMiddleware)
+```
+
+</details>
+
+---
+
+**Modifying the Request — Injecting a new Authorization header (mutating `scope`)**
+
+<details>
+<summary>Step 1: Build the middleware</summary>
+
+```python
+class InjectAuthMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        scope["headers"] = [                                    # [1]
+            (k, v) for k, v in scope["headers"]
+            if k.lower() != b"authorization"
+        ]
+        scope["headers"].append(                                # [2]
+            (b"authorization", b"Bearer new-token-here")
+        )
+
+        await self.app(scope, receive, send)                    # [3]
+```
+
+| Line | Explanation |
+|------|-------------|
+| `[1]` | Filter out the old `Authorization` header. `scope` is mutable and shared — changes are visible to all downstream middleware and route handlers. |
+| `[2]` | Add a new `Authorization` header. The downstream route handler sees this new token instead of the original. |
+| `[3]` | Forward to the next middleware/handler. It reads `scope["headers"]` and sees the replaced header. |
+
+This is exactly what the `TokenRefreshMiddleware` does — it replaces the expired access token with a freshly created one.
+
+</details>
+
+<details>
+<summary>Step 2: Register in app</summary>
+
+```python
+app.add_middleware(InjectAuthMiddleware)
+```
+
+</details>
+
+---
+
+**Reading the Request Body (wrapping `receive`)**
+
+<details>
+<summary>Step 1: Build the middleware</summary>
+
+```python
+class BodyLoggingMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        body_parts = []
+
+        async def receive_wrapper():
+            message = await receive()                     # [1]
+            if message["type"] == "http.request":
+                body_parts.append(message.get("body", b"")) # [2]
+            return message                                # [3]
+
+        await self.app(scope, receive_wrapper, send)      # [4]
+        full_body = b"".join(body_parts)                  # [5]
+        print(f"Request body: {full_body}")
+```
+
+| Line | Explanation |
+|------|-------------|
+| `[1]` | Read the original request body chunk from the client. |
+| `[2]` | Save a copy of the body chunk for logging. |
+| `[3]` | Return the original message unchanged — the downstream app sees the same body. |
+| `[4]` | Pass `receive_wrapper` instead of `receive`. |
+| `[5]` | After the app finishes, `body_parts` contains all body chunks. |
+
+</details>
+
+<details>
+<summary>Step 2: Register in app</summary>
+
+```python
+app.add_middleware(BodyLoggingMiddleware)
+```
+
+</details>
+
+---
+
+**The Complete Picture — How a request flows through the middleware stack:**
+
+```
+Client sends: POST /api/v1/polls { "title": "..." }
+    │
+    ▼
+[Uvicorn] creates scope, receive, send
+    │
+    ▼
+[CORSMiddleware.__call__(scope, receive, send)]
+    │  Adds Access-Control-* headers to send_wrapper
+    ▼
+[TokenRefreshMiddleware.__call__(scope, receive, send_cors)]
+    │  Checks access token in scope["headers"]
+    │  If expired: decodes refresh token, creates new access token
+    │  Mutates scope["headers"] with new Authorization header
+    │  Wraps send_cors with send_token (adds X-New-Access-Token)
+    ▼
+[SlowAPIMiddleware.__call__(scope, receive, send_token)]
+    │  Checks rate limit
+    ▼
+[Router → Route → Endpoint]
+    │  Reads scope["headers"]["authorization"] → sees VALID token
+    │  Processes request, calls send_token({type: "http.response.start"})
+    │
+    │  send_token adds X-New-Access-Token header
+    │  ↓ forwards to send_cors
+    │  send_cors adds CORS headers
+    │  ↓ forwards to original send
+    │  Response headers sent to client
+    │
+    │  Endpoint calls send_token({type: "http.response.body"})
+    │  ↓ passes through to client
+    │
+    ▼
+Client receives response with X-New-Access-Token header
+```
+
+---
+
+## 9. Token Refresh Middleware (`refresh_middleware.py`)
+
+Now that we understand how ASGI middleware works, let's look at the actual implementation.
 
 ### File: `server/app/api/v1/auth/refresh_middleware.py`
 
@@ -1470,7 +1845,7 @@ class TokenRefreshMiddleware:                                           # [1]
 
 ---
 
-## 9. Database Models
+## 10. Database Models
 
 ### File: `server/app/models/user.py`
 
@@ -1593,7 +1968,7 @@ class Account(Base):                                                    # [1]
 
 ---
 
-## 10. Application Entry Point and Middleware Stack (`main.py`)
+## 11. Application Entry Point and Middleware Stack (`main.py`)
 
 ### File: `server/app/main.py`
 
