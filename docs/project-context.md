@@ -15,7 +15,9 @@
 | 언어 | Python 3.10+ | TypeScript 5 (strict) |
 | DB | PostgreSQL 16 (asyncpg) | PostgreSQL (NextAuth 세션용) |
 | 인증 | NextAuth JWE 디코딩 | NextAuth v5 (Google/Kakao OAuth) |
-| 배포 | Railway | Vercel |
+| 배포 | Fly.io Tokyo (nrt) | Vercel (kimanlee team) |
+| DB | Supabase Tokyo (PostgreSQL + pgvector) | - |
+| CI/CD | GitHub Actions → flyctl deploy | Vercel 자동 배포 |
 | 브랜치 | dev (메인) | - |
 
 ---
@@ -284,10 +286,10 @@ OAuth 버튼 → signInWithOAuth() → NextAuth → Google/Kakao
 
 | 항목 | 현재 | 비고 |
 |------|------|------|
-| 백엔드 | Railway | 비용 효율 연구 후 변경 예정 |
-| 프론트엔드 | Vercel | .vercel/ 설정 존재 |
-| DB | PostgreSQL 16 | Railway 또는 외부 |
-| CI/CD | GitHub Actions (OCI SSH, 레거시) | Railway 자동 배포로 전환 중 |
+| 백엔드 | Fly.io Tokyo (nrt) | grapoll-api.fly.dev |
+| 프론트엔드 | Vercel (kimanlee team) | grapoll.vercel.app |
+| DB | Supabase Tokyo (PostgreSQL 16 + pgvector) | AWS ap-northeast-1 |
+| CI/CD | GitHub Actions → flyctl deploy | `.github/workflows/fly-deploy.yml` |
 
 ---
 
@@ -295,8 +297,8 @@ OAuth 버튼 → signInWithOAuth() → NextAuth → Google/Kakao
 
 ### 코드 품질
 - [ ] tests/ 디렉토리 50+ 파일 레거시 → 정리 또는 재작성 필요
-- [ ] CI/CD yml이 OCI 기준 → Railway 전환 시 업데이트 필요
-- [ ] Dockerfile에 Railway PORT 환경변수 하드코딩
+- [x] CI/CD: GitHub Actions → flyctl deploy로 전환 완료
+- [x] Dockerfile: Fly.io fly.toml로 PORT 설정 관리
 - [ ] git status에 미추적 스크린샷 파일 다수 (.png)
 
 ### API 일관성

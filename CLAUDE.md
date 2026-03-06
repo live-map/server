@@ -43,7 +43,8 @@ app/
 ├── db/                    # 데이터베이스
 ├── models/                # SQLAlchemy 모델 (Poll, Vote, PollComment, Post, Comment, User)
 ├── services/              # 공통 서비스 (S3 등)
-└── main.py
+├── main.py
+fly.toml                   # Fly.io 배포 설정 (Tokyo nrt)
 ```
 
 ### 의존성 주입

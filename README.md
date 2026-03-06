@@ -1,29 +1,52 @@
-# Livemap Backend
+# Grapoll Backend
 
-실시간 글로벌 분쟁/뉴스 지도 서비스를 위한 자율 에이전트 기반 백엔드
+여론조사 플랫폼 Grapoll의 FastAPI 백엔드
+
+## 기술 스택
+
+| 항목 | 기술 |
+|------|------|
+| 프레임워크 | FastAPI 0.115+ |
+| 언어 | Python 3.10+ |
+| DB | PostgreSQL 16 (asyncpg + SQLAlchemy async) |
+| 인증 | NextAuth.js JWE (A256CBC-HS512) |
+| AI | LangGraph 리서치 파이프라인 (GPT-4o, Claude Sonnet) |
+| 배포 | Fly.io Tokyo (nrt) |
+| DB 호스팅 | Supabase Tokyo (PostgreSQL + pgvector) |
+| CI/CD | GitHub Actions → flyctl deploy |
 
 ## 아키텍처
 
-### 자율 에이전트 시스템 (NEW)
+```
+Controller (라우터) → Service (비즈니스 로직) → Repository (DB 쿼리)
+```
 
-LangGraph + ReAct 패턴 기반 자율 검증 시스템:
+의존성 주입(`Depends()`), async/await 일관 사용
 
-1. **다중 소스 트리거** - GDELT, Twitter, Telegram에서 실시간 이벤트 감지
-2. **자율 수집** - 에이전트가 관련 정보를 자동으로 수집/검증
-3. **LLM 분석** - GPT-4o-mini로 신뢰도 분석 및 기사화
+## 프로젝트 구조
 
-### 기존 검증 파이프라인 (Legacy)
-
-간소화된 2단계 파이프라인:
-- Stage 1: 로컬 NLP (위치 추출, 중복 감지)
-- Stage 3: LLM 분석 (Mistral)
+```
+app/
+├── api/v1/
+│   ├── poll/          # 여론조사 (16개 엔드포인트)
+│   │   ├── vote/      # 투표 서브모듈
+│   │   └── comment/   # 댓글 서브모듈
+│   ├── post/          # 커뮤니티 게시글 (11개 엔드포인트)
+│   ├── comment/       # 커뮤니티 댓글
+│   ├── media/         # S3 미디어 업로드
+│   └── interpreter/   # JWT 인증 가드
+├── core/              # config, database, lifespan, 예외
+├── models/            # SQLAlchemy 모델 (14개 테이블)
+├── services/          # S3, AI Research (LangGraph)
+├── main.py            # 앱 진입점
+fly.toml               # Fly.io 배포 설정
+```
 
 ## 빠른 시작
 
 ### 1. 의존성 설치
 
 ```bash
-cd backend
 uv sync
 ```
 
@@ -33,76 +56,54 @@ uv sync
 cp .env.example .env
 ```
 
-필수 설정:
+필수 환경변수:
 ```env
-# Database
-DATABASE_URL=postgresql+asyncpg://livemap:livemap123@localhost:5432/livemap
-
-# Autonomous Agent (권장)
-AGENT_OPENAI_API_KEY=your_openai_api_key
-AGENT_TAVILY_API_KEY=your_tavily_api_key
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/postgres
+AUTH_SECRET=nextauth-shared-secret
 ```
 
-### 3. Docker로 실행
-
-```bash
-docker-compose up -d
-```
-
-### 4. API 서버 실행 (개발)
+### 3. 개발 서버 실행
 
 ```bash
 uv run uvicorn app.main:app --reload
 ```
 
-## API 엔드포인트
-
-### 자율 에이전트
-
-| 엔드포인트 | 설명 |
-|-----------|------|
-| `POST /api/v1/agent/investigate` | 주제에 대한 자율 조사 시작 |
-| `GET /api/v1/agent/status/{id}` | 조사 상태 확인 |
-| `POST /api/v1/agent/scan` | 다중 소스 트리거 스캔 |
-
-### 검증 파이프라인 (Legacy)
-
-| 엔드포인트 | 설명 |
-|-----------|------|
-| `POST /api/v1/verify` | 텍스트 검증 |
-| `POST /api/v1/verify/detailed` | 상세 검증 결과 |
-
-### 피드
-
-| 엔드포인트 | 설명 |
-|-----------|------|
-| `GET /api/v1/feeds` | 피드 목록 |
-| `GET /api/v1/feeds/publishable` | 발행 가능 피드 |
-| `GET /api/v1/feeds/{id}` | 피드 상세 |
-
-## 트리거 소스
-
-### GDELT (뉴스)
-- 100,000+ 글로벌 뉴스 소스
-- 무료, API 키 불필요
-
-### Twitter/X (Twikit)
-- 실시간 소셜 미디어 모니터링
-- 개인 계정 필요 (ToS 주의)
-
-### Telegram (Telethon)
-- OSINT 채널 모니터링
-- API 인증 필요
-
-## 개발
+### 4. Docker 실행
 
 ```bash
-# 테스트 실행
-uv run pytest
-
-# 타입 체크
-uv run mypy app
-
-# 린트
-uv run ruff check app
+docker-compose up -d
 ```
+
+## 주요 API 엔드포인트
+
+| 모듈 | 주요 기능 |
+|------|----------|
+| `POST /api/v1/polls` | 여론조사 생성 |
+| `POST /api/v1/polls/{id}/vote` | 투표 (6종 interaction type) |
+| `POST /api/v1/polls/{id}/research` | AI 리서치 트리거 |
+| `GET /api/v1/polls` | 목록 (popular/recent/ending_soon/closed) |
+| `POST /api/v1/posts` | 게시글 작성 |
+| `POST /api/v1/media/presigned-url` | S3 업로드 URL 생성 |
+| `GET /health` | 헬스체크 |
+
+전체 API 스펙은 `docs/project-context.md` 참조
+
+## 배포
+
+Fly.io Tokyo(nrt) + Supabase Tokyo(PostgreSQL)
+
+```bash
+# 배포
+flyctl deploy
+
+# 환경변수 설정
+flyctl secrets set KEY=VALUE
+```
+
+GitHub Actions로 `dev` 브랜치 push 시 자동 배포
+
+## 관련 문서
+
+- `docs/project-context.md` - 전체 아키텍처 및 API 스펙
+- `docs/deployment-strategy.md` - Fly.io + Supabase 마이그레이션 전략
+- `docs/vote-integrity-research.md` - 1인 1투표 신뢰성 연구

@@ -158,32 +158,32 @@ vs Railway 현재: **$35-65/mo**
 ## 5. 마이그레이션 체크리스트
 
 ### Phase 1: 인프라 준비
-- [ ] Fly.io 앱 생성 (`flyctl launch --no-deploy`)
-- [ ] Supabase 프로젝트 생성 (Tokyo 리전)
-- [ ] pgvector extension 활성화
-- [ ] fly.toml 설정 및 커밋
+- [x] Fly.io 앱 생성 (`flyctl launch --no-deploy`) → `grapoll-api` (nrt)
+- [x] Supabase 프로젝트 생성 (Tokyo 리전, AWS ap-northeast-1)
+- [x] pgvector extension 활성화
+- [x] fly.toml 설정 및 커밋
 
 ### Phase 2: 데이터 마이그레이션
-- [ ] Railway DB pg_dump
-- [ ] Supabase에 pg_restore
-- [ ] 데이터 무결성 검증 (row count, 샘플 데이터 비교)
+- [x] Railway DB pg_dump
+- [x] Supabase에 pg_restore
+- [x] 데이터 무결성 검증 (row count, 샘플 데이터 비교)
 
 ### Phase 3: 환경변수 & 배포
-- [ ] `flyctl secrets set` 으로 환경변수 설정
-- [ ] GitHub Actions 워크플로우 업데이트 (OCI SSH → Fly.io deploy)
-- [ ] `flyctl deploy` 초기 배포
-- [ ] 헬스체크 확인 (`/health`)
+- [x] `flyctl secrets set` 으로 환경변수 설정
+- [x] GitHub Actions 워크플로우 업데이트 → `.github/workflows/fly-deploy.yml`
+- [x] `flyctl deploy` 초기 배포 → grapoll-api.fly.dev
+- [x] 헬스체크 확인 (`/health`)
 
 ### Phase 4: DNS & 트래픽 전환
-- [ ] Fly.io에 커스텀 도메인 설정 (api.grapoll.kr)
-- [ ] Vercel 프론트엔드 API_URL 변경
-- [ ] Railway 서비스 중지
-- [ ] 레이턴시 모니터링 (목표: ~30ms)
+- [x] Fly.io 배포 URL: grapoll-api.fly.dev
+- [x] Vercel 프론트엔드 API_URL 변경 (grapoll.vercel.app → grapoll-api.fly.dev)
+- [x] Railway 서비스 중지
+- [x] 레이턴시 확인 완료
 
 ### Phase 5: 정리
-- [ ] Railway 프로젝트 삭제
-- [ ] OCI 관련 GitHub Secrets 정리
-- [ ] 문서 업데이트 (CLAUDE.md, README)
+- [x] Railway 프로젝트 정리
+- [x] OCI 관련 GitHub Secrets 정리
+- [x] 문서 업데이트 (CLAUDE.md, README, project-context.md)
 
 ---
 
@@ -232,4 +232,4 @@ DATABASE_URL=postgresql+asyncpg://{user}:{pass}@{ref}.pooler.supabase.com:6543/p
 
 ---
 
-*이 문서는 Fly.io 마이그레이션 완료 후 실제 성능 수치로 업데이트 예정.*
+*마이그레이션 완료 (2026-03-06). 모든 Phase 완료, 서비스 정상 운영 중.*
