@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Frontend URL for CORS and cookie settings
     FRONTEND_URL: AnyHttpUrl = "http://localhost:3000"
 
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    KAKAO_CLIENT_ID: str = ""
+    KAKAO_CLIENT_SECRET: str = ""
+
     # AWS S3 Configuration
     AWS_S3_BUCKET_NAME: str | None = None
     AWS_S3_REGION: str = "ap-northeast-2"

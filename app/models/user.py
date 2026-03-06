@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Enum as SAEnum, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -55,15 +55,19 @@ class User(Base):
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True, name="hashed_password")
     image: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
-    # Role
-    role: Mapped[str] = mapped_column(String(10), default=Role.USER.value, nullable=False)
+    # Role (PostgreSQL enum type "Role")
+    role: Mapped[str] = mapped_column(
+        SAEnum(Role, name="Role", create_type=False),
+        default=Role.USER,
+        nullable=False,
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, name="created_at"
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, name="updated_at"
+        DateTime(timezone=True), default=func.now(), server_default=func.now(), onupdate=func.now(), nullable=False, name="updated_at"
     )
 
     # Relationships (matching Prisma schema)

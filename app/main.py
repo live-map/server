@@ -18,6 +18,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from sqlalchemy import text
 
+from app.api.v1.auth.refresh_middleware import TokenRefreshMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -54,9 +55,13 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Cookie"],
+    allow_headers=["Content-Type", "Authorization", "Cookie", "X-Refresh-Token"],
+    expose_headers=["X-New-Access-Token"],
 )
 
+
+# Token refresh middleware (auto-refreshes expired access tokens)
+app.add_middleware(TokenRefreshMiddleware)
 
 # Rate limiting middleware (must be after CORS)
 app.add_middleware(SlowAPIMiddleware)
