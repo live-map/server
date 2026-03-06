@@ -92,7 +92,7 @@ async def oauth_callback(
     try:
         result = await authenticate_oauth(db, provider, body.code, body.redirect_uri)
     except Exception as e:
-        logger.error(f"OAuth authentication failed for {provider}: {e}")
+        logger.error(f"OAuth authentication failed for {provider}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="OAuth authentication failed. Please try again.",

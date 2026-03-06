@@ -1,9 +1,8 @@
 """
 Token Refresh Middleware - Stateless auto-refresh of expired access tokens.
 
-Intercepts every request and transparently refreshes expired access tokens
-using the JWT refresh token. Both tokens are JWTs signed with the same secret,
-so no DB lookups are needed.
+Uses pure ASGI middleware (NOT BaseHTTPMiddleware) to avoid breaking
+SQLAlchemy async session greenlet context.
 
 Flow:
 1. Skip auth-related and public endpoints
@@ -18,11 +17,10 @@ Flow:
 """
 
 import logging
+from http.cookies import SimpleCookie
 
 import jwt as pyjwt
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.v1.auth.jwt import create_access_token, decode_refresh_token
 from app.core.config import settings
@@ -36,7 +34,6 @@ SKIP_PREFIXES = (
     "/docs",
     "/redoc",
     "/openapi.json",
-    "/",
 )
 
 # Cookie names
@@ -46,23 +43,33 @@ REFRESH_COOKIE = "grapoll-refresh-token"
 REFRESH_COOKIE_SECURE = "__Secure-grapoll-refresh-token"
 
 
-class TokenRefreshMiddleware(BaseHTTPMiddleware):
-    """Middleware that auto-refreshes expired access tokens using refresh JWTs."""
+class TokenRefreshMiddleware:
+    """Pure ASGI middleware that auto-refreshes expired access tokens using refresh JWTs."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
+
         # Skip auth endpoints and public routes
-        path = request.url.path
         if self._should_skip(path):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # Extract tokens
-        access_token = self._get_access_token(request)
-        refresh_token = self._get_refresh_token(request)
+        headers = dict(scope.get("headers", []))
+        cookies = self._parse_cookies(headers)
+
+        access_token = self._get_access_token(headers, cookies)
+        refresh_token = self._get_refresh_token(headers, cookies)
 
         new_access_token = None
 
         if access_token:
-            # Check if access token is still valid
             try:
                 payload = pyjwt.decode(
                     access_token,
@@ -71,12 +78,9 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
                 )
                 if payload.get("type") == "access":
                     # Valid access token → pass through
-                    return await call_next(request)
-            except pyjwt.ExpiredSignatureError:
-                # Access token expired → try refresh below
-                pass
-            except pyjwt.InvalidTokenError:
-                # Invalid access token → try refresh below
+                    await self.app(scope, receive, send)
+                    return
+            except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
                 pass
 
         # No valid access token — attempt refresh
@@ -90,61 +94,72 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
                     role=refresh_payload.get("role", "USER"),
                 )
                 # Inject new token into request headers
-                request.scope["headers"] = self._replace_auth_header(
-                    request.scope["headers"], new_access_token
+                scope["headers"] = self._replace_auth_header(
+                    scope["headers"], new_access_token
                 )
                 logger.debug("Auto-refreshed access token for user %s", refresh_payload["sub"])
             except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError) as e:
                 logger.debug("Refresh token invalid: %s", e)
 
-        # Call the actual endpoint
-        response = await call_next(request)
+        if not new_access_token:
+            # Nothing to inject in response → pass through
+            await self.app(scope, receive, send)
+            return
 
-        # If we refreshed, add the new token to response header
-        if new_access_token:
-            response.headers["X-New-Access-Token"] = new_access_token
+        # Wrap send to inject X-New-Access-Token into response headers
+        token_to_inject = new_access_token
 
-        return response
+        async def send_with_token(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append(
+                    (b"x-new-access-token", token_to_inject.encode())
+                )
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_token)
 
     def _should_skip(self, path: str) -> bool:
-        """Check if the path should skip token refresh."""
-        # Exact match for root
         if path == "/":
             return True
-        # Prefix match for other skip paths (but not root)
         for prefix in SKIP_PREFIXES:
-            if prefix != "/" and path.startswith(prefix):
+            if path.startswith(prefix):
                 return True
         return False
 
-    def _get_access_token(self, request: Request) -> str | None:
-        """Extract access token from Authorization header or cookie."""
-        auth_header = request.headers.get("authorization", "")
+    def _parse_cookies(self, headers: dict[bytes, bytes]) -> dict[str, str]:
+        raw = headers.get(b"cookie", b"").decode()
+        if not raw:
+            return {}
+        cookie = SimpleCookie(raw)
+        return {k: v.value for k, v in cookie.items()}
+
+    def _get_access_token(
+        self, headers: dict[bytes, bytes], cookies: dict[str, str]
+    ) -> str | None:
+        auth_header = headers.get(b"authorization", b"").decode()
         if auth_header.startswith("Bearer "):
             return auth_header[7:]
-        # Fallback to cookie
         for name in (ACCESS_COOKIE_SECURE, ACCESS_COOKIE):
-            token = request.cookies.get(name)
-            if token:
-                return token
+            if name in cookies:
+                return cookies[name]
         return None
 
-    def _get_refresh_token(self, request: Request) -> str | None:
-        """Extract refresh token from X-Refresh-Token header or cookie."""
-        token = request.headers.get("x-refresh-token")
+    def _get_refresh_token(
+        self, headers: dict[bytes, bytes], cookies: dict[str, str]
+    ) -> str | None:
+        token = headers.get(b"x-refresh-token", b"").decode()
         if token:
             return token
-        # Fallback to cookie
         for name in (REFRESH_COOKIE_SECURE, REFRESH_COOKIE):
-            token = request.cookies.get(name)
-            if token:
-                return token
+            if name in cookies:
+                return cookies[name]
         return None
 
     def _replace_auth_header(
         self, headers: list[tuple[bytes, bytes]], new_token: str
     ) -> list[tuple[bytes, bytes]]:
-        """Replace or add the Authorization header in the ASGI scope."""
         new_headers = [
             (k, v) for k, v in headers if k.lower() != b"authorization"
         ]

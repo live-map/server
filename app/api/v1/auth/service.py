@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
-from app.models.user import User
+from app.models.user import Role, User
 from app.api.v1.auth.jwt import create_access_token, create_refresh_token, decode_refresh_token
 from app.api.v1.auth.oauth import exchange_code_for_token, fetch_user_profile
 
@@ -81,7 +81,7 @@ async def get_or_create_user(
             name=profile.get("name"),
             email=profile.get("email"),
             image=profile.get("image"),
-            role="USER",
+            role=Role.USER,
         )
         db.add(user)
         await db.flush()
