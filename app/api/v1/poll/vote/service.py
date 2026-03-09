@@ -86,6 +86,7 @@ class VoteService:
         slider_value: int | None = None,
         selected_option_ids: list[uuid.UUID] | None = None,
         ranking_data: list[uuid.UUID] | None = None,
+        voter_ip: str | None = None,
     ) -> Vote:
         """
         투표하기. interactionType별로 분기 처리.
@@ -123,7 +124,7 @@ class VoteService:
         option_ids = {opt.id for opt in poll.options}
 
         # interactionType별 투표 처리
-        vote = Vote(user_id=user_id, poll_id=poll_id)
+        vote = Vote(user_id=user_id, poll_id=poll_id, voter_ip=voter_ip)
 
         # 원자적 증가 대상 option_id 목록
         increment_option_ids: list[uuid.UUID] = []
