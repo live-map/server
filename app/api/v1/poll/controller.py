@@ -45,6 +45,7 @@ from app.api.v1.poll.vote.service import (
     AlreadyVotedError,
     InvalidOptionError,
     PollNotActiveError,
+    VoteCooldownError,
 )
 from app.api.v1.poll.comment.service import PollCommentService
 from app.core.database import get_db
@@ -500,6 +501,12 @@ async def cast_vote(
             poll_id=poll_id,
             **kwargs,
         )
+    except VoteCooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(int(exc.remaining) + 1)},
+        ) from exc
     except PollNotActiveError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AlreadyVotedError as exc:
