@@ -3,6 +3,7 @@ Vote Service - Business logic for poll voting.
 """
 
 import logging
+import time
 import uuid
 
 from sqlalchemy import update
@@ -18,10 +19,44 @@ from app.models.vote import Vote
 
 logger = logging.getLogger(__name__)
 
+VOTE_COOLDOWN_SECONDS = 3
+
+# In-memory cooldown cache: user_id -> last vote timestamp
+_vote_cooldown_cache: dict[str, float] = {}
+
+
+def _check_cooldown(user_id: str) -> float | None:
+    """쿨다운 체크. 남은 시간(초) 반환. None이면 통과."""
+    now = time.monotonic()
+    last_vote = _vote_cooldown_cache.get(user_id)
+    if last_vote is not None:
+        elapsed = now - last_vote
+        if elapsed < VOTE_COOLDOWN_SECONDS:
+            return VOTE_COOLDOWN_SECONDS - elapsed
+    return None
+
+
+def _set_cooldown(user_id: str) -> None:
+    """쿨다운 타이머 설정."""
+    _vote_cooldown_cache[user_id] = time.monotonic()
+    # 오래된 엔트리 정리 (1000개 초과 시)
+    if len(_vote_cooldown_cache) > 1000:
+        now = time.monotonic()
+        expired = [k for k, v in _vote_cooldown_cache.items() if now - v > VOTE_COOLDOWN_SECONDS]
+        for k in expired:
+            del _vote_cooldown_cache[k]
+
 
 class AlreadyVotedError(Exception):
     """사용자가 이미 투표한 경우."""
     pass
+
+
+class VoteCooldownError(Exception):
+    """투표 쿨다운 중인 경우."""
+    def __init__(self, remaining: float) -> None:
+        self.remaining = remaining
+        super().__init__(f"투표 쿨다운 중입니다. {remaining:.1f}초 후 다시 시도해주세요.")
 
 
 class InvalidOptionError(Exception):
@@ -60,6 +95,11 @@ class VoteService:
             AlreadyVotedError: 이미 투표했을 때
             InvalidOptionError: 유효하지 않은 선택지일 때
         """
+        # 쿨다운 체크
+        remaining = _check_cooldown(user_id)
+        if remaining is not None:
+            raise VoteCooldownError(remaining)
+
         # 여론조사 확인
         poll = await self.poll_repo.get_by_id_with_details(poll_id)
         if poll is None:
@@ -142,6 +182,8 @@ class VoteService:
         except IntegrityError:
             await self.session.rollback()
             raise AlreadyVotedError("이미 투표하셨습니다.")
+
+        _set_cooldown(user_id)
         logger.info("Vote cast: user=%s, poll=%s, type=%s", user_id, poll_id, interaction_type)
         return created
 

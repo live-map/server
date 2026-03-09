@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent.triggers.base import TriggerSource, TriggerEvent, SourceTier
+try:
+    from app.agent.triggers.base import TriggerSource, TriggerEvent, SourceTier
+except ImportError:
+    TriggerSource = None
+    TriggerEvent = None
+    SourceTier = None
 
 
 # ============================================
