@@ -5,12 +5,13 @@ Auth DTO schemas - Request/Response models for auth endpoints.
 from pydantic import BaseModel
 
 
+# OAuthCallbackRequest is the request body for the OAuth callback endpoint
 class OAuthCallbackRequest(BaseModel):
     """Request body for OAuth callback."""
 
-    code: str
-    state: str | None = None
-    redirect_uri: str
+    code: str # The authorization code from the OAuth provider - required
+    state: str | None = None # The CSRF protection state - optional
+    redirect_uri: str # The redirect URI used in Phase 1 - required
 
 
 class TokenRefreshRequest(BaseModel):
