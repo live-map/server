@@ -141,7 +141,9 @@ response.cookies.set(REFRESH_COOKIE, data.refresh_token, {
 
 Example: A user creates a post in the community.
 
-**1. Frontend sends the HTTP request:**
+#### 1. Frontend builds and sends the HTTP request
+
+The frontend reads tokens from httpOnly cookies (server-side via Next.js `cookies()`) and attaches them as headers before sending to the backend.
 
 ```typescript
 // lib/auth/tokens.ts — buildAuthHeaders()
@@ -149,11 +151,13 @@ headers["Authorization"] = `Bearer ${accessToken}`;
 headers["X-Refresh-Token"] = refreshToken;
 ```
 
+The actual HTTP request that leaves the Next.js server:
+
 ```
 POST /api/v1/posts HTTP/1.1
 Host: localhost:8000
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbHh...
-X-Refresh-Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbHh...
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjbHg3YWJjMTIzIiwiZW1haWwiOiJraW1AZ21haWwuY29tIiwibmFtZSI6IktpbSIsInJvbGUiOiJVU0VSIiwidHlwZSI6ImFjY2VzcyIsImlhdCI6MTcxMDAwMDAwMCwiZXhwIjoxNzEwMDAxODAwfQ.xxxxx
+X-Refresh-Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjbHg3YWJjMTIzIiwidHlwZSI6InJlZnJlc2giLCJleHAiOjE3MTI1OTIwMDB9.yyyyy
 Content-Type: application/json
 
 {
@@ -162,59 +166,143 @@ Content-Type: application/json
 }
 ```
 
-**2. TokenRefreshMiddleware receives the request first (ASGI layer):**
+#### 2. Request enters the FastAPI middleware stack
+
+Before the request reaches any endpoint, it passes through a chain of middlewares registered in `app/main.py`. The order they are registered determines the order they execute:
 
 ```python
-# app/api/v1/auth/refresh_middleware.py
-# Middleware decodes the access token to check if it's valid
-payload = pyjwt.decode(access_token, settings.JWT_SECRET, ...)
-# → Success: type="access", not expired
-# → Pass through to the next layer (JWT Guard)
+# app/main.py
+app.add_middleware(CORSMiddleware, ...)         # ① registered first
+app.add_middleware(TokenRefreshMiddleware)       # ② registered second
+app.add_middleware(SlowAPIMiddleware)            # ③ registered third
 ```
 
-**3. FastAPI resolves `CurrentUser` dependency before the endpoint runs:**
+**ASGI middleware executes in reverse registration order** — the last registered middleware runs first (outermost layer), wrapping inward. So the actual execution order for an incoming request is:
 
-The `create_post` endpoint declares `current_user: CurrentUser` as a parameter.
-FastAPI sees this and calls `get_current_user()` automatically via `Depends()`.
+```
+Request arrives
+    │
+    ▼
+③ SlowAPIMiddleware      ← rate limiting check (60 req/min)
+    │
+    ▼
+② TokenRefreshMiddleware  ← token validation / auto-refresh
+    │
+    ▼
+① CORSMiddleware          ← CORS headers
+    │
+    ▼
+   FastAPI Router          ← endpoint + Depends() resolution
+```
+
+#### 3. TokenRefreshMiddleware processes the request
+
+The middleware is a pure ASGI middleware. It receives the raw ASGI `scope` (containing path and headers) before FastAPI even parses the request body.
 
 ```python
-# app/api/v1/auth/jwt_guard.py — get_current_user()
+# app/api/v1/auth/refresh_middleware.py — TokenRefreshMiddleware.__call__()
 
-# Extract token from header or cookie
-token = token_from_header or token_from_cookie
-# → "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbHh..."
+# Step A: Check if this path should skip token processing
+path = scope["path"]  # → "/api/v1/posts"
+if self._should_skip(path):  # skips /api/v1/auth/*, /health, /docs
+    await self.app(scope, receive, send)
+    return
+# → "/api/v1/posts" doesn't match any skip prefix, so continue
 
-# Decode and validate
-payload = decode_token(token)
-# → { "sub": "clx7abc123", "email": "kim@gmail.com", "name": "Kim",
-#      "role": "USER", "type": "access", "iat": 1710000000, "exp": 1710001800 }
+# Step B: Parse cookies and extract tokens from headers
+headers = dict(scope.get("headers", []))
+cookies = self._parse_cookies(headers)
 
-# Verify it's an access token (not a refresh token)
-if payload.get("type") != "access":
-    raise HTTPException(401)
+access_token = self._get_access_token(headers, cookies)
+# → Checks Authorization header first: "Bearer eyJhbG..." → extracts "eyJhbG..."
+# → Falls back to grapoll-access-token cookie if no header
 
-# Return structured payload
-return JWTPayload.from_dict(payload)
-# → JWTPayload(user_id="clx7abc123", email="kim@gmail.com", name="Kim", role="USER")
+refresh_token = self._get_refresh_token(headers, cookies)
+# → Checks X-Refresh-Token header first: "eyJhbG..."
+# → Falls back to grapoll-refresh-token cookie if no header
+
+# Step C: Validate the access token
+try:
+    payload = pyjwt.decode(
+        access_token,
+        settings.JWT_SECRET,
+        algorithms=[settings.JWT_ALGORITHM],
+    )
+    if payload.get("type") == "access":
+        # ✅ Access token is valid and not expired
+        # Pass the request through to the next layer unchanged
+        await self.app(scope, receive, send)
+        return
+except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
+    pass  # token is expired or invalid — will attempt refresh below
 ```
 
-**4. The endpoint receives the validated user and creates the post:**
+In this case (normal request with a valid access token), the middleware calls `await self.app(scope, receive, send)` — passing the request to the next middleware in the chain, untouched. Eventually it reaches FastAPI's router.
+
+#### 4. FastAPI resolves `CurrentUser` dependency via the JWT Guard
+
+The `create_post` endpoint declares `current_user: CurrentUser` as a parameter:
 
 ```python
 # app/api/v1/post/controller.py
 async def create_post(
     data: PostCreate,
-    current_user: CurrentUser,  # ← JWTPayload injected by FastAPI
+    current_user: CurrentUser,  # ← triggers dependency resolution
     postService: Annotated[PostService, Depends(get_post_service)],
 ):
-    post = await postService.create_post_without_commit(
-        user_id=current_user.user_id,  # ← "clx7abc123" from the JWT
-        title=data.title,
-        content=data.content,
-    )
 ```
 
-**5. Backend returns the response:**
+`CurrentUser` is a type alias:
+
+```python
+# app/api/v1/auth/jwt_guard.py
+CurrentUser = Annotated[JWTPayload, Depends(get_current_user)]
+```
+
+So FastAPI automatically calls `get_current_user()` before the endpoint runs:
+
+```python
+# app/api/v1/auth/jwt_guard.py — get_current_user()
+
+# Extract token from Authorization header or cookie (same token the middleware already validated)
+token = token_from_header or token_from_cookie
+# → "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjbHg3YWJjMTIzIi..."
+
+# Decode the JWT and extract the payload
+payload = decode_token(token)
+# → {
+#     "sub": "clx7abc123",
+#     "email": "kim@gmail.com",
+#     "name": "Kim",
+#     "role": "USER",
+#     "type": "access",
+#     "iat": 1710000000,
+#     "exp": 1710001800
+#   }
+
+# Verify it's an access token (reject refresh tokens)
+if payload.get("type") != "access":
+    raise HTTPException(status_code=401, detail="Invalid token type.")
+
+# Convert dict → structured dataclass
+return JWTPayload.from_dict(payload)
+# → JWTPayload(user_id="clx7abc123", email="kim@gmail.com", name="Kim", role="USER")
+```
+
+> Note: The token is decoded **twice** — once by the middleware (to decide whether to refresh) and once by the JWT Guard (to extract the user). This is intentional because the middleware operates at the ASGI layer (before FastAPI) and has no way to pass the decoded payload to the FastAPI dependency system.
+
+#### 5. The endpoint uses the validated user to create the post
+
+```python
+# app/api/v1/post/controller.py
+post = await postService.create_post_without_commit(
+    user_id=current_user.user_id,  # ← "clx7abc123" extracted from JWT
+    title=data.title,              # ← "Best pizza in Seoul?"
+    content=data.content,          # ← "Looking for recommendations near Gangnam."
+)
+```
+
+#### 6. Backend returns the response
 
 ```
 HTTP/1.1 201 Created
@@ -229,7 +317,9 @@ Content-Type: application/json
 }
 ```
 
-The key point: **the backend never queries the DB to authenticate the user**. The user's identity (`user_id`, `email`, `name`, `role`) is entirely extracted from the JWT payload. The token itself is the proof of identity.
+The response travels back through the middleware stack in reverse (CORSMiddleware adds CORS headers, etc.) and is sent to the frontend.
+
+**Key point: the backend never queries the DB to authenticate the user.** The user's identity (`user_id`, `email`, `name`, `role`) is entirely extracted from the JWT payload. The signed token itself is the proof of identity.
 
 ### Step ⑤⑥⑦: Auto-Refresh (Token Expired)
 
