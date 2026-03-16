@@ -6,7 +6,6 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth.dto.schemas import (
     AuthResponse,
@@ -18,9 +17,8 @@ from app.api.v1.auth.dto.schemas import (
     UserResponse,
 )
 from app.api.v1.auth.jwt_guard import CurrentUser
-from app.api.v1.auth.oauth import get_authorization_url, get_provider_config
-from app.api.v1.auth.service import authenticate_oauth, refresh_access_token
-from app.core.database import get_db
+from app.api.v1.auth.lib.oauth import get_authorization_url, get_provider_config
+from app.api.v1.auth.service import AuthService
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +29,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # Endpoints
 # ============================================================
 
+# get_oauth_authorize_url - Generate OAuth authorization URL for the given provider
+# This endpoint is used to add Client ID and Redirect URI to the OAuth authorization URL
 
 @router.get(
     "/oauth/{provider}/authorize",
@@ -48,28 +48,34 @@ async def get_oauth_authorize_url(
     to redirect_uri with an authorization code.
     """
     try:
+        #  validate the provider is supported
         get_provider_config(provider)
+        # remove the debug logging for production
         logger.debug(f"redirect_uri: {redirect_uri}")
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported provider: {provider}",
         )
-
+    # generate a random state for CSRF protection
+    # this state is echoed back by the provider in the callback
+    # and is used to verify the request was not forged
+    # the state is also used to prevent replay attacks by the provider
     state = secrets.token_urlsafe(32)
+    # generate the OAuth authorization URL that contains the Client ID and Redirect URI
     url = get_authorization_url(provider, redirect_uri, state)
 
     return AuthUrlResponse(url=url, state=state)
 
-
+# To exchange the authorization code for an access token, the frontend sends the authorization code to the backend
 @router.post(
     "/oauth/{provider}/callback",
-    response_model=AuthResponse,
+    response_model=AuthResponse, # FastAPI uses this to validate the response body and generate the response JSON on Swagger UI
 )
 async def oauth_callback(
     provider: str,
     body: OAuthCallbackRequest,
-    db: AsyncSession = Depends(get_db),
+    service: AuthService = Depends(),
 ):
     """
     Handle OAuth callback - exchange code for tokens and authenticate user.
@@ -90,7 +96,7 @@ async def oauth_callback(
         )
 
     try:
-        result = await authenticate_oauth(db, provider, body.code, body.redirect_uri)
+        result = await service.authenticate_oauth(provider, body.code, body.redirect_uri)
     except Exception as e:
         logger.error(f"OAuth authentication failed for {provider}: {e}", exc_info=True)
         raise HTTPException(
@@ -116,7 +122,7 @@ async def refresh_token(body: TokenRefreshRequest):
     validated by decoding it (no DB lookup needed).
     """
     try:
-        result = refresh_access_token(body.refresh_token)
+        result = AuthService.refresh_access_token(body.refresh_token)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
