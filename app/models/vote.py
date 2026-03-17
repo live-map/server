@@ -66,6 +66,9 @@ class Vote(Base):
     selected_option_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     ranking_data: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Security: 투표자 IP (보안 감사용)
+    voter_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

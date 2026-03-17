@@ -477,6 +477,7 @@ async def delete_poll(
 async def cast_vote(
     poll_id: uuid.UUID,
     data: CastVoteRequest,
+    request: Request,
     current_user: CurrentUserOptional,
     service: VoteServiceDep,
 ) -> VoteResponse:
@@ -484,6 +485,13 @@ async def cast_vote(
     try:
         # 비로그인 사용자는 anonymous UUID
         user_id = current_user.user_id if current_user else f"anon-{uuid.uuid4()}"
+
+        # IP 추출: Fly-Client-IP → X-Forwarded-For → client.host
+        voter_ip = (
+            request.headers.get("fly-client-ip")
+            or (request.headers.get("x-forwarded-for", "").split(",")[0].strip() or None)
+            or (request.client.host if request.client else None)
+        )
 
         # Discriminated union에서 필드 추출
         kwargs = {"interaction_type": data.interaction_type}
@@ -499,6 +507,7 @@ async def cast_vote(
         vote = await service.cast_vote(
             user_id=user_id,
             poll_id=poll_id,
+            voter_ip=voter_ip,
             **kwargs,
         )
     except VoteCooldownError as exc:
