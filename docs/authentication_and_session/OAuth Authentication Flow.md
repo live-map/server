@@ -167,7 +167,7 @@ async def get_oauth_authorize_url(provider: str, redirect_uri: str = Query(...))
     return AuthUrlResponse(url=url, state=state)
 ```
 
-**`server/app/api/v1/auth/oauth.py`** — OAuth 제공자 설정
+**`server/app/api/v1/auth/lib/oauth.py`** — OAuth 제공자 설정
 
 ```python
 OAUTH_PROVIDERS = {
@@ -308,16 +308,35 @@ const res = await fetch(`${API_BASE}/api/v1/auth/oauth/${provider}/callback`, {
 });
 ```
 
-**Backend → Authorization Server** (`server/app/api/v1/auth/service.py` 에서):
+**Backend Controller** — `oauth_callback` 엔드포인트가 `AuthService`를 `Depends()`로 주입받아 호출합니다:
 
 ```python
-async def authenticate_oauth(db, provider, code, redirect_uri) -> dict:
-    # Step 8: Authorization code를 OAuth 제공자 token으로 교환
-    oauth_tokens = await exchange_code_for_token(provider, code, redirect_uri)
-    # ... Step 9, 12, 13으로 이어짐
+# server/app/api/v1/auth/controller.py
+@router.post("/oauth/{provider}/callback", response_model=AuthResponse)
+async def oauth_callback(
+    provider: str,
+    body: OAuthCallbackRequest,
+    service: AuthService = Depends(),  # FastAPI가 AuthService 인스턴스를 자동 생성
+):
+    result = await service.authenticate_oauth(provider, body.code, body.redirect_uri)
+    return AuthResponse(**result)
 ```
 
-**`server/app/api/v1/auth/oauth.py`** — Authlib을 사용한 token 교환:
+**Backend Service** — `AuthService.authenticate_oauth()`가 OAuth 제공자와 token을 교환합니다:
+
+```python
+# server/app/api/v1/auth/service.py
+class AuthService:
+    def __init__(self, db: AsyncSession = Depends(get_db)) -> None:
+        self.repo = AuthRepository(db)
+
+    async def authenticate_oauth(self, provider, code, redirect_uri) -> dict:
+        # Step 8: Authorization code를 OAuth 제공자 token으로 교환
+        oauth_tokens = await exchange_code_for_token(provider, code, redirect_uri)
+        # ... Step 9, 12, 13으로 이어짐
+```
+
+**`server/app/api/v1/auth/lib/oauth.py`** — Authlib을 사용한 token 교환:
 
 ```python
 async def exchange_code_for_token(provider: str, code: str, redirect_uri: str) -> dict:
@@ -353,22 +372,26 @@ OAuth 제공자가 **제공자의 access token**을 반환합니다:
 
 이 토큰들은 `accounts` 테이블에 저장됩니다 (향후 제공자 API 호출에 사용 가능):
 
-**`server/app/api/v1/auth/service.py`** — `get_or_create_user()`
+**`server/app/api/v1/auth/repository.py`** — `AuthRepository.create_account()`
 
 ```python
-account = Account(
-    id=generate_cuid(),
-    user_id=user.id,
-    type="oauth",
-    provider=provider,
-    provider_account_id=provider_account_id,
-    access_token=oauth_tokens.get("access_token"),    # 제공자의 access token
-    refresh_token=oauth_tokens.get("refresh_token"),  # 제공자의 refresh token
-    expires_at=oauth_tokens.get("expires_at"),
-    token_type=oauth_tokens.get("token_type"),
-    scope=oauth_tokens.get("scope"),
-    id_token=oauth_tokens.get("id_token"),
-)
+async def create_account(self, user_id, provider, provider_account_id, oauth_tokens) -> Account:
+    account = Account(
+        id=generate_cuid(),
+        user_id=user_id,
+        type="oauth",
+        provider=provider,
+        provider_account_id=provider_account_id,
+        access_token=oauth_tokens.get("access_token"),    # 제공자의 access token
+        refresh_token=oauth_tokens.get("refresh_token"),  # 제공자의 refresh token
+        expires_at=oauth_tokens.get("expires_at"),
+        token_type=oauth_tokens.get("token_type"),
+        scope=oauth_tokens.get("scope"),
+        id_token=oauth_tokens.get("id_token"),
+    )
+    self.session.add(account)
+    await self.session.commit()
+    return account
 ```
 
 ---
@@ -382,19 +405,45 @@ account = Account(
 ### 10-1. 사용자 프로필 조회 (Step 12, 13이 여기서 실행)
 
 ```python
+# server/app/api/v1/auth/service.py — AuthService.authenticate_oauth()
 profile = await fetch_user_profile(provider, oauth_tokens["access_token"])
 ```
 
 ### 10-2. 사용자 조회/생성
 
+`AuthService`가 `AuthRepository`의 메서드를 호출하여 사용자를 조회하거나 생성합니다.
+Service는 비즈니스 로직(언제, 왜 호출하는지)을 담당하고, Repository는 DB 접근(어떻게 조회/생성하는지)을 담당합니다.
+
 ```python
-user = await get_or_create_user(db, provider, profile, oauth_tokens)
+# server/app/api/v1/auth/service.py — AuthService.authenticate_oauth()
+provider_account_id = profile["provider_account_id"]
+
+# 1차: OAuth 계정으로 사용자 + 계정을 한 번에 조회 (단일 JOIN 쿼리)
+result = await self.repo.find_user_and_account_by_oauth(provider, provider_account_id)
+
+if result:
+    # 기존 사용자 → 제공자 OAuth 토큰만 갱신
+    (user, account) = result
+    await self.repo.update_account_tokens(account, oauth_tokens)
+else:
+    # 2차: 이메일로 기존 사용자 검색 (계정 연결)
+    if profile.get("email"):
+        user = await self.repo.find_user_by_email(profile["email"])
+        if user:
+            logger.info(f"Linking new OAuth account to existing user: {user.id} ({provider})")
+        else:
+            user = await self.repo.create_user(profile)
+    else:
+        # 이메일 없는 경우 새 사용자 생성
+        user = await self.repo.create_user(profile)
+    # 새 OAuth 계정을 사용자에 연결
+    await self.repo.create_account(user.id, provider, provider_account_id, oauth_tokens)
 ```
 
 사용자 조회 우선순위:
-1. OAuth 계정 (provider + provider_account_id)으로 기존 사용자 검색
-2. 같은 이메일의 기존 사용자에 OAuth 계정 연결
-3. 새 사용자 생성
+1. OAuth 계정 (provider + provider_account_id)으로 기존 사용자 + 계정 검색
+2. 같은 이메일의 기존 사용자에 새 OAuth 계정 연결
+3. 새 사용자 + OAuth 계정 생성
 
 ### 10-3. 앱 자체 JWT 발급
 
@@ -535,7 +584,7 @@ export async function buildAuthHeaders(): Promise<Record<string, string>> {
 다이어그램에서 이 단계는 서비스 Client가 **Resource Server에 사용자 정보를 요청**하는 것입니다.
 Grapoll에서는 Step 10 내부에서 백엔드가 이를 수행합니다:
 
-**`server/app/api/v1/auth/oauth.py`** — `fetch_user_profile()`
+**`server/app/api/v1/auth/lib/oauth.py`** — `fetch_user_profile()`
 
 ```python
 async def fetch_user_profile(provider: str, access_token: str) -> dict:
@@ -691,8 +740,9 @@ async def get_me(current_user: CurrentUser):
 | 파일 | 역할 |
 |------|------|
 | `app/api/v1/auth/controller.py` | 인증 API 엔드포인트 (authorize, callback, refresh, logout, me) |
-| `app/api/v1/auth/oauth.py` | OAuth 제공자 설정 및 Authlib 클라이언트 |
-| `app/api/v1/auth/service.py` | 인증 비즈니스 로직 (사용자 조회/생성, 토큰 발급) |
+| `app/api/v1/auth/service.py` | `AuthService` 클래스 — 인증 비즈니스 로직 (Controller → Service → Repository) |
+| `app/api/v1/auth/repository.py` | `AuthRepository` 클래스 — DB 접근 (사용자/계정 조회, 생성, 토큰 갱신) |
+| `app/api/v1/auth/lib/oauth.py` | OAuth 제공자 설정 및 Authlib 클라이언트 |
 | `app/api/v1/auth/jwt.py` | JWT 생성 및 검증 (HS256) |
 | `app/api/v1/auth/jwt_guard.py` | FastAPI 인증 가드 (Depends 의존성 주입) |
 | `app/api/v1/auth/refresh_middleware.py` | 자동 토큰 갱신 ASGI 미들웨어 |

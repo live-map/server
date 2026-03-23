@@ -50,6 +50,8 @@ class TokenRefreshMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Only handle HTTP requests
+        # Need to be edited when we handle mobile app requests!!! (e.g. iOS, Android)
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -61,6 +63,7 @@ class TokenRefreshMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Parse headers and cookies
         headers = dict(scope.get("headers", []))
         cookies = self._parse_cookies(headers)
 
@@ -119,6 +122,8 @@ class TokenRefreshMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_token)
+    
+    # Helper methods below
 
     def _should_skip(self, path: str) -> bool:
         if path == "/":
