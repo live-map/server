@@ -6,6 +6,7 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth.dto.schemas import (
     AuthResponse,
@@ -14,11 +15,14 @@ from app.api.v1.auth.dto.schemas import (
     OAuthCallbackRequest,
     TokenRefreshRequest,
     TokenResponse,
+    UpdateProfileRequest,
     UserResponse,
 )
 from app.api.v1.auth.jwt_guard import CurrentUser
 from app.api.v1.auth.lib.oauth import get_authorization_url, get_provider_config
+from app.api.v1.auth.repository import AuthRepository
 from app.api.v1.auth.service import AuthService
+from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -157,4 +161,37 @@ async def get_me(current_user: CurrentUser):
         name=current_user.name,
         image=None,
         role=current_user.role,
+    )
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    body: UpdateProfileRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update the currently authenticated user's profile.
+
+    Only name and image can be updated.
+    """
+    repo = AuthRepository(db)
+    user = await repo.find_user_by_id(current_user.user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if body.name is not None:
+        user.name = body.name
+    if body.image is not None:
+        user.image = body.image
+
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        image=user.image,
+        role=user.role,
     )

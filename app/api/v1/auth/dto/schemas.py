@@ -2,7 +2,7 @@
 Auth DTO schemas - Request/Response models for auth endpoints.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # OAuthCallbackRequest is the request body for the OAuth callback endpoint
@@ -47,6 +47,13 @@ class AuthUrlResponse(BaseModel):
 
     url: str
     state: str
+
+
+class UpdateProfileRequest(BaseModel):
+    """Request body for profile update."""
+
+    name: str | None = Field(None, max_length=20)
+    image: str | None = Field(None, max_length=1000)
 
 
 class UserResponse(BaseModel):
