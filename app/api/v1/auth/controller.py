@@ -5,7 +5,7 @@ Auth Controller - OAuth login, token refresh, logout, and user info endpoints.
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.v1.auth.dto.schemas import (
     AuthResponse,
@@ -19,6 +19,7 @@ from app.api.v1.auth.dto.schemas import (
 from app.api.v1.auth.jwt_guard import CurrentUser
 from app.api.v1.auth.lib.oauth import get_authorization_url, get_provider_config
 from app.api.v1.auth.service import AuthService
+from app.core.limiter import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,9 @@ async def get_oauth_authorize_url(
     "/oauth/{provider}/callback",
     response_model=AuthResponse, # FastAPI uses this to validate the response body and generate the response JSON on Swagger UI
 )
+@limiter.limit("10/minute")
 async def oauth_callback(
+    request: Request,
     provider: str,
     body: OAuthCallbackRequest,
     service: AuthService = Depends(),
@@ -111,7 +114,8 @@ async def oauth_callback(
     "/refresh",
     response_model=TokenResponse,
 )
-async def refresh_token(body: TokenRefreshRequest):
+@limiter.limit("20/minute")
+async def refresh_token(request: Request, body: TokenRefreshRequest):
     """
     Refresh an access token using a valid refresh token.
 
