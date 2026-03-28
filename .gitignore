@@ -12,6 +12,9 @@ wheels/
 # Environment
 .env
 
+# Session handoff
+HANDOFF.md
+
 # Telegram session
 *.session
 telegram_session*
