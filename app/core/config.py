@@ -4,7 +4,7 @@ Application configuration using Pydantic Settings.
 Environment variables are loaded from .env file.
 """
 
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,10 +30,20 @@ class Settings(BaseSettings):
     AUTH_DATABASE_URL: str | None = None
 
     # JWT Configuration
-    JWT_SECRET: str = ""  # For signing our own JWTs (generate with: openssl rand -hex 32)
+    JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15  # 30 → 15 (auto-refresh middleware handles UX)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7  # 30 → 7
+
+    @field_validator("JWT_SECRET")
+    @classmethod
+    def jwt_secret_must_be_set(cls, v: str) -> str:
+        if not v or len(v) < 32:
+            raise ValueError(
+                "JWT_SECRET must be at least 32 characters. "
+                "Generate with: openssl rand -hex 64"
+            )
+        return v
 
     # Frontend URL for CORS and cookie settings
     FRONTEND_URL: AnyHttpUrl = "http://localhost:3000"

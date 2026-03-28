@@ -186,9 +186,6 @@ def _poll_to_detail(poll, average_slider_value: float | None = None) -> PollDeta
 # Poll Endpoints
 # ========================================
 
-DEMO_USER_ID = "demo_hackathon_user"
-
-
 @router.post(
     "",
     response_model=PollDetailResponse,
@@ -200,10 +197,10 @@ async def create_poll(
     service: PollServiceDep,
     background_tasks: BackgroundTasks,
     request: Request,
-    current_user: CurrentUserOptional = None,
+    current_user: CurrentUser,
 ) -> PollDetailResponse:
-    """새 여론조사를 생성합니다. 비로그인 시 데모 유저로 생성."""
-    user_id = current_user.user_id if current_user else DEMO_USER_ID
+    """새 여론조사를 생성합니다. 로그인 필수."""
+    user_id = current_user.user_id
 
     poll = await service.create_poll(
         user_id=user_id,
@@ -478,13 +475,12 @@ async def cast_vote(
     poll_id: uuid.UUID,
     data: CastVoteRequest,
     request: Request,
-    current_user: CurrentUserOptional,
+    current_user: CurrentUser,
     service: VoteServiceDep,
 ) -> VoteResponse:
-    """여론조사에 투표합니다. 비로그인도 허용."""
+    """여론조사에 투표합니다. 로그인 필수."""
     try:
-        # 비로그인 사용자는 anonymous UUID
-        user_id = current_user.user_id if current_user else f"anon-{uuid.uuid4()}"
+        user_id = current_user.user_id
 
         # IP 추출: Fly-Client-IP → X-Forwarded-For → client.host
         voter_ip = (
