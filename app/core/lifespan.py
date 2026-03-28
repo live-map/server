@@ -147,9 +147,7 @@ async def lifespan(app: FastAPI):
         app.state.research_service = None
         logger.warning("Research Agent initialization failed: %s", e)
 
-    print("\n" + "=" * 60)
-    print("  Grapoll API - 여론조사 플랫폼")
-    print("=" * 60 + "\n")
+    logger.info("Grapoll API - 여론조사 플랫폼")
 
     yield
 
@@ -161,4 +159,4 @@ async def lifespan(app: FastAPI):
     except asyncio.TimeoutError:
         logger.warning("Database dispose timed out after 10s")
 
-    print("[SHUTDOWN] Grapoll API stopped.")
+    logger.info("Grapoll API stopped.")
