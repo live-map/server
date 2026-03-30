@@ -20,6 +20,7 @@ from app.models.vote import Vote
 logger = logging.getLogger(__name__)
 
 VOTE_COOLDOWN_SECONDS = 3
+MAX_COOLDOWN_CACHE_SIZE = 1000
 
 # In-memory cooldown cache: user_id -> last vote timestamp
 _vote_cooldown_cache: dict[str, float] = {}
@@ -40,7 +41,7 @@ def _set_cooldown(user_id: str) -> None:
     """쿨다운 타이머 설정."""
     _vote_cooldown_cache[user_id] = time.monotonic()
     # 오래된 엔트리 정리 (1000개 초과 시)
-    if len(_vote_cooldown_cache) > 1000:
+    if len(_vote_cooldown_cache) > MAX_COOLDOWN_CACHE_SIZE:
         now = time.monotonic()
         expired = [k for k, v in _vote_cooldown_cache.items() if now - v > VOTE_COOLDOWN_SECONDS]
         for k in expired:
@@ -138,6 +139,8 @@ class VoteService:
         elif interaction_type == "SLIDER":
             if slider_value is None:
                 raise InvalidOptionError("슬라이더 값이 필요합니다.")
+            if not (0 <= slider_value <= 100):
+                raise InvalidOptionError("슬라이더 값은 0~100 사이여야 합니다.")
             vote.slider_value = slider_value
 
         elif interaction_type == "MULTIPLE_CHOICE":
@@ -152,15 +155,25 @@ class VoteService:
         elif interaction_type == "RANKING":
             if not ranking_data:
                 raise InvalidOptionError("랭킹 데이터가 필요합니다.")
+            if len(ranking_data) != len(option_ids):
+                raise InvalidOptionError("모든 선택지의 순위를 매겨야 합니다.")
+            if len(set(ranking_data)) != len(ranking_data):
+                raise InvalidOptionError("중복된 선택지가 있습니다.")
             for oid in ranking_data:
                 if oid not in option_ids:
                     raise InvalidOptionError(f"유효하지 않은 선택지: {oid}")
             vote.ranking_data = [str(oid) for oid in ranking_data]
             # 1위 옵션의 투표수 증가 (대표 집계용)
-            if ranking_data:
-                increment_option_ids.append(ranking_data[0])
+            increment_option_ids.append(ranking_data[0])
 
-        # 원자적 옵션 투표수 증가 (SQL UPDATE)
+        # 투표 레코드를 먼저 생성 — repo.create()가 flush하므로 UniqueConstraint 위반 시 여기서 실패
+        try:
+            created = await self.vote_repo.create(vote)
+        except IntegrityError:
+            await self.session.rollback()
+            raise AlreadyVotedError("이미 투표하셨습니다.")
+
+        # 투표 생성 성공 후에만 카운터 증가 (race condition 방지)
         for oid in increment_option_ids:
             stmt = (
                 update(PollOption)
@@ -169,7 +182,6 @@ class VoteService:
             )
             await self.session.execute(stmt)
 
-        # 원자적 Poll 전체 투표수 증가 (SQL UPDATE)
         stmt = (
             update(Poll)
             .where(Poll.id == poll_id)
@@ -177,12 +189,7 @@ class VoteService:
         )
         await self.session.execute(stmt)
 
-        try:
-            created = await self.vote_repo.create(vote)
-            await self.session.commit()
-        except IntegrityError:
-            await self.session.rollback()
-            raise AlreadyVotedError("이미 투표하셨습니다.")
+        await self.session.commit()
 
         _set_cooldown(user_id)
         logger.info("Vote cast: user=%s, poll=%s, type=%s", user_id, poll_id, interaction_type)
