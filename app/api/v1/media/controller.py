@@ -97,12 +97,12 @@ async def generate_presigned_url(
         400: 허용되지 않은 content_type
         503: S3 서비스 미설정
     """
-    # Check if S3 is available
-    if not s3_service.is_available:
-        logger.error(f"S3 upload attempted but service not available. User: {current_user.user_id}")
+    # Validate file size (before S3 check — reject invalid requests early)
+    max_bytes = settings.MEDIA_UPLOAD_MAX_SIZE_MB * 1024 * 1024
+    if request.file_size > max_bytes:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Media upload service is not available. Please contact administrator.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum allowed size of {settings.MEDIA_UPLOAD_MAX_SIZE_MB}MB",
         )
 
     # Validate content type
@@ -112,6 +112,14 @@ async def generate_presigned_url(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Content type '{request.content_type}' is not allowed. "
             f"Allowed types: {', '.join(sorted(all_allowed_types))}",
+        )
+
+    # Check if S3 is available (after input validation)
+    if not s3_service.is_available:
+        logger.error(f"S3 upload attempted but service not available. User: {current_user.user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Media upload service is not available. Please contact administrator.",
         )
 
     try:
