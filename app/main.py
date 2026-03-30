@@ -12,10 +12,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 from sqlalchemy import text
 
 from app.api.v1.auth.refresh_middleware import TokenRefreshMiddleware
@@ -23,11 +21,9 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.lifespan import lifespan
+from app.core.limiter import limiter
 
 logger = logging.getLogger(__name__)
-
-# Rate limiter (global default: 60 requests/minute per IP)
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 app = FastAPI(
