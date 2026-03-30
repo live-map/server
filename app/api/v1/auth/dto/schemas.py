@@ -52,7 +52,7 @@ class AuthUrlResponse(BaseModel):
 class UpdateProfileRequest(BaseModel):
     """Request body for profile update."""
 
-    name: str | None = Field(None, max_length=20)
+    name: str | None = Field(None, min_length=1, max_length=20)
     image: str | None = Field(None, max_length=1000)
 
 
