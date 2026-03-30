@@ -5,7 +5,7 @@ Auth Controller - OAuth login, token refresh, logout, and user info endpoints.
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth.dto.schemas import (
