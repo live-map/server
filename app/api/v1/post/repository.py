@@ -13,6 +13,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.comment import Comment
 from app.models.post import Post
 from app.api.v1.post.sort import SortType, SIMPLE_SORT_MAP, TIME_WINDOW_MAP
 
@@ -73,7 +74,7 @@ class PostRepository:
         stmt = (
             select(Post)
             .options(
-                selectinload(Post.comments),  # 댓글 eager load
+                selectinload(Post.comments).selectinload(Comment.user),  # 댓글 + 작성자 eager load
                 selectinload(Post.user),      # 작성자 eager load
                 selectinload(Post.media),     # 미디어 eager load
             )
