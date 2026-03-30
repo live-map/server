@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Poll
 
+from app.core.config import settings
 from app.api.v1.interpreter import CurrentAdmin, CurrentUser, CurrentUserOptional
 from app.api.v1.poll.dto.schemas import (
     CastVoteBinary,
@@ -739,10 +740,16 @@ async def get_research_status(
         raise HTTPException(status_code=503, detail="Research service is not available")
 
     status_info = research_service.get_status(str(poll_id))
+
+    # 내부 에러 메시지 sanitize (스택트레이스, 경로 등 노출 방지)
+    error_msg = status_info.get("error")
+    if error_msg and not settings.DEBUG:
+        error_msg = "리서치 처리 중 오류가 발생했습니다"
+
     return ResearchStatusResponse(
         status=status_info["status"],
         pollId=poll_id,
-        error=status_info.get("error"),
+        error=error_msg,
         currentStep=status_info.get("current_step"),
     )
 

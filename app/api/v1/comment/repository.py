@@ -236,7 +236,7 @@ class CommentRepository:
             return False
 
         comment.is_deleted = True
-        comment.content = "[삭제된 댓글입니다]"  # 내용 마스킹
+        # content는 DB에 보존 (관리/감사용). API 응답에서 CommentTreeNode.from_comment()가 마스킹 처리
         await self.session.flush()
         logger.debug(f"Soft deleted comment: {comment_id}")
         return True

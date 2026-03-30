@@ -22,6 +22,11 @@ class PresignedUrlRequest(BaseModel):
         description="MIME type of the file",
         examples=["image/jpeg", "image/png", "video/mp4"],
     )
+    file_size: int = Field(
+        ...,
+        gt=0,
+        description="File size in bytes. Server validates against max upload size.",
+    )
     folder: Literal["posts", "avatars", "comments"] = Field(
         default="posts",
         description="Destination folder for the upload",
