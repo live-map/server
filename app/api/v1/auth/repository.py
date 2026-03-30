@@ -40,6 +40,13 @@ class AuthRepository:
             return None
         return row.tuple()
 
+    async def find_user_by_id(self, user_id: str) -> User | None:
+        """ID로 사용자 조회."""
+        result = await self.session.execute(
+            select(User).where(User.id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     async def find_user_by_email(self, email: str) -> User | None:
         """이메일로 사용자 조회."""
         result = await self.session.execute(
