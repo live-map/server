@@ -17,6 +17,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 
 from app.api.v1.auth.refresh_middleware import TokenRefreshMiddleware
+from app.middleware.cloudflare_pro import CloudflareProMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -58,6 +59,9 @@ app.add_middleware(
 
 # Token refresh middleware (auto-refreshes expired access tokens)
 app.add_middleware(TokenRefreshMiddleware)
+
+# Cloudflare geo-blocking middleware (blocks non-KR vote requests)
+app.add_middleware(CloudflareProMiddleware)
 
 # Rate limiting middleware (must be after CORS)
 app.add_middleware(SlowAPIMiddleware)
