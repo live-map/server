@@ -1,9 +1,9 @@
 """
 LangGraph StateGraph assembly for the Research Agent.
 
-v3: 9-node 그래프 + 노드별 타임아웃.
+v4: 10-node 그래프 + 노드별 타임아웃 + citation 검증.
 START → perspective_discovery → planner → [web|academic|fact_check] 병렬
-→ gap_analyzer → outline_generator → synthesizer → reviewer → 조건부 재시도.
+→ gap_analyzer → outline_generator → synthesizer → citation_validator → reviewer → 조건부 재시도.
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.services.research.config import MAX_RETRY_COUNT, NODE_TIMEOUTS
 from app.services.research.nodes.academic_search import academic_search_node
+from app.services.research.nodes.citation_validator import citation_validator_node
 from app.services.research.nodes.fact_check import fact_check_node
 from app.services.research.nodes.gap_analyzer import gap_analyzer_node
 from app.services.research.nodes.outline_generator import outline_generator_node
@@ -70,6 +71,7 @@ def build_research_graph() -> CompiledStateGraph:
         "gap_analyzer": gap_analyzer_node,
         "outline_generator": outline_generator_node,
         "synthesizer": synthesizer_node,
+        "citation_validator": citation_validator_node,
         "reviewer": reviewer_node,
     }
     for name, fn in nodes.items():
@@ -89,10 +91,11 @@ def build_research_graph() -> CompiledStateGraph:
     builder.add_edge("academic_search", "gap_analyzer")
     builder.add_edge("fact_check", "gap_analyzer")
 
-    # gap_analyzer → outline_generator → synthesizer → reviewer
+    # gap_analyzer → outline_generator → synthesizer → citation_validator → reviewer
     builder.add_edge("gap_analyzer", "outline_generator")
     builder.add_edge("outline_generator", "synthesizer")
-    builder.add_edge("synthesizer", "reviewer")
+    builder.add_edge("synthesizer", "citation_validator")
+    builder.add_edge("citation_validator", "reviewer")
 
     # reviewer → conditional: pass→END, fail→synthesizer (최대 2회 재시도)
     builder.add_conditional_edges(
@@ -105,5 +108,5 @@ def build_research_graph() -> CompiledStateGraph:
     )
 
     graph = builder.compile()
-    logger.info("[Graph] Research graph compiled (9 nodes, v2)")
+    logger.info("[Graph] Research graph compiled (10 nodes, v4)")
     return graph

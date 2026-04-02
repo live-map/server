@@ -73,6 +73,9 @@ class ResearchState(TypedDict):
     extracted_sources: list[SourceItem]
     confidence: dict
 
+    # Citation 검증
+    citation_issues: list[str]
+
     # 리뷰
     review_score: int
 

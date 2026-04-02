@@ -32,6 +32,7 @@ NODE_TIMEOUTS: dict[str, int] = {
     "gap_analyzer": 45,
     "outline_generator": 30,
     "synthesizer": 120,
+    "citation_validator": 15,
     "reviewer": 30,
 }
 
