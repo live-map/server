@@ -18,7 +18,8 @@ class SourceItem(TypedDict):
     source_type: str  # NEWS | PAPER | ARTICLE | OTHER
     description: str
     content_snippet: str  # 검색에서 추출한 원문 일부
-    credibility: str  # HIGH | MEDIUM | LOW
+    credibility: str  # HIGH | MEDIUM | LOW (레거시 호환)
+    credibility_score: float  # 0.0~1.0 연속 신뢰도 점수
 
 
 class Perspective(TypedDict):

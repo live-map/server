@@ -70,9 +70,26 @@ GAP_FOLLOWUP_RESULTS: int = 3
 CREDIBILITY_HIGH_THRESHOLD: float = 0.7
 CREDIBILITY_MEDIUM_THRESHOLD: float = 0.4
 CONFIDENCE_HIGH_MIN_SOURCES: int = 10
-CONFIDENCE_HIGH_MIN_CREDIBILITY: float = 2.5
+CONFIDENCE_HIGH_MIN_CREDIBILITY: float = 0.7  # 연속 점수 기반 (이전: 2.5/3.0 스케일)
 CONFIDENCE_MEDIUM_MIN_SOURCES: int = 5
-CONFIDENCE_MEDIUM_MIN_CREDIBILITY: float = 1.5
+CONFIDENCE_MEDIUM_MIN_CREDIBILITY: float = 0.45  # 연속 점수 기반 (이전: 1.5/3.0 스케일)
+
+# 4.5. Credibility Scoring 가중치
+CRED_WEIGHT_DOMAIN: float = 0.4
+CRED_WEIGHT_CONTENT: float = 0.3
+CRED_WEIGHT_SOURCE_TYPE: float = 0.3
+CRED_SCORE_TRUSTED_DOMAIN: float = 1.0
+CRED_SCORE_NEWS_DOMAIN: float = 0.8
+CRED_SCORE_GOV_DOMAIN: float = 0.9
+CRED_SCORE_ACADEMIC_DOMAIN: float = 0.9
+CRED_SCORE_DEFAULT_DOMAIN: float = 0.5
+CRED_SOURCE_TYPE_SCORES: dict[str, float] = {
+    "PAPER": 0.9,
+    "NEWS": 0.8,
+    "ARTICLE": 0.7,
+    "OTHER": 0.5,
+}
+CRED_SNIPPET_QUALITY_DIVISOR: int = 500  # min(len/divisor, 1.0)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 5. LLM Parameters (node overrides)

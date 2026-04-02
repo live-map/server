@@ -256,10 +256,9 @@ def _compute_confidence(
     korean_re = re.compile(r"[가-힣]")
     korean_count = sum(1 for s in all_sources if korean_re.search(s.get("title", "")))
 
-    # 평균 신뢰도 (HIGH=3, MEDIUM=2, LOW=1)
-    cred_map = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-    cred_scores = [cred_map.get(s.get("credibility", "LOW"), 1) for s in all_sources]
-    avg_credibility = round(sum(cred_scores) / total, 2) if cred_scores else 0
+    # 평균 신뢰도 (0.0-1.0 연속 점수)
+    cred_scores = [s.get("credibility_score", 0.5) for s in all_sources]
+    avg_credibility = round(sum(cred_scores) / total, 3) if cred_scores else 0
 
     # 신뢰도 레벨
     source_count = len(all_sources)

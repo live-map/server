@@ -119,6 +119,11 @@ class TavilyClient:
                 url = result.get("url", "")
                 source_type = _classify_source_type(url)
 
+                from app.services.research.utils import compute_credibility_score
+
+                cred_score = compute_credibility_score(
+                    url, source_type, snippet, api_score=score,
+                )
                 sources.append(
                     SourceItem(
                         title=title,
@@ -127,6 +132,7 @@ class TavilyClient:
                         description=title,
                         content_snippet=snippet,
                         credibility=credibility,
+                        credibility_score=cred_score,
                     )
                 )
 
