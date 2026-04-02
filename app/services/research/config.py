@@ -22,6 +22,19 @@ RESEARCH_STATUS_TTL: int = 86400
 MAX_RETRY_COUNT: int = 2
 MAX_SOURCES_TO_SAVE: int = 20
 
+# 노드별 타임아웃 (초). None이면 전역 타임아웃에 위임.
+NODE_TIMEOUTS: dict[str, int] = {
+    "perspective_discovery": 30,
+    "planner": 30,
+    "web_search": 60,
+    "academic_search": 60,
+    "fact_check": 30,
+    "gap_analyzer": 45,
+    "outline_generator": 30,
+    "synthesizer": 120,
+    "reviewer": 30,
+}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 2. Search Limits
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
