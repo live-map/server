@@ -42,6 +42,7 @@ _NODE_TO_STEP = {
     "gap_analyzer": "searching",
     "outline_generator": "analyzing",
     "synthesizer": "analyzing",
+    "citation_validator": "reviewing",
     "reviewer": "reviewing",
 }
 
@@ -141,6 +142,8 @@ class ResearchService:
                 "review_feedback": "",
                 "final_article": "",
                 "extracted_sources": [],
+                # Citation 검증
+                "citation_issues": [],
                 # 제어
                 "retry_count": 0,
                 "confidence": 0.0,
