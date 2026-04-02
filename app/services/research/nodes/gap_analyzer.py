@@ -9,7 +9,13 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    DEFAULT_MAX_TOKENS,
+    GAP_ANALYSIS_SOURCE_LIMIT,
+    GAP_FOLLOWUP_QUERIES,
+    GAP_FOLLOWUP_RESULTS,
+    ai_settings,
+)
 from app.services.research.nodes.web_search import _is_relevant_source
 from app.services.research.prompts.gap_analyzer_prompt import GAP_SYSTEM, GAP_USER
 from app.services.research.schemas import GapReport
@@ -25,7 +31,7 @@ def _format_sources_brief(sources: list[SourceItem]) -> str:
     if not sources:
         return "(없음)"
     parts = []
-    for i, s in enumerate(sources[:15], 1):
+    for i, s in enumerate(sources[:GAP_ANALYSIS_SOURCE_LIMIT], 1):
         parts.append(f"{i}. [{s['credibility']}] {s['title'][:60]} — {s['content_snippet'][:100]}")
     return "\n".join(parts)
 
@@ -45,7 +51,7 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
         len(perspectives), len(web_sources), len(academic_sources),
     )
 
-    llm = ai_settings.get_chat_model(role="planner", max_tokens=1024, temperature=0.2)
+    llm = ai_settings.get_chat_model(role="planner", max_tokens=DEFAULT_MAX_TOKENS, temperature=0.2)
     structured_llm = llm.with_structured_output(GapReport)
 
     user_msg = GAP_USER.format(
@@ -82,9 +88,9 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
             client = TavilyClient()
         else:
             client = DuckDuckGoClient()
-        for query in report.follow_up_queries[:3]:
+        for query in report.follow_up_queries[:GAP_FOLLOWUP_QUERIES]:
             try:
-                results = await client.search(query, max_results=3)
+                results = await client.search(query, max_results=GAP_FOLLOWUP_RESULTS)
                 extra_sources.extend(results)
             except Exception as e:
                 logger.error("[GapAnalyzer] Follow-up search failed: %s", e)

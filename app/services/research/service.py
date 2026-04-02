@@ -17,7 +17,12 @@ from sqlalchemy.orm import selectinload
 
 from app.models.poll import Poll
 from app.models.poll_source import PollSource
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    MAX_SOURCES_TO_SAVE,
+    RESEARCH_STATUS_TTL,
+    RESEARCH_TIMEOUT,
+    ai_settings,
+)
 from app.services.research.graph import build_research_graph
 from app.services.research.state import ResearchState
 from app.services.research.tools.unsplash_client import fetch_thumbnail
@@ -26,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 # 리서치 상태 추적 (in-memory, TTL 기반)
 _research_status: dict[str, dict] = {}
-_RESEARCH_STATUS_TTL = 86400  # 24시간
 
 # 노드 → 스텝 매핑
 _NODE_TO_STEP = {
@@ -50,7 +54,7 @@ def _evict_stale_statuses() -> None:
     now = time.monotonic()
     expired = [
         k for k, v in _research_status.items()
-        if now - v.get("_ts", 0) > _RESEARCH_STATUS_TTL
+        if now - v.get("_ts", 0) > RESEARCH_STATUS_TTL
     ]
     for k in expired:
         del _research_status[k]
@@ -170,11 +174,11 @@ class ResearchService:
                                 else:
                                     accumulated_state[key] = value
 
-                await asyncio.wait_for(_run_stream(), timeout=300)
+                await asyncio.wait_for(_run_stream(), timeout=RESEARCH_TIMEOUT)
             except asyncio.TimeoutError:
                 _research_status[poll_id_str] = {
                     "status": "failed",
-                    "error": "Research timed out after 300 seconds",
+                    "error": f"Research timed out after {RESEARCH_TIMEOUT} seconds",
                     "_ts": time.monotonic(),
                 }
                 logger.error("[Research] Timed out for poll %s", poll_id_str)
@@ -221,7 +225,7 @@ class ResearchService:
             await session.flush()
 
             # 새 소스 추가
-            for src in sources[:20]:  # 최대 20개
+            for src in sources[:MAX_SOURCES_TO_SAVE]:
                 source_type = src.get("source_type", "OTHER")
                 if source_type not in ("NEWS", "PAPER", "ARTICLE", "VIDEO", "OTHER"):
                     source_type = "OTHER"

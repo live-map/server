@@ -10,7 +10,15 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    DEFAULT_MAX_TOKENS,
+    REVIEWER_BLOCKED_DOMAINS,
+    REVIEWER_DEFAULT_SCORE,
+    REVIEWER_MIN_VISUAL_ELEMENTS,
+    REVIEWER_PASS_SCORE,
+    REVIEWER_TEMPERATURE,
+    ai_settings,
+)
 from app.services.research.nodes.synthesizer import (
     _format_academic_sources,
     _format_web_sources,
@@ -24,17 +32,6 @@ from app.services.research.state import ResearchState
 from app.services.research.utils import CONCLUSION_KEYWORDS_RE
 
 logger = logging.getLogger(__name__)
-
-# 프로그래밍 검증: 차단 도메인
-_BLOCKED_DOMAINS = [
-    "namu.wiki",
-    "blog.naver.com",
-    "tistory.com",
-    "wikipedia.org",
-    "medium.com",
-    "velog.io",
-    "brunch.co.kr",
-]
 
 
 def _programmatic_review(article: str) -> tuple[bool, list[str]]:
@@ -50,7 +47,7 @@ def _programmatic_review(article: str) -> tuple[bool, list[str]]:
         failures.append("결론/요약/정리 섹션이 존재합니다.")
 
     # 2. 차단 도메인 인용 체크
-    for domain in _BLOCKED_DOMAINS:
+    for domain in REVIEWER_BLOCKED_DOMAINS:
         if domain in article:
             failures.append(f"차단 도메인 '{domain}'이 아티클에 포함되어 있습니다.")
 
@@ -59,7 +56,7 @@ def _programmatic_review(article: str) -> tuple[bool, list[str]]:
     has_table = "|" in article and "---" in article
     has_blockquote = "\n> " in article or article.startswith("> ")
     visual_count = sum([has_bold, has_table, has_blockquote])
-    if visual_count < 2:
+    if visual_count < REVIEWER_MIN_VISUAL_ELEMENTS:
         failures.append(
             f"시각 요소 2개+ 필수 (현재: bold={has_bold}, table={has_table}, "
             f"blockquote={has_blockquote}). 테이블 또는 blockquote를 추가하세요."
@@ -91,7 +88,7 @@ async def reviewer_node(state: ResearchState) -> dict:
         }
 
     # ── Step 2: LLM 크로스 모델 리뷰 ──
-    llm = ai_settings.get_chat_model(role="reviewer", max_tokens=1024, temperature=0.2)
+    llm = ai_settings.get_chat_model(role="reviewer", max_tokens=DEFAULT_MAX_TOKENS, temperature=REVIEWER_TEMPERATURE)
     structured_llm = llm.with_structured_output(ReviewerOutput)
 
     poll_options = ", ".join(state.get("poll_options", []))
@@ -113,12 +110,12 @@ async def reviewer_node(state: ResearchState) -> dict:
 
     except Exception as e:
         logger.warning("[Reviewer] Structured output failed: %s. Defaulting to pass.", e)
-        score = 80
+        score = REVIEWER_DEFAULT_SCORE
         feedback = ""
 
     # v4: 프로그래밍 검증 통과 = primary gate 통과.
     # LLM 스코어 < 60일 때만 retry 트리거 (극히 낮은 품질만 걸러냄)
-    passed = score >= 60
+    passed = score >= REVIEWER_PASS_SCORE
     logger.info("[Reviewer] LLM Score: %d, Pass: %s", score, passed)
 
     if passed:

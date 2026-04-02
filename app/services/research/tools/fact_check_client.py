@@ -9,7 +9,7 @@ import logging
 
 import httpx
 
-from app.services.research.config import ai_settings
+from app.services.research.config import FACT_CHECK_TIMEOUT, ai_settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class FactCheckClient:
             return []
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=FACT_CHECK_TIMEOUT) as client:
                 response = await client.get(
                     FACT_CHECK_API,
                     params={

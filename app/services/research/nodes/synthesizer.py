@@ -10,7 +10,21 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    ACADEMIC_SNIPPET_MAX,
+    ACADEMIC_SOURCE_LIMIT,
+    CONFIDENCE_HIGH_MIN_CREDIBILITY,
+    CONFIDENCE_HIGH_MIN_SOURCES,
+    CONFIDENCE_MEDIUM_MIN_CREDIBILITY,
+    CONFIDENCE_MEDIUM_MIN_SOURCES,
+    FACT_CHECK_DISPLAY_LIMIT,
+    SYNTHESIZER_MAX_TOKENS,
+    SYNTHESIZER_REVISION_TEMPERATURE,
+    SYNTHESIZER_TEMPERATURE,
+    WEB_SNIPPET_MAX,
+    WEB_SOURCE_LIMIT,
+    ai_settings,
+)
 from app.services.research.prompts.synthesizer_prompt import (
     SYNTHESIZER_REVISE_USER,
     SYNTHESIZER_SYSTEM,
@@ -36,12 +50,12 @@ def _build_numbered_source_list(
     parts: list[str] = []
     idx = 1
 
-    for s in web_sources[:15]:
+    for s in web_sources[:WEB_SOURCE_LIMIT]:
         if s["url"] in seen_urls:
             continue
         seen_urls.add(s["url"])
         ordered.append(s)
-        snippet = s["content_snippet"][:800] if s.get("content_snippet") else ""
+        snippet = s["content_snippet"][:WEB_SNIPPET_MAX] if s.get("content_snippet") else ""
         parts.append(
             f"[{idx}] **{s['title']}**\n"
             f"   URL: {s['url']}\n"
@@ -50,12 +64,12 @@ def _build_numbered_source_list(
         )
         idx += 1
 
-    for s in academic_sources[:10]:
+    for s in academic_sources[:ACADEMIC_SOURCE_LIMIT]:
         if s["url"] in seen_urls:
             continue
         seen_urls.add(s["url"])
         ordered.append(s)
-        snippet = s["content_snippet"][:600] if s.get("content_snippet") else ""
+        snippet = s["content_snippet"][:ACADEMIC_SNIPPET_MAX] if s.get("content_snippet") else ""
         parts.append(
             f"[{idx}] **{s['title']}** (학술)\n"
             f"   저자: {s['description']}\n"
@@ -86,7 +100,7 @@ def _format_fact_checks(results: list[dict]) -> str:
     if not results:
         return "(팩트체크 결과 없음)"
     parts = []
-    for i, r in enumerate(results[:10], 1):
+    for i, r in enumerate(results[:FACT_CHECK_DISPLAY_LIMIT], 1):
         parts.append(
             f"{i}. **주장**: {r.get('claim_text', '')}\n"
             f"   **평가**: {r.get('rating', '알 수 없음')}\n"
@@ -100,7 +114,7 @@ def _format_web_sources(sources: list[SourceItem]) -> str:
     if not sources:
         return "(검색 결과 없음)"
     parts = []
-    for i, s in enumerate(sources[:15], 1):
+    for i, s in enumerate(sources[:WEB_SOURCE_LIMIT], 1):
         parts.append(
             f"{i}. **{s['title']}**\n"
             f"   URL: {s['url']}\n"
@@ -114,7 +128,7 @@ def _format_academic_sources(sources: list[SourceItem]) -> str:
     if not sources:
         return "(학술 논문 없음)"
     parts = []
-    for i, s in enumerate(sources[:10], 1):
+    for i, s in enumerate(sources[:ACADEMIC_SOURCE_LIMIT], 1):
         parts.append(
             f"{i}. **{s['title']}**\n"
             f"   저자: {s['description']}\n"
@@ -230,9 +244,9 @@ def _compute_confidence(
 
     # 신뢰도 레벨
     source_count = len(all_sources)
-    if source_count >= 10 and avg_credibility >= 2.5:
+    if source_count >= CONFIDENCE_HIGH_MIN_SOURCES and avg_credibility >= CONFIDENCE_HIGH_MIN_CREDIBILITY:
         level = "HIGH"
-    elif source_count >= 5 and avg_credibility >= 1.5:
+    elif source_count >= CONFIDENCE_MEDIUM_MIN_SOURCES and avg_credibility >= CONFIDENCE_MEDIUM_MIN_CREDIBILITY:
         level = "MEDIUM"
     else:
         level = "LOW"
@@ -252,8 +266,8 @@ async def synthesizer_node(state: ResearchState) -> dict:
     mode = "Revising" if is_revision else "Synthesizing"
     logger.info("[Synthesizer] %s article for: %s", mode, state["poll_title"][:50])
 
-    temperature = 0.2 if is_revision else 0.4
-    llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=4096, temperature=temperature)
+    temperature = SYNTHESIZER_REVISION_TEMPERATURE if is_revision else SYNTHESIZER_TEMPERATURE
+    llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=SYNTHESIZER_MAX_TOKENS, temperature=temperature)
 
     web_sources = state.get("web_sources", [])
     academic_sources = state.get("academic_sources", [])

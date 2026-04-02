@@ -5,6 +5,7 @@ Fact Check node — Google Fact Check API로 주장을 검증합니다.
 import asyncio
 import logging
 
+from app.services.research.config import FACT_CHECK_MAX_RESULTS
 from app.services.research.state import ResearchState
 from app.services.research.tools.fact_check_client import FactCheckClient
 
@@ -21,7 +22,7 @@ async def fact_check_node(state: ResearchState) -> dict:
     logger.info("[FactCheck] Checking %d claims", len(claims))
 
     client = FactCheckClient()
-    tasks = [client.search(claim, max_results=3) for claim in claims]
+    tasks = [client.search(claim, max_results=FACT_CHECK_MAX_RESULTS) for claim in claims]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: list[dict] = []

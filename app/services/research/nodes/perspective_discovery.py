@@ -9,7 +9,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.services.research.config import ai_settings
+from app.services.research.config import DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, FALLBACK_PERSPECTIVES_LIMIT, ai_settings
 from app.services.research.prompts.perspective_prompt import (
     PERSPECTIVE_SYSTEM,
     PERSPECTIVE_USER,
@@ -25,7 +25,7 @@ async def perspective_discovery_node(state: ResearchState) -> dict:
     """여론조사 주제의 관점과 이해관계자를 발견합니다."""
     logger.info("[PerspectiveDiscovery] Analyzing: %s", state["poll_title"][:50])
 
-    llm = ai_settings.get_chat_model(role="planner", max_tokens=1024, temperature=0.3)
+    llm = ai_settings.get_chat_model(role="planner", max_tokens=DEFAULT_MAX_TOKENS, temperature=DEFAULT_TEMPERATURE)
     structured_llm = llm.with_structured_output(PerspectiveOutput)
 
     user_msg = PERSPECTIVE_USER.format(
@@ -67,6 +67,6 @@ async def perspective_discovery_node(state: ResearchState) -> dict:
                 "description": f"'{opt}' 선택지에 해당하는 관점",
                 "key_questions": [f"{opt}에 대한 근거는?"],
             }
-            for opt in options[:4]
+            for opt in options[:FALLBACK_PERSPECTIVES_LIMIT]
         ]
         return {"perspectives": fallback}

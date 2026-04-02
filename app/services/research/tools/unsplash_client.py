@@ -9,7 +9,7 @@ import logging
 
 import httpx
 
-from app.services.research.config import ai_settings
+from app.services.research.config import UNSPLASH_TIMEOUT, ai_settings
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ async def _search_unsplash(keywords: str) -> str | None:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=UNSPLASH_TIMEOUT) as client:
             response = await client.get(
                 _UNSPLASH_API,
                 params={

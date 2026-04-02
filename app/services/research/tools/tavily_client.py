@@ -13,57 +13,21 @@ import re
 
 from tavily import AsyncTavilyClient
 
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    ACADEMIC_DOMAINS,
+    CREDIBILITY_HIGH_THRESHOLD,
+    CREDIBILITY_MEDIUM_THRESHOLD,
+    GOV_DOMAINS,
+    KOREAN_TRUSTED_DOMAINS,
+    NEWS_DOMAINS,
+    TAVILY_CONTENT_MAX,
+    TAVILY_EXCLUDE_DOMAINS,
+    TAVILY_RAW_CONTENT_MAX,
+    ai_settings,
+)
 from app.services.research.state import SourceItem
 
 logger = logging.getLogger(__name__)
-
-# API 수준에서 차단할 도메인 (검색 결과 자체에서 제외)
-_EXCLUDE_DOMAINS = [
-    "namu.wiki",
-    "wikipedia.org",
-    "ko.wikipedia.org",
-    "en.wikipedia.org",
-    "blog.naver.com",
-    "m.blog.naver.com",
-    "tistory.com",
-    "brunch.co.kr",
-    "medium.com",
-    "velog.io",
-    "reddit.com",
-    "youtube.com",
-    "quora.com",
-    "dcinside.com",
-    "fmkorea.com",
-    "theqoo.net",
-    "clien.net",
-    "ruliweb.com",
-    "ppomppu.co.kr",
-    "notion.so",
-]
-
-# 한국어 쿼리일 때 우선 포함할 신뢰 도메인
-_KOREAN_TRUSTED_DOMAINS = [
-    "bbc.com/korean",
-    "yonhapnews.co.kr",
-    "hani.co.kr",
-    "khan.co.kr",
-    "chosun.com",
-    "donga.com",
-    "joongang.co.kr",
-    "mk.co.kr",
-    "mt.co.kr",
-    "hankyung.com",
-    "sedaily.com",
-    "yna.co.kr",
-    "kbs.co.kr",
-    "sbs.co.kr",
-    "mbc.co.kr",
-    "bok.or.kr",
-    "kostat.go.kr",
-    "kdi.re.kr",
-    "nars.go.kr",
-]
 
 _KOREAN_RE = re.compile(r"[가-힣]")
 
@@ -78,34 +42,16 @@ def _has_korean_chars(text: str) -> bool:
     return bool(_KOREAN_RE.search(text))
 
 
-# 도메인→source_type 매핑 (URL 기반 동적 분류)
-_NEWS_DOMAINS = {
-    "yonhapnews.co.kr", "yna.co.kr", "hani.co.kr", "khan.co.kr",
-    "chosun.com", "donga.com", "joongang.co.kr", "mk.co.kr",
-    "mt.co.kr", "hankyung.com", "sedaily.com", "kbs.co.kr",
-    "sbs.co.kr", "mbc.co.kr", "bbc.com", "reuters.com",
-    "apnews.com", "nytimes.com", "washingtonpost.com",
-}
-_GOV_DOMAINS = {
-    "go.kr", "gov.kr", "bok.or.kr", "kostat.go.kr",
-    "nars.go.kr", "kdi.re.kr",
-}
-_ACADEMIC_DOMAINS = {
-    "scholar.google.com", "arxiv.org", "pubmed.ncbi.nlm.nih.gov",
-    "semanticscholar.org", "jstor.org", "nature.com", "science.org",
-}
-
-
 def _classify_source_type(url: str) -> str:
     """URL 도메인을 기반으로 source_type을 분류합니다."""
     url_lower = url.lower()
-    for domain in _NEWS_DOMAINS:
+    for domain in NEWS_DOMAINS:
         if domain in url_lower:
             return "NEWS"
-    for domain in _GOV_DOMAINS:
+    for domain in GOV_DOMAINS:
         if domain in url_lower:
             return "ARTICLE"
-    for domain in _ACADEMIC_DOMAINS:
+    for domain in ACADEMIC_DOMAINS:
         if domain in url_lower:
             return "PAPER"
     return "OTHER"
@@ -132,7 +78,7 @@ class TavilyClient:
                 "max_results": max_results,
                 "include_answer": include_answer,
                 "search_depth": "advanced",
-                "exclude_domains": _EXCLUDE_DOMAINS,
+                "exclude_domains": TAVILY_EXCLUDE_DOMAINS,
                 "include_raw_content": True,
             }
 
@@ -140,7 +86,7 @@ class TavilyClient:
             # include_domains와 exclude_domains를 동시 사용하면 충돌 —
             # include가 설정되면 exclude 제거 (include가 우선)
             if is_korean:
-                search_kwargs["include_domains"] = _KOREAN_TRUSTED_DOMAINS
+                search_kwargs["include_domains"] = KOREAN_TRUSTED_DOMAINS
                 del search_kwargs["exclude_domains"]
 
             response = await self.client.search(**search_kwargs)
@@ -155,9 +101,9 @@ class TavilyClient:
                     continue
 
                 score = result.get("score", 0)
-                if score > 0.7:
+                if score > CREDIBILITY_HIGH_THRESHOLD:
                     credibility = "HIGH"
-                elif score > 0.4:
+                elif score > CREDIBILITY_MEDIUM_THRESHOLD:
                     credibility = "MEDIUM"
                 else:
                     credibility = "LOW"
@@ -166,9 +112,9 @@ class TavilyClient:
                 raw = result.get("raw_content") or ""
                 content = result.get("content", "")
                 if raw and len(raw) > len(content):
-                    snippet = raw[:2000]
+                    snippet = raw[:TAVILY_RAW_CONTENT_MAX]
                 else:
-                    snippet = content[:800]
+                    snippet = content[:TAVILY_CONTENT_MAX]
 
                 url = result.get("url", "")
                 source_type = _classify_source_type(url)

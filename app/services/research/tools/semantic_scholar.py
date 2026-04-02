@@ -9,6 +9,7 @@ import logging
 
 import httpx
 
+from app.services.research.config import SEMANTIC_SCHOLAR_TIMEOUT
 from app.services.research.state import SourceItem
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class SemanticScholarClient:
     ) -> list[SourceItem]:
         """학술 논문을 검색하고 SourceItem 목록을 반환합니다."""
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=SEMANTIC_SCHOLAR_TIMEOUT) as client:
                 # API 키 없이 요청 (무료 티어, rate limit 주의)
                 response = await client.get(
                     f"{SEMANTIC_SCHOLAR_API}/paper/search",
