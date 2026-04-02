@@ -8,7 +8,14 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    PLANNER_ACADEMIC_QUERY_LIMIT,
+    PLANNER_FACTCHECK_CLAIM_LIMIT,
+    PLANNER_WEB_QUERY_LIMIT,
+    ai_settings,
+)
 from app.services.research.prompts.planner_prompt import (
     PLANNER_SYSTEM,
     PLANNER_USER,
@@ -24,7 +31,7 @@ async def planner_node(state: ResearchState) -> dict:
     """여론조사 주제를 분석하고 관점별 맞춤 검색 쿼리를 생성합니다."""
     logger.info("[Planner] Starting for poll: %s", state["poll_title"][:50])
 
-    llm = ai_settings.get_chat_model(role="planner", max_tokens=1024, temperature=0.3)
+    llm = ai_settings.get_chat_model(role="planner", max_tokens=DEFAULT_MAX_TOKENS, temperature=DEFAULT_TEMPERATURE)
     structured_llm = llm.with_structured_output(PlannerOutput)
 
     perspectives = state.get("perspectives", [])
@@ -43,9 +50,9 @@ async def planner_node(state: ResearchState) -> dict:
         ])
 
         output = {
-            "search_queries": result.search_queries[:8],
-            "academic_queries": result.academic_queries[:4],
-            "fact_check_claims": result.fact_check_claims[:4],
+            "search_queries": result.search_queries[:PLANNER_WEB_QUERY_LIMIT],
+            "academic_queries": result.academic_queries[:PLANNER_ACADEMIC_QUERY_LIMIT],
+            "fact_check_claims": result.fact_check_claims[:PLANNER_FACTCHECK_CLAIM_LIMIT],
         }
 
     except Exception as e:
@@ -60,8 +67,8 @@ async def planner_node(state: ResearchState) -> dict:
             queries = [state["poll_title"]]
 
         output = {
-            "search_queries": queries[:8],
-            "academic_queries": [state["poll_title"]][:3],
+            "search_queries": queries[:PLANNER_WEB_QUERY_LIMIT],
+            "academic_queries": [state["poll_title"]][:PLANNER_ACADEMIC_QUERY_LIMIT],
             "fact_check_claims": [],
         }
 

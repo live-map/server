@@ -9,7 +9,12 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.services.research.config import ai_settings
+from app.services.research.config import (
+    OUTLINE_MAPPING_THRESHOLD,
+    OUTLINE_MAX_TOKENS,
+    OUTLINE_TEMPERATURE,
+    ai_settings,
+)
 from app.services.research.prompts.outline_prompt import (
     OUTLINE_SYSTEM,
     OUTLINE_USER,
@@ -64,7 +69,7 @@ def _check_perspective_mapping(
                 break
 
     ratio = match_count / len(sections) if sections else 0
-    if ratio > 0.5:
+    if ratio > OUTLINE_MAPPING_THRESHOLD:
         logger.warning(
             "[OutlineGenerator] %.0f%% sections match poll options 1:1 (%d/%d)",
             ratio * 100, match_count, len(sections),
@@ -77,7 +82,7 @@ async def outline_generator_node(state: ResearchState) -> dict:
     """수집된 자료를 바탕으로 아티클 아웃라인을 생성합니다."""
     logger.info("[OutlineGenerator] Generating outline for: %s", state["poll_title"][:50])
 
-    llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=2048, temperature=0.4)
+    llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=OUTLINE_MAX_TOKENS, temperature=OUTLINE_TEMPERATURE)
     structured_llm = llm.with_structured_output(OutlineOutput)
 
     perspectives = state.get("perspectives", [])

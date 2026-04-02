@@ -5,6 +5,7 @@ Academic Search node — Semantic Scholar로 학술 논문을 검색합니다.
 import asyncio
 import logging
 
+from app.services.research.config import ACADEMIC_DELAY, ACADEMIC_MAX_RESULTS
 from app.services.research.state import ResearchState, SourceItem
 from app.services.research.tools.semantic_scholar import SemanticScholarClient
 
@@ -26,7 +27,7 @@ async def academic_search_node(state: ResearchState) -> dict:
 
     for i, query in enumerate(queries):
         try:
-            results = await client.search(query, max_results=3)
+            results = await client.search(query, max_results=ACADEMIC_MAX_RESULTS)
             for source in results:
                 if source["url"] not in seen_urls:
                     seen_urls.add(source["url"])
@@ -36,7 +37,7 @@ async def academic_search_node(state: ResearchState) -> dict:
 
         # rate limit 방지: 쿼리 간 1초 대기
         if i < len(queries) - 1:
-            await asyncio.sleep(1)
+            await asyncio.sleep(ACADEMIC_DELAY)
 
     logger.info("[AcademicSearch] Collected %d unique papers", len(all_sources))
     return {"academic_sources": all_sources}

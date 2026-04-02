@@ -9,6 +9,8 @@ import logging
 
 import httpx
 
+from app.services.research.config import JINA_TIMEOUT
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,7 +22,7 @@ class JinaReader:
     async def extract(self, url: str, max_chars: int = 2000) -> str:
         """URL에서 LLM-friendly 마크다운 본문을 추출합니다."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=JINA_TIMEOUT) as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/{url}",
                     headers={

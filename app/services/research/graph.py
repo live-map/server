@@ -11,6 +11,7 @@ import logging
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.services.research.config import MAX_RETRY_COUNT
 from app.services.research.nodes.academic_search import academic_search_node
 from app.services.research.nodes.fact_check import fact_check_node
 from app.services.research.nodes.gap_analyzer import gap_analyzer_node
@@ -29,7 +30,7 @@ def _review_decision(state: ResearchState) -> str:
     """리뷰 결과에 따라 다음 노드를 결정합니다."""
     if state.get("final_article"):
         return "end"
-    if state.get("retry_count", 0) >= 2:
+    if state.get("retry_count", 0) >= MAX_RETRY_COUNT:
         logger.warning("[Decision] Max retries reached, using current draft")
         return "end"
     return "revise"
