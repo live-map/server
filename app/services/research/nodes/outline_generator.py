@@ -21,7 +21,11 @@ from app.services.research.prompts.outline_prompt import (
 )
 from app.services.research.schemas import OutlineOutput
 from app.services.research.state import ResearchState
-from app.services.research.utils import build_numbered_sources_brief, sanitize_user_input
+from app.services.research.utils import (
+    build_numbered_sources_brief,
+    filter_by_graded_urls,
+    sanitize_user_input,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +100,8 @@ async def outline_generator_node(state: ResearchState) -> dict:
         perspectives=_format_perspectives(perspectives),
         gap_summary=gap_report.get("summary", "갭 분석 없음"),
         numbered_sources=build_numbered_sources_brief(
-            state.get("web_sources", []),
-            state.get("academic_sources", []),
+            filter_by_graded_urls(state.get("web_sources", []), state.get("graded_web_urls", [])),
+            filter_by_graded_urls(state.get("academic_sources", []), state.get("graded_academic_urls", [])),
         ),
     )
 

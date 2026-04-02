@@ -31,7 +31,7 @@ from app.services.research.prompts.synthesizer_prompt import (
     SYNTHESIZER_USER,
 )
 from app.services.research.state import ResearchState, SourceItem
-from app.services.research.utils import CONCLUSION_RE, sanitize_user_input
+from app.services.research.utils import CONCLUSION_RE, filter_by_graded_urls, sanitize_user_input
 
 logger = logging.getLogger(__name__)
 
@@ -288,8 +288,12 @@ async def synthesizer_node(state: ResearchState) -> dict:
     temperature = SYNTHESIZER_REVISION_TEMPERATURE if is_revision else SYNTHESIZER_TEMPERATURE
     llm = ai_settings.get_chat_model(role="synthesizer", max_tokens=SYNTHESIZER_MAX_TOKENS, temperature=temperature)
 
-    web_sources = state.get("web_sources", [])
-    academic_sources = state.get("academic_sources", [])
+    web_sources = filter_by_graded_urls(
+        state.get("web_sources", []), state.get("graded_web_urls", [])
+    )
+    academic_sources = filter_by_graded_urls(
+        state.get("academic_sources", []), state.get("graded_academic_urls", [])
+    )
 
     # 통합 번호 매핑
     numbered_text, ordered_sources = _build_numbered_source_list(
@@ -360,8 +364,8 @@ async def synthesizer_node(state: ResearchState) -> dict:
         except Exception as e:
             logger.warning("[Synthesizer] Visual retry failed: %s", e)
 
-    # 최종 출처 목록 추출 (중복 제거)
-    extracted = _extract_sources_from_state(state)
+    # 최종 출처 목록 추출 (중복 제거, 필터링 반영)
+    extracted = _extract_sources(web_sources, academic_sources)
 
     # 신뢰도 점수 계산
     confidence = _compute_confidence(web_sources, academic_sources)
@@ -375,12 +379,15 @@ async def synthesizer_node(state: ResearchState) -> dict:
     }
 
 
-def _extract_sources_from_state(state: ResearchState) -> list[SourceItem]:
-    """상태에서 최종 출처 목록을 추출합니다 (중복 제거)."""
+def _extract_sources(
+    web_sources: list[SourceItem],
+    academic_sources: list[SourceItem],
+) -> list[SourceItem]:
+    """출처 목록에서 중복을 제거하여 반환합니다."""
     all_sources: list[SourceItem] = []
     seen_urls: set[str] = set()
 
-    for source in state.get("web_sources", []) + state.get("academic_sources", []):
+    for source in web_sources + academic_sources:
         if source["url"] and source["url"] not in seen_urls:
             seen_urls.add(source["url"])
             all_sources.append(source)

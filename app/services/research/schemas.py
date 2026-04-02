@@ -124,3 +124,36 @@ class ReviewerOutput(BaseModel):
     passed: bool = Field(..., description="아티클 통과 여부")
     score: int = Field(..., ge=0, le=100, description="품질 점수 (0-100)")
     feedback: str = Field(default="", description="수정이 필요한 경우 구체적 피드백")
+
+
+# ── Relevance Grader (CRAG) ──
+
+
+class DocumentGrade(BaseModel):
+    """단일 문서 관련성 평가 결과."""
+
+    url: str = Field(..., description="평가 대상 문서 URL")
+    relevance_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="관련성 점수 (0=완전 무관, 1=완전 관련)",
+    )
+    verdict: str = Field(
+        ...,
+        description="CORRECT | AMBIGUOUS | INCORRECT",
+    )
+    reason: str = Field(default="", description="판정 근거 (한 줄)")
+    requery: str = Field(
+        default="",
+        description="AMBIGUOUS일 때 보완 검색 쿼리. 해당 없으면 빈 문자열.",
+    )
+
+
+class RelevanceGraderOutput(BaseModel):
+    """관련성 평가 노드 출력."""
+
+    grades: list[DocumentGrade] = Field(
+        ...,
+        description="평가된 문서 목록",
+    )

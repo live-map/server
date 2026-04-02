@@ -68,3 +68,17 @@ def build_numbered_sources_brief(
         idx += 1
 
     return "\n".join(parts) if parts else "(출처 없음)"
+
+
+def filter_by_graded_urls(
+    sources: list[SourceItem],
+    graded_urls: list[str],
+) -> list[SourceItem]:
+    """graded_urls가 비어 있으면 모든 sources 반환 (fail-open).
+
+    비어 있지 않으면 URL이 허용목록에 포함된 sources만 반환.
+    """
+    if not graded_urls:
+        return sources
+    url_set = set(graded_urls)
+    return [s for s in sources if s["url"] in url_set]
