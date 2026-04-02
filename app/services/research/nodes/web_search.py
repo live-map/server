@@ -59,6 +59,8 @@ def _is_relevant_source(source: SourceItem) -> bool:
 
 def _boost_trusted_credibility(source: SourceItem) -> SourceItem:
     if _is_trusted_domain(source.get("url", "")):
+        from app.services.research.utils import compute_credibility_score
+
         return SourceItem(
             title=source["title"],
             url=source["url"],
@@ -66,6 +68,13 @@ def _boost_trusted_credibility(source: SourceItem) -> SourceItem:
             description=source["description"],
             content_snippet=source["content_snippet"],
             credibility="HIGH",
+            credibility_score=max(
+                source.get("credibility_score", 0.0),
+                compute_credibility_score(
+                    source["url"], source["source_type"], source["content_snippet"],
+                    api_score=1.0,
+                ),
+            ),
         )
     return source
 
@@ -88,6 +97,7 @@ async def _enrich_with_jina(sources: list[SourceItem]) -> list[SourceItem]:
                         description=source["description"],
                         content_snippet=content[:MAX_SNIPPET_LENGTH],
                         credibility=source["credibility"],
+                        credibility_score=source.get("credibility_score", 0.5),
                     )
                     logger.debug("[WebSearch] Enriched via Jina: %s", source["title"][:40])
                     return enriched
@@ -169,10 +179,8 @@ async def web_search_node(state: ResearchState) -> dict:
             enriched = await _enrich_with_jina(all_sources[:JINA_ENRICH_LIMIT])
             all_sources = enriched + all_sources[JINA_ENRICH_LIMIT:]
 
-    # 신뢰 도메인 출처를 상위로 정렬
-    all_sources.sort(
-        key=lambda s: (0 if s["credibility"] == "HIGH" else 1, s["title"])
-    )
+    # 신뢰도 점수 기반 정렬 (높은 점수 우선)
+    all_sources.sort(key=lambda s: -s.get("credibility_score", 0.5))
 
     logger.info("[WebSearch] Collected %d unique relevant sources", len(all_sources))
     return {"web_sources": all_sources}

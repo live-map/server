@@ -59,14 +59,22 @@ class SemanticScholarClient:
 
                 abstract = paper.get("abstract", "") or ""
 
+                from app.services.research.utils import compute_credibility_score
+
+                paper_url = paper.get("url", "") or f"https://api.semanticscholar.org/paper/{paper.get('paperId', '')}"
+                cred_score = compute_credibility_score(
+                    paper_url, "PAPER", abstract[:500],
+                    citation_count=citation_count,
+                )
                 sources.append(
                     SourceItem(
                         title=paper.get("title", ""),
-                        url=paper.get("url", "") or f"https://api.semanticscholar.org/paper/{paper.get('paperId', '')}",
+                        url=paper_url,
                         source_type="PAPER",
                         description=desc,
                         content_snippet=abstract[:500],
                         credibility=credibility,
+                        credibility_score=cred_score,
                     )
                 )
 

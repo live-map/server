@@ -76,14 +76,20 @@ class DuckDuckGoClient:
                 title = result.get("title", "")
                 body = result.get("body", "")
 
+                from app.services.research.utils import compute_credibility_score
+
+                src_type = _classify_source_type(url)
+                snip = body[:MAX_SNIPPET_LENGTH]
+                cred_score = compute_credibility_score(url, src_type, snip)
                 sources.append(
                     SourceItem(
                         title=title,
                         url=url,
-                        source_type=_classify_source_type(url),
+                        source_type=src_type,
                         description=title,
-                        content_snippet=body[:MAX_SNIPPET_LENGTH],
-                        credibility="MEDIUM",  # DuckDuckGo는 score 없으므로 MEDIUM 기본값
+                        content_snippet=snip,
+                        credibility="MEDIUM",
+                        credibility_score=cred_score,
                     )
                 )
 

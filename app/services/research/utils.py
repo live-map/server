@@ -5,7 +5,24 @@ Shared utilities for the Research Agent nodes.
 """
 
 import re
+from urllib.parse import urlparse
 
+from app.services.research.config import (
+    CRED_SCORE_ACADEMIC_DOMAIN,
+    CRED_SCORE_DEFAULT_DOMAIN,
+    CRED_SCORE_GOV_DOMAIN,
+    CRED_SCORE_NEWS_DOMAIN,
+    CRED_SCORE_TRUSTED_DOMAIN,
+    CRED_SNIPPET_QUALITY_DIVISOR,
+    CRED_SOURCE_TYPE_SCORES,
+    CRED_WEIGHT_CONTENT,
+    CRED_WEIGHT_DOMAIN,
+    CRED_WEIGHT_SOURCE_TYPE,
+    ACADEMIC_DOMAINS,
+    GOV_DOMAINS,
+    NEWS_DOMAINS,
+    TRUSTED_DOMAINS,
+)
 from app.services.research.state import SourceItem
 
 
@@ -82,3 +99,55 @@ def filter_by_graded_urls(
         return sources
     url_set = set(graded_urls)
     return [s for s in sources if s["url"] in url_set]
+
+
+def compute_credibility_score(
+    url: str,
+    source_type: str,
+    snippet: str,
+    *,
+    api_score: float | None = None,
+    citation_count: int | None = None,
+) -> float:
+    """다중 요소 기반 0.0-1.0 신뢰도 점수를 계산합니다.
+
+    Args:
+        url: 소스 URL
+        source_type: NEWS | PAPER | ARTICLE | OTHER
+        snippet: 콘텐츠 스니펫
+        api_score: 검색 API 제공 점수 (Tavily score 등, 0-1)
+        citation_count: 학술 인용 수 (Semantic Scholar)
+    """
+    import math
+
+    # 1. 도메인 신뢰도
+    domain = urlparse(url).netloc.lower() if url else ""
+    if any(d in domain for d in TRUSTED_DOMAINS):
+        domain_score = CRED_SCORE_TRUSTED_DOMAIN
+    elif any(d in domain for d in GOV_DOMAINS):
+        domain_score = CRED_SCORE_GOV_DOMAIN
+    elif any(d in domain for d in ACADEMIC_DOMAINS):
+        domain_score = CRED_SCORE_ACADEMIC_DOMAIN
+    elif any(d in domain for d in NEWS_DOMAINS):
+        domain_score = CRED_SCORE_NEWS_DOMAIN
+    else:
+        domain_score = CRED_SCORE_DEFAULT_DOMAIN
+
+    # 2. 콘텐츠 품질 (API 점수 우선, 없으면 스니펫 길이 기반)
+    if api_score is not None:
+        content_score = min(max(api_score, 0.0), 1.0)
+    elif citation_count is not None:
+        # 학술: 인용수 기반 (log 스케일, 1000회 이상 → 1.0)
+        content_score = min(math.log(citation_count + 1) / math.log(1000), 1.0)
+    else:
+        content_score = min(len(snippet) / CRED_SNIPPET_QUALITY_DIVISOR, 1.0)
+
+    # 3. 소스 유형
+    type_score = CRED_SOURCE_TYPE_SCORES.get(source_type, 0.5)
+
+    score = (
+        CRED_WEIGHT_DOMAIN * domain_score
+        + CRED_WEIGHT_CONTENT * content_score
+        + CRED_WEIGHT_SOURCE_TYPE * type_score
+    )
+    return round(min(max(score, 0.0), 1.0), 3)
