@@ -188,22 +188,25 @@ _COMPARISON_RE = re.compile(
 )
 
 
+def _has_visual_elements(article: str) -> tuple[bool, bool]:
+    """테이블과 blockquote 존재 여부를 반환합니다."""
+    has_table = "|" in article and "---" in article
+    has_blockquote = "\n> " in article or article.startswith("> ")
+    return has_table, has_blockquote
+
+
 def _ensure_visual_elements(article: str) -> str:
     """테이블/blockquote가 없으면 시각 요소를 보강합니다.
 
     - blockquote 0개 → "> " 인용 스타일로 첫 번째 기관/전문가 발언 변환
-    - table 0개 → 수치 비교 2개+ 있는 문단을 간이 테이블로 변환 시도하지 않고
-      로그 경고만 (LLM이 생성하도록 프롬프트에서 강제하는 것이 우선)
+    - table 0개 → 로그 경고 (synthesizer_node에서 재시도 트리거)
     """
-    has_table = "|" in article and "---" in article
-    has_blockquote = "\n> " in article or article.startswith("> ")
+    has_table, has_blockquote = _has_visual_elements(article)
 
     if has_table and has_blockquote:
         return article
 
     if not has_blockquote:
-        # 기관/전문가 발언 패턴을 blockquote로 변환
-        # "~에 따르면 "~"이라고/라며/밝혔다" 또는 "~은(는) "~"라고" 패턴
         quote_pattern = re.compile(
             r"((?:[가-힣A-Za-z]+(?:은|는|에 따르면|관계자는|위원장은|장관은|총재는))\s*"
             r'"[^"]{10,}"'
@@ -217,12 +220,28 @@ def _ensure_visual_elements(article: str) -> str:
             logger.info("[Synthesizer] Auto-converted expert quote to blockquote")
 
     if not has_table:
-        logger.warning(
-            "[Synthesizer] No table found in article. "
-            "Prompt should enforce table usage for data comparisons."
-        )
+        logger.warning("[Synthesizer] No table found in article")
 
     return article
+
+
+def _build_fallback_source_table(
+    web_sources: list[SourceItem],
+    academic_sources: list[SourceItem],
+) -> str:
+    """소스 요약 테이블을 생성합니다 (visual element fallback)."""
+    rows = []
+    for s in (web_sources + academic_sources)[:5]:
+        cred = s.get("credibility", "?")
+        stype = s.get("source_type", "?")
+        title = s.get("title", "")[:40]
+        rows.append(f"| {title} | {stype} | {cred} |")
+
+    if not rows:
+        return ""
+
+    header = "\n| 출처 | 유형 | 신뢰도 |\n|------|------|--------|\n"
+    return header + "\n".join(rows) + "\n"
 
 
 def _compute_confidence(
@@ -309,6 +328,37 @@ async def synthesizer_node(state: ResearchState) -> dict:
     article = _strip_conclusion(response.content)
     article = _ensure_bold_numbers(article)
     article = _ensure_visual_elements(article)
+
+    # 테이블 없으면 1회 재시도 (revision이 아닌 경우만)
+    has_table, _ = _has_visual_elements(article)
+    if not has_table and not is_revision:
+        logger.info("[Synthesizer] No table found, retrying with visual emphasis")
+        try:
+            retry_msg = (
+                user_msg
+                + "\n\n⚠️ 중요: 이전 결과에 테이블이 없었습니다. "
+                "반드시 마크다운 테이블(| 헤더 | ... | + |---|---| 형식)을 1개 이상 포함하세요. "
+                "수치 비교, 현황 요약, 또는 관점별 정리를 테이블로 표현하세요."
+            )
+            retry_response = await llm.ainvoke([
+                SystemMessage(content=SYNTHESIZER_SYSTEM),
+                HumanMessage(content=retry_msg),
+            ])
+            retry_article = _strip_conclusion(retry_response.content)
+            retry_article = _ensure_bold_numbers(retry_article)
+            retry_article = _ensure_visual_elements(retry_article)
+            has_table_retry, _ = _has_visual_elements(retry_article)
+            if has_table_retry:
+                article = retry_article
+                logger.info("[Synthesizer] Retry succeeded — table included")
+            else:
+                # 2회 시도 후에도 없으면 fallback 소스 테이블 삽입
+                fallback_table = _build_fallback_source_table(web_sources, academic_sources)
+                if fallback_table:
+                    article = article.rstrip() + "\n\n### 주요 출처 요약\n" + fallback_table
+                    logger.info("[Synthesizer] Inserted fallback source summary table")
+        except Exception as e:
+            logger.warning("[Synthesizer] Visual retry failed: %s", e)
 
     # 최종 출처 목록 추출 (중복 제거)
     extracted = _extract_sources_from_state(state)
