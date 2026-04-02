@@ -84,6 +84,10 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
     # 갭이 있으면 추가 검색 실행 (+ ambiguous requery 병합)
     ambiguous_requery = state.get("ambiguous_requery", [])
     all_followup_queries = ambiguous_requery + (report.follow_up_queries or [])
+
+    # 기존 소스 URL 수집 (중복 방지)
+    existing_urls: set[str] = {s["url"] for s in web_sources + academic_sources if s.get("url")}
+
     extra_sources: list[SourceItem] = []
     if all_followup_queries:
         logger.info(
@@ -101,14 +105,24 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
             except Exception as e:
                 logger.error("[GapAnalyzer] Follow-up search failed: %s", e)
 
-        # 소스 필터링 적용 (web_search와 동일 기준)
+        # 소스 필터링: 관련성 + URL 중복 제거 (기존 소스 대비 + 내부 중복)
         if extra_sources:
             before = len(extra_sources)
             extra_sources = [s for s in extra_sources if _is_relevant_source(s)]
+            deduped: list[SourceItem] = []
+            for s in extra_sources:
+                if s["url"] not in existing_urls:
+                    existing_urls.add(s["url"])
+                    deduped.append(s)
+            duplicates = len(extra_sources) - len(deduped)
+            extra_sources = deduped
             filtered = before - len(extra_sources)
             if filtered:
-                logger.info("[GapAnalyzer] Filtered %d irrelevant follow-up sources", filtered)
-            logger.info("[GapAnalyzer] Found %d additional sources", len(extra_sources))
+                logger.info(
+                    "[GapAnalyzer] Filtered %d follow-up sources (%d irrelevant, %d duplicate)",
+                    filtered, filtered - duplicates, duplicates,
+                )
+            logger.info("[GapAnalyzer] Found %d unique additional sources", len(extra_sources))
 
     result: dict = {"gap_report": gap_report}
     if extra_sources:
