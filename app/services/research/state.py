@@ -79,6 +79,11 @@ class ResearchState(TypedDict):
     # 리뷰
     review_score: int
 
+    # CRAG Relevance Grading
+    graded_web_urls: list[str]       # CORRECT+AMBIGUOUS 웹 소스 URL. 빈 리스트 = 미실행(fail-open).
+    graded_academic_urls: list[str]  # CORRECT+AMBIGUOUS 학술 소스 URL.
+    ambiguous_requery: list[str]     # AMBIGUOUS 소스 보강용 추가 검색 쿼리.
+
     # 제어
     retry_count: int
     error: str

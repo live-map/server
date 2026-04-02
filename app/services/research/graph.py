@@ -1,9 +1,10 @@
 """
 LangGraph StateGraph assembly for the Research Agent.
 
-v4: 10-node 그래프 + 노드별 타임아웃 + citation 검증.
+v5: 11-node 그래프 + CRAG relevance grading.
 START → perspective_discovery → planner → [web|academic|fact_check] 병렬
-→ gap_analyzer → outline_generator → synthesizer → citation_validator → reviewer → 조건부 재시도.
+→ relevance_grader → gap_analyzer → outline_generator → synthesizer
+→ citation_validator → reviewer → 조건부 재시도.
 """
 
 import asyncio
@@ -19,6 +20,7 @@ from app.services.research.nodes.academic_search import academic_search_node
 from app.services.research.nodes.citation_validator import citation_validator_node
 from app.services.research.nodes.fact_check import fact_check_node
 from app.services.research.nodes.gap_analyzer import gap_analyzer_node
+from app.services.research.nodes.relevance_grader import relevance_grader_node
 from app.services.research.nodes.outline_generator import outline_generator_node
 from app.services.research.nodes.perspective_discovery import perspective_discovery_node
 from app.services.research.nodes.planner import planner_node
@@ -58,7 +60,7 @@ def _review_decision(state: ResearchState) -> str:
 
 
 def build_research_graph() -> CompiledStateGraph:
-    """리서치 에이전트 9-node 그래프를 조립하고 컴파일합니다."""
+    """리서치 에이전트 11-node 그래프를 조립하고 컴파일합니다."""
     builder = StateGraph(ResearchState)
 
     # 노드 추가 (개별 타임아웃 적용)
@@ -68,6 +70,7 @@ def build_research_graph() -> CompiledStateGraph:
         "web_search": web_search_node,
         "academic_search": academic_search_node,
         "fact_check": fact_check_node,
+        "relevance_grader": relevance_grader_node,
         "gap_analyzer": gap_analyzer_node,
         "outline_generator": outline_generator_node,
         "synthesizer": synthesizer_node,
@@ -86,10 +89,11 @@ def build_research_graph() -> CompiledStateGraph:
     builder.add_edge("planner", "academic_search")
     builder.add_edge("planner", "fact_check")
 
-    # 3개 검색 → gap_analyzer (fan-in)
-    builder.add_edge("web_search", "gap_analyzer")
-    builder.add_edge("academic_search", "gap_analyzer")
-    builder.add_edge("fact_check", "gap_analyzer")
+    # 3개 검색 → relevance_grader (fan-in) → gap_analyzer
+    builder.add_edge("web_search", "relevance_grader")
+    builder.add_edge("academic_search", "relevance_grader")
+    builder.add_edge("fact_check", "relevance_grader")
+    builder.add_edge("relevance_grader", "gap_analyzer")
 
     # gap_analyzer → outline_generator → synthesizer → citation_validator → reviewer
     builder.add_edge("gap_analyzer", "outline_generator")
@@ -108,5 +112,5 @@ def build_research_graph() -> CompiledStateGraph:
     )
 
     graph = builder.compile()
-    logger.info("[Graph] Research graph compiled (10 nodes, v4)")
+    logger.info("[Graph] Research graph compiled (11 nodes, v5)")
     return graph

@@ -22,7 +22,7 @@ from app.services.research.schemas import GapReport
 from app.services.research.state import ResearchState, SourceItem
 from app.services.research.tools.duckduckgo_client import DuckDuckGoClient
 from app.services.research.tools.tavily_client import TavilyClient
-from app.services.research.utils import format_perspectives_inline
+from app.services.research.utils import filter_by_graded_urls, format_perspectives_inline
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,12 @@ def _format_sources_brief(sources: list[SourceItem]) -> str:
 async def gap_analyzer_node(state: ResearchState) -> dict:
     """관점별 출처 커버리지를 검증하고 부족시 추가 검색을 실행합니다."""
     perspectives = state.get("perspectives", [])
-    web_sources = state.get("web_sources", [])
-    academic_sources = state.get("academic_sources", [])
+    web_sources = filter_by_graded_urls(
+        state.get("web_sources", []), state.get("graded_web_urls", [])
+    )
+    academic_sources = filter_by_graded_urls(
+        state.get("academic_sources", []), state.get("graded_academic_urls", [])
+    )
 
     if not perspectives:
         logger.info("[GapAnalyzer] No perspectives, skipping")
@@ -77,18 +81,20 @@ async def gap_analyzer_node(state: ResearchState) -> dict:
         "summary": report.summary,
     }
 
-    # 갭이 있으면 추가 검색 실행
+    # 갭이 있으면 추가 검색 실행 (+ ambiguous requery 병합)
+    ambiguous_requery = state.get("ambiguous_requery", [])
+    all_followup_queries = ambiguous_requery + (report.follow_up_queries or [])
     extra_sources: list[SourceItem] = []
-    if report.follow_up_queries:
+    if all_followup_queries:
         logger.info(
-            "[GapAnalyzer] Found gaps in %s. Running %d follow-up queries",
-            report.gap_perspectives, len(report.follow_up_queries),
+            "[GapAnalyzer] Running %d follow-up queries (gaps: %s, ambiguous: %d)",
+            len(all_followup_queries), report.gap_perspectives, len(ambiguous_requery),
         )
         if ai_settings.TAVILY_API_KEY:
             client = TavilyClient()
         else:
             client = DuckDuckGoClient()
-        for query in report.follow_up_queries[:GAP_FOLLOWUP_QUERIES]:
+        for query in all_followup_queries[:GAP_FOLLOWUP_QUERIES]:
             try:
                 results = await client.search(query, max_results=GAP_FOLLOWUP_RESULTS)
                 extra_sources.extend(results)

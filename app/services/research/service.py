@@ -39,6 +39,7 @@ _NODE_TO_STEP = {
     "web_search": "searching",
     "academic_search": "searching",
     "fact_check": "searching",
+    "relevance_grader": "searching",
     "gap_analyzer": "searching",
     "outline_generator": "analyzing",
     "synthesizer": "analyzing",
@@ -133,6 +134,10 @@ class ResearchService:
                 "web_sources": [],
                 "academic_sources": [],
                 "fact_check_results": [],
+                # CRAG Relevance Grading
+                "graded_web_urls": [],
+                "graded_academic_urls": [],
+                "ambiguous_requery": [],
                 # NEW: Gap analysis
                 "gap_report": {},
                 # NEW: Outline

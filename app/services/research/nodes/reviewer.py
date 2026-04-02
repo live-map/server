@@ -29,7 +29,7 @@ from app.services.research.prompts.reviewer_prompt import (
 )
 from app.services.research.schemas import ReviewerOutput
 from app.services.research.state import ResearchState
-from app.services.research.utils import CONCLUSION_KEYWORDS_RE
+from app.services.research.utils import CONCLUSION_KEYWORDS_RE, filter_by_graded_urls
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +95,12 @@ async def reviewer_node(state: ResearchState) -> dict:
     user_msg = REVIEWER_USER.format(
         article=article,
         poll_options=poll_options or "(선택지 없음)",
-        web_sources=_format_web_sources(state.get("web_sources", [])),
-        academic_sources=_format_academic_sources(state.get("academic_sources", [])),
+        web_sources=_format_web_sources(
+            filter_by_graded_urls(state.get("web_sources", []), state.get("graded_web_urls", []))
+        ),
+        academic_sources=_format_academic_sources(
+            filter_by_graded_urls(state.get("academic_sources", []), state.get("graded_academic_urls", []))
+        ),
     )
 
     try:

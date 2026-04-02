@@ -33,6 +33,7 @@ NODE_TIMEOUTS: dict[str, int] = {
     "outline_generator": 30,
     "synthesizer": 120,
     "citation_validator": 15,
+    "relevance_grader": 30,
     "reviewer": 30,
 }
 
@@ -89,6 +90,14 @@ REVIEWER_DEFAULT_SCORE: int = 80
 REVIEWER_MIN_VISUAL_ELEMENTS: int = 2
 OUTLINE_MAPPING_THRESHOLD: float = 0.5
 FALLBACK_PERSPECTIVES_LIMIT: int = 4
+
+# ── 5.5. Relevance Grader (CRAG) ──
+GRADER_CORRECT_THRESHOLD: float = 0.7
+GRADER_AMBIGUOUS_THRESHOLD: float = 0.3
+GRADER_BATCH_SIZE: int = 20
+GRADER_MIN_CORRECT_SOURCES: int = 3
+GRADER_MAX_REQUERY: int = 4
+GRADER_SNIPPET_MAX: int = 300
 PLANNER_WEB_QUERY_LIMIT: int = 8
 PLANNER_ACADEMIC_QUERY_LIMIT: int = 4
 PLANNER_FACTCHECK_CLAIM_LIMIT: int = 4
@@ -203,6 +212,7 @@ class AISettings(BaseSettings):
     AI_MODEL_PLANNER: str = "gpt-4o-mini"
     AI_MODEL_SYNTHESIZER: str = "gpt-4o"
     AI_MODEL_REVIEWER: str = "gpt-4o"
+    AI_MODEL_GRADER: str = "gpt-4o-mini"
 
     @property
     def provider(self) -> str:
@@ -227,6 +237,7 @@ class AISettings(BaseSettings):
             "planner": self.AI_MODEL_PLANNER,
             "synthesizer": self.AI_MODEL_SYNTHESIZER,
             "reviewer": self.AI_MODEL_REVIEWER,
+            "grader": self.AI_MODEL_GRADER,
         }
         return role_map.get(role, self.AI_MODEL)
 

@@ -11,6 +11,7 @@ import re
 
 from app.services.research.config import WEB_SOURCE_LIMIT, ACADEMIC_SOURCE_LIMIT
 from app.services.research.state import ResearchState, SourceItem
+from app.services.research.utils import filter_by_graded_urls
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,12 @@ async def citation_validator_node(state: ResearchState) -> dict:
     if not article:
         return {"citation_issues": []}
 
-    web_sources = state.get("web_sources", [])
-    academic_sources = state.get("academic_sources", [])
+    web_sources = filter_by_graded_urls(
+        state.get("web_sources", []), state.get("graded_web_urls", [])
+    )
+    academic_sources = filter_by_graded_urls(
+        state.get("academic_sources", []), state.get("graded_academic_urls", [])
+    )
     source_list = _build_source_list(web_sources, academic_sources)
     max_source_id = len(source_list)
 
